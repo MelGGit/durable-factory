@@ -50,17 +50,13 @@ export async function startService(options: ServiceOptions = {}) {
   };
   async function snapshot(): Promise<SettingsResponse> {
     const saved = await configuration!.read();
-    const metadata = await credentials.list();
+    const metadata = await credentials.inspect();
     return {
       apiVersion: API_VERSION,
       ...saved,
-      credentials: Object.fromEntries(
-        ['requesty', 'openai', 'anthropic', 'github'].map((id) => [
-          id,
-          metadata.some((item) => item.providerId === id),
-        ]),
-      ) as SettingsResponse['credentials'],
-      providers: await providerStatuses(credentials),
+      credentials: metadata.configured,
+      credentialErrors: metadata.errors,
+      providers: await providerStatuses(credentials, metadata),
     };
   }
   async function body(req: IncomingMessage): Promise<unknown> {
@@ -200,10 +196,10 @@ export async function startService(options: ServiceOptions = {}) {
             'Enter a non-empty token without whitespace.',
             400,
           );
-        await credentials.modify(id, async () => ({
+        await credentials.replace(id, {
           type: 'api_key',
           key: value.value as string,
-        }));
+        });
         return send(res, 200, { configured: true });
       }
       throw new ApiError('NOT_FOUND', 'API route not found.', 404);

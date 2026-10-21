@@ -39,3 +39,89 @@ test('real checks require an explicit model and stored credentials without ambie
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('provider-owned refresh persists ordinary renewed tokens and preserves credentials on failure or cancellation', async () => {
+  const { PrivateCredentials } = await import(
+    '../apps/server/src/credentials.js'
+  );
+  const { createFactoryModels, refreshProviderCredentials } = await import(
+    '../apps/server/src/providers.js'
+  );
+  const directory = await mkdtemp(join(tmpdir(), 'factory-refresh-'));
+  try {
+    const credentials = new PrivateCredentials(directory);
+    await credentials.init();
+    for (const providerId of ['openai', 'anthropic']) {
+      const original = {
+        type: 'oauth' as const,
+        access: 'original-access',
+        refresh: 'original-refresh',
+        expires: Date.now() + 3600000,
+      };
+      await credentials.modify(providerId, async () => original);
+      const models = createFactoryModels(credentials);
+      const oauth = models.getProvider(providerId)!.auth.oauth!;
+      let refreshes = 0;
+      oauth.refresh = async (current, signal) => {
+        assert.equal(signal.aborted, false);
+        refreshes++;
+        return {
+          ...current,
+          access: 'renewed-access',
+          refresh: 'renewed-refresh',
+          expires: Date.now() + 3600000,
+        };
+      };
+      oauth.toAuth = async (current) => ({ apiKey: current.access });
+      await refreshProviderCredentials(
+        models,
+        credentials,
+        providerId,
+        new AbortController().signal,
+      );
+      assert.equal(refreshes, 1);
+      assert.equal(
+        (await models.getAuth(providerId))?.auth.apiKey,
+        'renewed-access',
+      );
+      const renewed = await credentials.read(providerId);
+      assert.equal(
+        renewed?.type === 'oauth' && renewed.refresh,
+        'renewed-refresh',
+      );
+      oauth.refresh = async () => {
+        throw new Error('simulated outage');
+      };
+      await assert.rejects(
+        refreshProviderCredentials(
+          models,
+          credentials,
+          providerId,
+          new AbortController().signal,
+        ),
+        /simulated outage/,
+      );
+      assert.deepEqual(await credentials.read(providerId), renewed);
+      const cancellation = new AbortController();
+      oauth.refresh = async (current) => {
+        cancellation.abort();
+        return { ...current, refresh: 'rotated-during-cancellation' };
+      };
+      await assert.rejects(
+        refreshProviderCredentials(
+          models,
+          credentials,
+          providerId,
+          cancellation.signal,
+        ),
+      );
+      const retained = await credentials.read(providerId);
+      assert.equal(
+        retained?.type === 'oauth' && retained.refresh,
+        'rotated-during-cancellation',
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

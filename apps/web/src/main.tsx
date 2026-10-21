@@ -124,6 +124,7 @@ function App() {
           ? {
               ...previous,
               credentials: response.credentials,
+              credentialErrors: response.credentialErrors,
               providers: response.providers,
             }
           : response,
@@ -422,9 +423,11 @@ function App() {
                               <span
                                 className={`status-dot ${provider?.configured ? '' : 'unconfigured'}`}
                               />
-                              {provider?.configured
-                                ? 'Credentials stored · access untested'
-                                : 'Connection not configured'}
+                              {provider?.status === 'error'
+                                ? 'Connection needs attention'
+                                : provider?.configured
+                                  ? 'Credentials stored · access untested'
+                                  : 'Connection not configured'}
                             </div>
                           </article>
                         );
@@ -557,10 +560,17 @@ function App() {
                         <span
                           className={`connection-state ${saved.credentials[id] ? 'configured' : ''}`}
                         >
-                          {saved.credentials[id]
-                            ? 'Stored · untested'
-                            : 'Not connected'}
+                          {saved.credentialErrors[id]
+                            ? 'Needs attention'
+                            : saved.credentials[id]
+                              ? 'Stored · untested'
+                              : 'Not connected'}
                         </span>
+                        {saved.credentialErrors[id] && (
+                          <p className="connection-error" role="alert">
+                            {saved.credentialErrors[id]}
+                          </p>
+                        )}
                         {id === 'requesty' || id === 'github' ? (
                           <form
                             className="credential-form"
@@ -607,14 +617,17 @@ function App() {
                             bun run diagnose login {id}
                           </code>
                         )}
-                        {saved.credentials[id] && (
+                        {(saved.credentials[id] ||
+                          saved.credentialErrors[id]) && (
                           <button
                             type="button"
                             className="text-button"
                             onClick={() => void credential(id, true)}
                             disabled={credentialBusy !== null}
                           >
-                            Disconnect
+                            {saved.credentialErrors[id]
+                              ? 'Remove connection'
+                              : 'Disconnect'}
                           </button>
                         )}
                       </div>

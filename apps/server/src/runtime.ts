@@ -2,7 +2,7 @@ import { mkdir, realpath, chmod, stat } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve, relative, join, sep } from 'node:path';
-import lockfile from 'proper-lockfile';
+import { acquireProcessLock } from './locking.js';
 import { ApiError } from '../../../packages/shared/src/index.js';
 
 function findSourceRoot() {
@@ -64,35 +64,30 @@ export async function acquireOwnership(input: string) {
     );
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   await chmod(dataDir, 0o700);
-  let compromised = false;
-  let release: () => Promise<void>;
+  // Older builds used a heartbeat directory beside dataDir. Do not bypass an
+  // older owner or guess whether a leftover legacy lock is safe to remove.
   try {
-    release = await lockfile.lock(dataDir, {
-      realpath: true,
-      stale: 10000,
-      update: 2000,
-      retries: 0,
-      onCompromised: () => {
-        compromised = true;
-        process.stderr.write(
-          '{"level":"error","event":"storage_ownership_lost"}\n',
-        );
-        process.exit(1);
-      },
-    });
-  } catch {
+    await stat(`${dataDir}.lock`);
     throw new ApiError(
       'BUSY',
-      'Another service or diagnostic owns this data directory. Stop it first; after a crash, retry in 10 seconds.',
+      'An older service ownership lock exists. Stop the older service first. If it crashed, confirm that it exited before removing its legacy .lock directory.',
+      409,
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  let release: () => void;
+  try {
+    release = acquireProcessLock(join(dataDir, 'ownership.lock'));
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== 'BUSY') throw error;
+    throw new ApiError(
+      'BUSY',
+      'Another service or diagnostic owns this data directory. Stop it before retrying.',
       409,
     );
   }
-  return {
-    dataDir,
-    release: async () => {
-      if (!compromised) await release();
-    },
-  };
+  return { dataDir, release: async () => release() };
 }
 export async function validateRepositoryLocation(
   path: string,

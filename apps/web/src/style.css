@@ -906,3 +906,10 @@ h3 {
   margin: 0;
   min-width: 0;
 }
+
+.connection-error {
+  color: #8d4c32;
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 230px;
+}

@@ -176,3 +176,62 @@ test('concurrent credential modifications serialize and do not lose rotated toke
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+test('credential damage stays isolated while settings remain editable and connections can be repaired', async () => {
+  const { writeFile } = await import('node:fs/promises');
+  const dataDir = await mkdtemp(join(tmpdir(), 'factory-damaged-credential-'));
+  const service = await startService({ dataDir, port: 0 });
+  try {
+    const client = new FactoryClient(service.url);
+    await client.connect();
+    await client.saveCredential('requesty', 'healthy-requesty-fixture');
+    await writeFile(
+      join(dataDir, 'credentials/openai.json'),
+      '{"access":"broken-secret-fixture",',
+      { mode: 0o600 },
+    );
+    await writeFile(join(dataDir, 'credentials/github.json'), 'null', {
+      mode: 0o600,
+    });
+    const snapshot = await client.settings();
+    assert.equal(snapshot.credentials.requesty, true);
+    assert.equal(snapshot.credentials.openai, false);
+    assert.ok(snapshot.credentialErrors.openai);
+    assert.ok(snapshot.credentialErrors.github);
+    const openai = snapshot.providers.find(
+      (provider) => provider.id === 'openai',
+    )!;
+    assert.equal(openai.status, 'error');
+    assert.ok(openai.models.length > 0);
+    assert.ok(!JSON.stringify(snapshot).includes('broken-secret-fixture'));
+    const settings = structuredClone(snapshot.settings);
+    const model = openai.models.find((model) =>
+      model.reasoning.includes('high'),
+    )!;
+    settings.roles.planning = {
+      provider: 'openai',
+      model: model.id,
+      reasoning: 'high',
+    };
+    const saved = await client.saveSettings({
+      expectedRevision: snapshot.revision,
+      settings,
+    });
+    assert.equal(saved.revision, 1);
+    assert.ok(saved.credentialErrors.openai);
+    assert.equal((await fetch(`${service.url}/ready`)).status, 200);
+    await client.saveCredential('github', 'replacement-github-fixture');
+    assert.equal((await client.settings()).credentials.github, true);
+    assert.equal((await client.settings()).credentialErrors.github, undefined);
+    await client.deleteCredential('openai');
+    const repaired = await client.settings();
+    assert.equal(repaired.credentialErrors.openai, undefined);
+    assert.equal(
+      repaired.providers.find((provider) => provider.id === 'openai')!.status,
+      'not_configured',
+    );
+  } finally {
+    await service.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

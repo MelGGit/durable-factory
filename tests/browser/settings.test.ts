@@ -152,3 +152,72 @@ test(
     }
   },
 );
+
+test(
+  'damaged connections show actionable errors without blocking settings or token repair',
+  { timeout: 30000 },
+  async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const dataDir = await mkdtemp(join(tmpdir(), 'factory-browser-damage-'));
+    const service = await startService({ dataDir, port: 0 });
+    const browser = await chromium.launch({
+      headless: true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    });
+    try {
+      await writeFile(
+        join(dataDir, 'credentials/openai.json'),
+        '{broken-secret-fixture',
+        { mode: 0o600 },
+      );
+      await writeFile(join(dataDir, 'credentials/requesty.json'), 'null', {
+        mode: 0o600,
+      });
+      const page = await browser.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await page.goto(service.url);
+      await page.getByRole('heading', { name: 'The repository' }).waitFor();
+      const openai = page.locator('.connection-row').filter({
+        has: page.getByRole('heading', { name: 'OpenAI', exact: true }),
+      });
+      await openai.getByText('Needs attention', { exact: true }).waitFor();
+      await openai.getByRole('alert').waitFor();
+      assert.equal(
+        await page
+          .locator('body')
+          .innerText()
+          .then((text) => text.includes('broken-secret-fixture')),
+        false,
+      );
+      await page.getByLabel('GitHub repository').fill('still/editable');
+      await page.getByRole('button', { name: 'Save settings' }).click();
+      await page
+        .getByRole('status')
+        .filter({ hasText: 'Settings saved' })
+        .waitFor();
+      await page.getByLabel('Requesty token').fill('repaired-requesty-fixture');
+      const requesty = page.locator('.connection-row').filter({
+        has: page.getByRole('heading', { name: 'Requesty', exact: true }),
+      });
+      await requesty.getByRole('button', { name: 'Store token' }).click();
+      await requesty.getByText('Stored · untested', { exact: true }).waitFor();
+      await openai.getByRole('button', { name: 'Remove connection' }).click();
+      await openai.getByText('Not connected', { exact: true }).waitFor();
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth > innerWidth,
+        ),
+        false,
+      );
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      await service.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  },
+);

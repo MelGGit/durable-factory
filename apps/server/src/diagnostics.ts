@@ -19,7 +19,11 @@ import {
 } from '../../../packages/shared/src/index.js';
 import { acquireOwnership, defaultDataDir } from './runtime.js';
 import { PrivateCredentials } from './credentials.js';
-import { createFactoryModels, providerStatuses } from './providers.js';
+import {
+  createFactoryModels,
+  providerStatuses,
+  refreshProviderCredentials,
+} from './providers.js';
 import { context } from './storage.js';
 
 export async function runDiagnostic(args: string[]) {
@@ -173,11 +177,7 @@ export async function runDiagnostic(args: string[]) {
           'Requesty uses an API key, not subscription token refresh.',
           400,
         );
-      // Force the provider-owned validity check without modifying or inventing token contents.
-      await models.getAuth(provider, {
-        signal: deadline,
-        minOAuthValidityMs: Number.MAX_SAFE_INTEGER,
-      });
+      await refreshProviderCredentials(models, credentials, provider, deadline);
       await recordResult(owner.dataDir, provider, {
         command,
         status: 'passed',

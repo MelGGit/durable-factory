@@ -9,8 +9,14 @@ import {
   stream,
   streamSimple,
 } from '@earendil-works/pi-ai/api/openai-completions';
+import type { Models } from '@earendil-works/pi-ai/models';
+import type { CredentialStore } from '@earendil-works/pi-ai';
+import { ApiError } from '../../../packages/shared/src/index.js';
 import type { Model } from '@earendil-works/pi-ai';
-import type { PrivateCredentials } from './credentials.js';
+import type {
+  PrivateCredentials,
+  CredentialInspection,
+} from './credentials.js';
 import {
   PROVIDERS,
   type ProviderStatus,
@@ -66,41 +72,70 @@ export function createFactoryModels(
 }
 export async function providerStatuses(
   credentials: PrivateCredentials,
+  inspection?: CredentialInspection,
 ): Promise<ProviderStatus[]> {
+  inspection ??= await credentials.inspect();
+  const metadata = inspection;
   const models = createFactoryModels(credentials);
-  return Promise.all(
-    PROVIDERS.map(async (id) => {
-      try {
-        const credential = await credentials.read(id);
-        const configured =
-          id === 'requesty'
-            ? credential?.type === 'api_key' && Boolean(credential.key)
-            : credential?.type === 'oauth';
-        return {
-          id,
-          configured,
-          status: configured ? 'configured' : 'not_configured',
-          // A catalog advertises capability, not account access. No network or token refresh here.
-          models: models.getModels(id).map((model) => ({
-            id: model.id,
-            name: model.name,
-            reasoning: [...getSupportedThinkingLevels(model)],
-          })),
-          message:
-            id === 'requesty'
-              ? 'Enter an exact Requesty model ID. Capabilities and account access need a live check.'
-              : 'Catalog capability only; account access is verified by an explicit live check.',
-        } satisfies ProviderStatus;
-      } catch {
-        return {
-          id,
-          configured: false,
-          status: 'error',
-          models: [],
-          message:
-            'Credential storage is unavailable. Inspect private file permissions.',
-        };
-      }
-    }),
-  );
+  return PROVIDERS.map((id) => ({
+    id,
+    configured: metadata.configured[id],
+    status: metadata.errors[id]
+      ? 'error'
+      : metadata.configured[id]
+        ? 'configured'
+        : 'not_configured',
+    // Catalog capabilities stay available even when one credential is unreadable.
+    models: models.getModels(id).map((model) => ({
+      id: model.id,
+      name: model.name,
+      reasoning: [...getSupportedThinkingLevels(model)],
+    })),
+    message:
+      metadata.errors[id] ??
+      (id === 'requesty'
+        ? 'Enter an exact Requesty model ID. Capabilities and account access need a live check.'
+        : 'Catalog capability only; account access is verified by an explicit live check.'),
+  }));
+}
+
+export async function refreshProviderCredentials(
+  models: Models,
+  credentials: CredentialStore,
+  providerId: string,
+  signal: AbortSignal,
+) {
+  const oauth = models.getProvider(providerId)?.auth.oauth;
+  if (!oauth)
+    throw new ApiError(
+      'INVALID_INPUT',
+      'This provider does not support subscription refresh.',
+      400,
+    );
+  const lockWait = new AbortController();
+  const cancelWaiting = () => lockWait.abort(signal.reason);
+  signal.addEventListener('abort', cancelWaiting, { once: true });
+  if (signal.aborted) cancelWaiting();
+  try {
+    await credentials.modify(
+      providerId,
+      async (current) => {
+        signal.removeEventListener('abort', cancelWaiting);
+        signal.throwIfAborted();
+        if (current?.type !== 'oauth')
+          throw new ApiError(
+            'AUTHENTICATION',
+            'Sign in before refreshing this connection.',
+            401,
+          );
+        // Once renewal starts it may rotate the refresh token. Persist its result
+        // even if the original caller cancels; bound the provider request itself.
+        return oauth.refresh(current, AbortSignal.timeout(15000));
+      },
+      { signal: lockWait.signal },
+    );
+    await models.getAuth(providerId, { signal });
+  } finally {
+    signal.removeEventListener('abort', cancelWaiting);
+  }
 }

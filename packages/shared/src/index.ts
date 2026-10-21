@@ -49,6 +49,7 @@ export interface SettingsResponse {
   revision: number;
   settings: Settings;
   credentials: Record<CredentialId, boolean>;
+  credentialErrors: Partial<Record<CredentialId, string>>;
   providers: ProviderStatus[];
 }
 export interface SessionResponse {

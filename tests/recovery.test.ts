@@ -5,7 +5,6 @@ import { once } from 'node:events';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import type { RecoveryScenario } from '../apps/server/src/recovery.js';
 import { acquireOwnership } from '../apps/server/src/runtime.js';
 function spawnWorker(
@@ -66,9 +65,9 @@ for (const scenario of ['model', 'safe', 'unsafe'] as const)
         const exited = once(child, 'exit');
         child.kill('SIGKILL');
         await exited;
-        await assert.rejects(acquireOwnership(dataDir), /Another service/);
-        // Wait out the production lease, rather than deleting a lock and assuming the old owner stopped.
-        await delay(12500);
+        // A dead process releases its OS lock immediately, without a timeout.
+        const recoveredOwner = await acquireOwnership(dataDir);
+        await recoveredOwner.release();
         child = spawnWorker(dataDir, scenario, 'resume');
         const done = await message(child, 'done');
         assert.equal(done.result.status, 'done');
