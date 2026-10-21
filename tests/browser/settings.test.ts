@@ -203,7 +203,7 @@ test(
         has: page.getByRole('heading', { name: 'Requesty', exact: true }),
       });
       await requesty.getByRole('button', { name: 'Store token' }).click();
-      await requesty.getByText('Stored · untested', { exact: true }).waitFor();
+      await requesty.getByText('Credentials stored', { exact: true }).waitFor();
       await openai.getByRole('button', { name: 'Remove connection' }).click();
       await openai.getByText('Not connected', { exact: true }).waitFor();
       await page.setViewportSize({ width: 390, height: 844 });

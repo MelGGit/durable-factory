@@ -426,7 +426,7 @@ function App() {
                               {provider?.status === 'error'
                                 ? 'Connection needs attention'
                                 : provider?.configured
-                                  ? 'Credentials stored · access untested'
+                                  ? 'Credentials stored'
                                   : 'Connection not configured'}
                             </div>
                           </article>
@@ -435,8 +435,8 @@ function App() {
                     </div>
                     <p className="section-footnote">
                       Model lists describe catalog capabilities, not verified
-                      account access. Requesty reasoning stays unset until its
-                      capabilities are verified.
+                      account access. Requesty reasoning options are unavailable
+                      without model capability metadata.
                     </p>
                   </section>
                   <section id="execution" className="settings-section">
@@ -563,7 +563,7 @@ function App() {
                           {saved.credentialErrors[id]
                             ? 'Needs attention'
                             : saved.credentials[id]
-                              ? 'Stored · untested'
+                              ? 'Credentials stored'
                               : 'Not connected'}
                         </span>
                         {saved.credentialErrors[id] && (

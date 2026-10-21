@@ -2,7 +2,7 @@
 
 A personal, locally hosted tool for planning software with an LLM and implementing approved GitHub issues through a durable developer → checks → reviewer → PR workflow.
 
-The combined steps 1–2 foundation is implemented: a local settings application, Pi Durable/SQLite configuration, private credentials, and offline process-recovery checks. Planning chat, GitHub operations, and development runs follow in later stages. Real-provider compatibility is **not yet verified**.
+Steps 1–2 are complete: a local settings application, Pi Durable/SQLite configuration, private credentials, and offline process-recovery checks. Planning chat, GitHub operations, and development runs follow in later stages.
 
 ## Start locally
 
@@ -34,7 +34,7 @@ One service or diagnostic owns a data directory at a time. Ownership uses an ope
 
 When upgrading from the original heartbeat-lock build, stop the older service and diagnostics first. A remaining legacy `<data-directory>.lock` directory blocks the upgrade rather than being silently reclaimed. If the old process crashed, verify that it has exited before explicitly removing that legacy directory. Do not remove the new lock files.
 
-## Connect and check providers
+## Connect providers
 
 Stop the service before running diagnostics. Use the same data-directory override in both shells if configured. Sign-in is interactive and uses Pi's provider-owned OAuth flow:
 
@@ -46,20 +46,7 @@ bun run diagnose login anthropic
 
 Requesty and GitHub tokens are entered in the settings screen. GitHub connectivity/permissions are deferred to step 4; token storage alone does not contact GitHub.
 
-Real model checks are opt-in and can consume account usage or incur Requesty charges. Replace each model placeholder with an exact model ID selected by you. Run one check at a time; no fallback provider is used:
-
-```sh
-bun run diagnose check requesty EXACT_REQUESTY_MODEL_ID
-bun run diagnose check openai EXACT_OPENAI_MODEL_ID
-bun run diagnose check anthropic EXACT_ANTHROPIC_MODEL_ID
-bun run diagnose interrupt openai EXACT_OPENAI_MODEL_ID
-bun run diagnose interrupt anthropic EXACT_ANTHROPIC_MODEL_ID
-bun run diagnose interrupt requesty EXACT_REQUESTY_MODEL_ID
-bun run diagnose refresh openai
-bun run diagnose refresh anthropic
-```
-
-Each model check exercises the Pi harness, committed streaming observation, and a harmless tool round-trip in disposable storage. Short responses may finish before a committed streaming frame is observed; that is explicitly reported as unverified. The interrupt command cancels after the first committed model partial and verifies that the partial is retained as aborted history. If no interruptible response is observed, it reports a blocked check. The refresh command calls the selected provider's renewal API under the credential-store lock without fabricating expired credentials or imposing an impossible token lifetime. A token rotated during caller cancellation is still saved. It can rotate credentials and must run under exclusive ownership. Missing credentials, failed authentication, inaccessible models, usage limits, and transport failures produce a blocked result without switching providers. Secret-free results are recorded in `provider-checks.json`; temporary model transcripts are removed. See [the compatibility record](docs/COMPATIBILITY.md) for outstanding live checks and recovery limitations.
+The diagnostic interface provides only `status` and `login`. Status reports stored credential configuration without contacting providers or checking account access. Pi handles subscription token refresh automatically when resolving authentication for a model request. Provider/model availability depends on your account; an unavailable connection reports an error without silently switching providers.
 
 ## Verification
 

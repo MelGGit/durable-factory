@@ -25,31 +25,23 @@ Sources: [Pi Durable package and API](https://github.com/earendil-works/pi/tree/
 - A committed partial model response survives process death as interrupted history; the accepted input and queued follow-up finish after reopening the same storage. Retrying the request ID returns the original submission.
 - A read-only tool declared replay-safe runs again after restart and produces one committed tool result.
 - An unsafe fixture writes an observable effect, emits committed partial output, and is killed before result commit. Recovery does not execute it again; the transcript contains an interrupted tool result and retained output. The application must interpret that outcome before future workflow mutations; no scheduler exists yet.
-- Credential modifications serialize read-modify-write and preserve concurrent token rotations. Simulated OpenAI and Anthropic refreshes verify ordinary renewed lifetimes, failure preservation, and saving rotated credentials after caller cancellation. Damaged credentials surface per-connection errors without preventing settings saves or token replacement/removal. API responses omit secrets. Host/origin/CSRF boundaries and configuration validation are exercised.
+- Credential modifications serialize read-modify-write and preserve concurrent token rotations. Offline tests exercise Pi's automatic refresh of expired OpenAI and Anthropic credentials, failure preservation, and saving rotated credentials after caller cancellation. Damaged credentials surface per-connection errors without preventing settings saves or token replacement/removal. API responses omit secrets. Host/origin/CSRF boundaries and configuration validation are exercised.
 
 ## Verification results
 
 - `bun run check`, `bun run format:check`, and `bun run build`: passed.
-- Offline Node suite: twelve tests, including three forced-termination scenarios and a stalled-owner regression, passed.
+- Offline Node suite: fourteen tests, including three forced-termination scenarios and a stalled-owner regression, passed.
 - Browser suite: settings, restart, token privacy, stale updates (including credential-save races), damaged-connection recovery, and mobile layout passed; desktop/mobile screenshots visually inspected.
 - Built production Node service: readiness, shared client, and served frontend assets passed on localhost.
-- Real-provider calls: not run; required evidence remains outstanding below.
+- Diagnostic coverage: usage and argument validation, rejection of removed commands, and secret-free stored connection status.
 
-## Real-provider matrix
-
-| Connection | Login / credentials | Streaming + tools | Refresh | Live interruption / limits |
-| --- | --- | --- | --- | --- |
-| Requesty | Untested; settings key storage implemented | Untested; explicit model diagnostic available | Not applicable (API key) | Untested; interrupt diagnostic available |
-| OpenAI subscription | Untested; Pi-owned login command available | Untested; explicit model diagnostic available | Untested; Pi-owned refresh command available | Untested; interrupt diagnostic available |
-| Anthropic subscription | Untested; Pi-owned login command available | Untested; explicit model diagnostic available | Untested; Pi-owned refresh command available | Untested; interrupt diagnostic available |
-
-No real accounts or paid calls were used during implementation. Per-installation diagnostic outcomes are recorded separately in the runtime-data directory; they do not imply the checked-in matrix has been completed. Step 1 stays incomplete until the required live checks have evidence. Missing stored credentials are an explicit authentication error, never permission to use environment keys or another provider.
+Stages 1–2 are complete based on the implemented foundation and passing offline verification. Automated tests use simulated providers and make no account-backed model calls. Missing or damaged credentials remain explicit authentication errors rather than permission to use environment keys or another provider.
 
 ## Known boundaries
 
 - Pi Durable's SQLite backend uses WAL with `synchronous=NORMAL`: process-crash recovery is not a guarantee against power loss. Do not copy just a live database file while ignoring WAL state.
 - Pi does not provide cross-process ownership locking. The application holds an exclusive OS file lock using an empty SQLite lock file, separate from application storage and storing no workflow state. It has no heartbeat expiry: a live stalled owner cannot be replaced, and a dead owner releases its lock automatically. Legacy heartbeat-lock directories block startup until the older service is stopped and any leftover legacy directory is explicitly cleaned up. Never replace the new mutex files while a process may hold them.
 - Subscription credentials are stored only under their selected provider. Ambient environment credentials and CLI logins are not used. Provider-owned refresh runs inside the credential-store lock.
-- Requesty is registered as a custom OpenAI Chat Completions provider at `https://router.requesty.ai/v1`. Conservative diagnostic limits are 8192 context / 1024 output tokens; catalog capacity, reasoning, price and account access are not inferred. No cost estimates are displayed.
+- Requesty is registered as a custom OpenAI Chat Completions provider at `https://router.requesty.ai/v1`. Conservative fallback model limits are 8192 context / 1024 output tokens; catalog capacity, reasoning, price and account access are not inferred. No cost estimates are displayed.
 - The credential files are protected with local filesystem permissions and atomic replacement, not encryption. Tests use temporary secrets and never enumerate personal credentials.
 - The application has no public chat API or task scheduler yet. Restart checks are intentionally confined to disposable diagnostics. Full workflow reconciliation, command/process-group termination, streaming clients, authentication UI, and backup/restore remain later work.

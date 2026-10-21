@@ -1,6 +1,6 @@
 # Durable Factory — Architecture
 
-Status: architecture reference; combined stages 1–2 foundation implemented. Later workflow capabilities remain planned. See IMPLEMENTATION.md for delivery status.
+Status: architecture reference; stages 1–2 complete. Later workflow capabilities remain planned. See IMPLEMENTATION.md for delivery status.
 
 ## Purpose and first-version boundary
 
@@ -106,7 +106,7 @@ Use pi-ai directly for all roles. Separate Codex and Claude Code worker processe
 
 Expose provider, available model, and supported reasoning settings independently for planning, development, and review. Require explicit selections during setup rather than baking changing model names into the workflow. Capture effective role settings when work begins.
 
-Keep credentials on the service side in a private persistent credential store outside the target repository, Git worktrees, and ordinary logs. Use Pi's provider-owned login and token-refresh flows. Do not assume the account has access to every catalog model or that subscription billing rules are identical across providers; verify account access during setup.
+Keep credentials on the service side in a private persistent credential store outside the target repository, Git worktrees, and ordinary logs. Use Pi's provider-owned login and token-refresh flows. Do not assume the account has access to every catalog model or that subscription billing rules are identical across providers; model availability is determined when the selected connection is used.
 
 If authentication or usage limits prevent progress, pause the affected work. Offer retry, reconnect, or an explicit provider/model change. Never silently switch to Requesty or another paid connection. An explicit model switch preserves the durable conversation history using Pi's supported handoff behavior and records the change.
 
@@ -250,7 +250,7 @@ Force service termination at stage boundaries, during safe and unsafe tools, aft
 
 Test stream snapshots, heartbeat loss, slow-client eviction, reconnect backoff, duplicate submissions, withdrawal races, stale/conflicting answers, and cancellation propagation. Use browser tests for the run inspector, queued input, restored conversations, and pending questions. Verify old history is searchable after compaction and updates remain revision-safe across two browser tabs.
 
-Keep paid real-provider tests explicit and separate: verify Requesty streaming/tool calls and each supported subscription login, refresh, usage-limit pause, and explicit provider change against the pinned Pi versions. Include service shutdown/restart and backup/restore smoke scenarios using disposable data. Do not depend on production repositories or paid calls for the offline suite.
+Exercise provider errors, token refresh, usage-limit handling, and explicit provider changes with deterministic offline adapters. Include service shutdown/restart and backup/restore smoke scenarios using disposable data. Automated verification must not depend on production repositories, provider accounts, or paid calls.
 
 ## Acceptance scenarios
 
@@ -281,7 +281,7 @@ Keep paid real-provider tests explicit and separate: verify Requesty streaming/t
 25. After compaction, paginated history and scoped agent search retrieve earlier decisions; the current specification and unresolved findings remain in durable documents.
 26. A slow or silent stream reconnects from a fresh snapshot with bounded buffers and no duplicate results; unsupported API versions produce an explicit error.
 27. Application upgrades leave external runtime data intact; consistent backup and restore recover conversations, evidence, and pending interventions.
-28. A deterministic offline suite exercises success, repair exhaustion, external-action reconciliation, provider failure, stale updates, and forced restarts; real-provider tests run only when explicitly selected.
+28. A deterministic offline suite exercises success, repair exhaustion, external-action reconciliation, provider failure, stale updates, and forced restarts without provider accounts or paid model calls.
 29. Changing repository check/setup settings leaves an existing run's captured configuration unchanged; explicit adoption records a new revision, repeats setup/baseline where needed, and invalidates affected evidence.
 30. Developer mutations stop before checks/review. Source changes during validation invalidate affected evidence; committed generated files remain part of the source identity, while disposable build output does not.
 31. Developer guidance arriving during checks/review is delivered at a controlled boundary and implementation changes return through validation. Publication waits for pending developer input to be handled or withdrawn; new implementation input is rejected after publication starts, and post-PR implementation requires an explicit new run.

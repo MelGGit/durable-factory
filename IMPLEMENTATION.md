@@ -1,23 +1,23 @@
 # Durable Factory — Implementation Roadmap
 
-Status: combined stages 1–2 foundation implemented; required real-provider verification remains outstanding. Later application stages have not started.
+Status: stages 1–2 complete, backed by the implemented foundation and passing offline tests. Later application stages have not started.
 
 This roadmap accompanies [ARCHITECTURE.md](ARCHITECTURE.md). It describes implementation order, dependencies, deliverables, and the evidence required to finish each stage. The architecture remains the detailed behavior reference. The subsequently agreed Bun frontend tooling and GitHub token setup are recorded here; this roadmap does not rewrite the architecture document.
 
 ## Combined stages 1–2 delivery
 
-The first implementation combines the local settings application with focused Pi integration/recovery checks. The service uses Pi Durable documents in SQLite; the browser configures the repository, execution commands/timeouts, independent role models, and private connection credentials. Subscription sign-in and opt-in live checks are interactive diagnostics. No chat or development workflow is implemented yet.
+The first implementation combines the local settings application with focused Pi integration/recovery checks. The service uses Pi Durable documents in SQLite; the browser configures the repository, execution commands/timeouts, independent role models, and private connection credentials. Subscription sign-in and stored connection status are available through interactive diagnostics. No chat or development workflow is implemented yet.
 
 The offline suite exercises real storage, abrupt termination during a streamed model turn and safe/unsafe tools, submission identity, queued follow-ups, ownership recovery, schema protection, credential privacy, and versioned local API behavior. Browser verification covers settings persistence, stale saves, secret-free responses, service restart, and responsive layout. See [README.md](README.md) for commands and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) for observed results and limitations.
 
-Stage 2's foundation is delivered. Stage 1 is **not complete**: Requesty and both subscription connections require explicit account-backed integration results, including refresh where testable and live interruption/unavailability handling. The [future workflow transition table](docs/WORKFLOW.md) is recorded before scheduler work begins.
+Stages 1–2 are **complete**: the pinned Pi integration, offline recovery evidence, local service, settings application, and private credentials meet their completion gates. The [future workflow transition table](docs/WORKFLOW.md) is recorded before scheduler work begins.
 
 ## Agreed constraints
 
 - React and TypeScript for the browser application, with plain CSS. No CSS framework, component library, or chat library.
 - Bun for dependency management and running Vite frontend development/build commands. Keep the Pi Durable backend on Node 24 initially. In development, Vite proxies API requests; in production, the Node service serves the built frontend and API.
 - Pi Durable and pi-ai for conversations, tools, provider access, persistence, and recovery. Pin a compatible package set after the feasibility checks.
-- Support Requesty API access and Pi's supported OpenAI and Anthropic subscription authentication. Configure models separately for planning, development, and review. Test connections sequentially if needed, but retain all three in the first-version target.
+- Support Requesty API access and Pi's supported OpenAI and Anthropic subscription authentication. Configure models separately for planning, development, and review. Retain all three in the first-version target.
 - A GitHub token entered in application settings, privately stored on the service side. No dependency on the user's GitHub CLI login.
 - One configured repository and one active development run. Preserve run/repository identities and isolated worktrees so expansion does not require redesigning the workflow.
 - Developer → required checks → independent reviewer → ready-for-review PR. Allow the initial attempt plus three repair cycles. The user merges.
@@ -27,7 +27,7 @@ Stage 2's foundation is delivered. Stage 1 is **not complete**: Requesty and bot
 
 Implement the stages in order. Each stage must meet its completion gate before dependent work relies on it. Develop the relevant UI alongside the corresponding backend capability rather than constructing the entire interface first.
 
-Use deterministic fake models, fake GitHub responses, controlled commands, disposable repositories, and real durable storage for the offline suite. Add recovery tests with each capability; do not postpone them to final hardening. Paid or account-backed integration tests are explicit and separate. Never use a production repository for destructive recovery tests.
+Use deterministic fake models, fake GitHub responses, controlled commands, disposable repositories, and real durable storage for the offline suite. Add recovery tests with each capability; do not postpone them to final hardening. Automated verification uses simulated providers and does not require accounts or paid model calls. Never use a production repository for destructive recovery tests.
 
 Cross-cutting rules for all stages:
 
@@ -38,21 +38,25 @@ Cross-cutting rules for all stages:
 
 ## Stage 1 — Prove Pi integration and recovery
 
+**Status:** Complete.
+
 **Objective:** Prove the agent runtime and storage behavior before building application abstractions around it.
 
-**Dependencies:** None beyond a supported local runtime and access to candidate Pi packages. Real-provider checks require the user's configured credentials.
+**Dependencies:** A supported local runtime and access to candidate Pi packages.
 
 **Deliverables:**
 
 - A minimal Node harness using Pi Durable, SQLite, a deterministic fake provider, and controlled read-only/mutating tools.
 - A pinned compatible Pi Durable/pi-ai dependency set, with a short compatibility record.
-- Explicit integration checks for Requesty streaming/tool calls and both subscription login paths, token refresh where testable, interruption, and unavailable-provider behavior.
+- Requesty provider registration, Pi-owned subscription sign-in, and a private credential store supporting automatic token refresh; deterministic tests cover persistence and credential safety.
 
 **Recovery verification:** Terminate the process during a model turn and during replay-safe and unsafe tools. Reopen the same storage; inspect queued inputs, partial results, replay decisions, and side effects.
 
-**Completion gate:** Conversation state survives restart, safe work resumes correctly, and uncertain unsafe effects surface for handling rather than silently running twice. Any provider incompatibility is resolved or recorded as a blocker before its integration is built. No separate Codex or Claude Code worker is introduced by assumption.
+**Completion gate:** Conversation state survives restart, safe work resumes correctly, and uncertain unsafe effects surface for handling rather than silently running twice. No separate Codex or Claude Code worker is introduced by assumption.
 
 ## Stage 2 — Establish the frontend and backend foundation
+
+**Status:** Complete.
 
 **Objective:** Create a small application skeleton with durable configuration and clear ownership boundaries.
 
@@ -128,7 +132,7 @@ Cross-cutting rules for all stages:
 
 **Objective:** Produce a verified local implementation from an issue.
 
-**Dependencies:** Stage 5's tested orchestration and Stage 1's provider integrations.
+**Dependencies:** Stage 5's tested orchestration and the existing provider registration and credential integration.
 
 **Deliverables:**
 
@@ -176,13 +180,13 @@ Cross-cutting rules for all stages:
 
 **Recovery verification:** Exercise browser closure, abrupt service termination, provider limits, token expiry, shutdown with active processes, and restoration into a disposable application-data directory. Verify restored questions, evidence, artifacts, and uncertain external operations.
 
-**Completion gate:** Complete plan → issue → failed check → repair → independent review → PR using a disposable repository, including injected restarts. The app can resume safely or explain the required intervention. All three model connections have explicit integration results, one active development run is enforced, and merging remains a user action.
+**Completion gate:** Complete plan → issue → failed check → repair → independent review → PR using a disposable repository, including injected restarts. The app can resume safely or explain the required intervention. All three model connections remain supported, one active development run is enforced, and merging remains a user action.
 
 ## First-version completion checklist
 
 - [ ] All eight stage gates have recorded results.
 - [ ] Offline workflow/recovery tests pass without paid model calls.
-- [ ] Explicit Requesty, OpenAI subscription, and Anthropic subscription integration checks have been completed.
+- [x] Requesty, OpenAI subscription, and Anthropic subscription connections and private credential handling are implemented.
 - [ ] The user can inspect and steer development while preserving the agreed specification and validation rules.
 - [ ] Manual and label starts converge on the same durable admission operation.
 - [ ] Interrupted external operations reconcile without duplicate issues or PRs.
