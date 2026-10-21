@@ -1,0 +1,154 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { chromium } from '@playwright/test';
+import { mkdtemp, rm, mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { startService } from '../../apps/server/src/service.js';
+
+test(
+  'settings browser flow, credential privacy, stale saves, restart, and mobile layout',
+  { timeout: 60000 },
+  async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'factory-browser-'));
+    let service = await startService({ dataDir, port: 0 });
+    const browser = await chromium.launch({
+      headless: true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    });
+    try {
+      const context = await browser.newContext({
+        viewport: { width: 1440, height: 1100 },
+      });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      const responseBodies: string[] = [];
+      page.on('response', (response) => {
+        if (response.url().includes('/api/'))
+          void response.text().then((value) => responseBodies.push(value));
+      });
+      await page.goto(service.url);
+      await page.getByRole('heading', { name: 'The repository' }).waitFor();
+      assert.equal(
+        await page.getByRole('button', { name: 'Save settings' }).isDisabled(),
+        true,
+      );
+      await page.getByLabel('Local repository path').fill(resolve('.'));
+      await page
+        .getByLabel('GitHub repository')
+        .fill('example/durable-factory');
+      await page
+        .getByLabel('Required checks')
+        .fill('bun run check\nbun run test');
+      await page
+        .getByLabel('Provider', { exact: true })
+        .first()
+        .selectOption('requesty');
+      await page
+        .getByLabel('Model', { exact: true })
+        .first()
+        .fill('explicit/model');
+      await page.getByRole('button', { name: 'Save settings' }).click();
+      await page
+        .getByRole('status')
+        .filter({ hasText: 'Settings saved' })
+        .waitFor();
+      await page.reload();
+      await page.getByLabel('GitHub repository').waitFor();
+      assert.equal(
+        await page.getByLabel('GitHub repository').inputValue(),
+        'example/durable-factory',
+      );
+      assert.equal(
+        await page.getByLabel('Required checks').inputValue(),
+        'bun run check\nbun run test',
+      );
+      const stale = await context.newPage();
+      await stale.goto(service.url);
+      await stale.getByLabel('Base branch').waitFor();
+      await page.getByLabel('Base branch').fill('develop');
+      await page.getByRole('button', { name: 'Save settings' }).click();
+      await page
+        .getByRole('status')
+        .filter({ hasText: 'Settings saved' })
+        .waitFor();
+      await stale.getByLabel('Base branch').fill('feature/stale');
+      await stale.getByRole('button', { name: 'Save settings' }).click();
+      await stale
+        .getByRole('alert')
+        .filter({ hasText: 'another window' })
+        .waitFor();
+      assert.equal(
+        await stale.getByLabel('Base branch').inputValue(),
+        'feature/stale',
+      );
+      // Saving a credential must not silently refresh a stale settings revision.
+      await stale.getByLabel('GitHub token').fill('browser-github-fixture');
+      await stale
+        .locator('.connection-row')
+        .filter({
+          has: stale.getByRole('heading', { name: 'GitHub', exact: true }),
+        })
+        .getByRole('button', { name: 'Store token' })
+        .click();
+      await stale
+        .getByRole('status')
+        .filter({ hasText: 'GitHub token saved privately' })
+        .waitFor();
+      await stale.getByRole('button', { name: 'Save settings' }).click();
+      await stale
+        .getByRole('alert')
+        .filter({ hasText: 'another window' })
+        .waitFor();
+      await page.getByLabel('Requesty token').fill('browser-secret-fixture');
+      await page
+        .locator('.connection-row')
+        .filter({
+          has: page.getByRole('heading', { name: 'Requesty', exact: true }),
+        })
+        .getByRole('button', { name: 'Store token' })
+        .click();
+      await page
+        .getByRole('status')
+        .filter({ hasText: 'Requesty token saved privately' })
+        .waitFor();
+      assert.equal(await page.getByLabel('Requesty token').inputValue(), '');
+      assert.ok(!responseBodies.join('').includes('browser-secret-fixture'));
+      const port = service.port;
+      await service.close();
+      service = await startService({ dataDir, port });
+      await page.reload();
+      await page.getByLabel('Base branch').waitFor();
+      assert.equal(
+        await page.getByLabel('Base branch').inputValue(),
+        'develop',
+      );
+      assert.equal(await page.getByLabel('Requesty token').inputValue(), '');
+      await mkdir(resolve('test-results'), { recursive: true });
+      await page.screenshot({
+        path: resolve('test-results/settings-desktop.png'),
+        fullPage: true,
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.screenshot({
+        path: resolve('test-results/settings-mobile.png'),
+        fullPage: true,
+      });
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth > innerWidth,
+        ),
+        false,
+      );
+      assert.deepEqual(errors, []);
+      await context.close();
+    } finally {
+      await browser.close();
+      await service.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  },
+);

@@ -1,0 +1,16 @@
+{
+  "name": "@durable-factory/server",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@durable-factory/shared": "workspace:*",
+    "@earendil-works/pi-durable": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/chord": "1.3.0",
+    "proper-lockfile": "4.1.2",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@types/proper-lockfile": "4.1.4"
+  }
+}
