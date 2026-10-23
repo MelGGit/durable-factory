@@ -1,0 +1,324 @@
+import type {
+  BoundImplementation,
+  CriterionAssessment,
+  RegressionEvidence,
+} from './handoffs.js';
+import { API_VERSION, ApiError, FactoryClient, type Settings } from './core.js';
+import type { RepositoryRegistration, Ticket, IssueLink } from './planning.js';
+export type RunStage =
+  | 'setup'
+  | 'baseline'
+  | 'developer'
+  | 'checks'
+  | 'reviewer'
+  | 'publication'
+  | 'publishing';
+export type RunStatus =
+  | 'queued'
+  | 'running'
+  | 'pausing'
+  | 'paused'
+  | 'needs_input'
+  | 'cancelling'
+  | 'cancelled'
+  | 'termination_blocker'
+  | 'pr_ready';
+export interface StageAttempt {
+  id: string;
+  taskId: string;
+  stage: RunStage;
+  conversationId: string;
+  repair: number;
+  startedAt: number;
+  deadline: number;
+  recoveryCount: number;
+  repairCauses?: string[];
+  recoveries?: { at: number }[];
+  outcome?: 'passed' | 'failed' | 'interrupted' | 'needs_input' | 'uncertain';
+  finishedAt?: number;
+  message?: string;
+}
+export interface RunEvidence {
+  assessments?: CriterionAssessment[];
+  regression?: RegressionEvidence;
+  attemptId: string;
+  kind: 'baseline' | 'checks' | 'reviewer';
+  source: string;
+  configurationRevision: number;
+  specificationRevision: number;
+  passed: boolean;
+  output: string;
+  verdict?: 'pass' | 'changes_requested' | 'needs_input';
+  findings?: {
+    message: string;
+    blocking: boolean;
+    path?: string;
+    line?: number;
+  }[];
+  commands?: string[];
+  results?: {
+    command: string;
+    exitCode: number;
+    duration: number;
+    artifact: string;
+  }[];
+  exitCode?: number;
+  duration: number;
+}
+export interface Intervention {
+  createdAt?: number;
+  resolvedAt?: number;
+  id: string;
+  revision: number;
+  state: 'pending' | 'resolved';
+  reason: string;
+  question: string;
+  attemptId?: string;
+  taskId?: string;
+  conversationId: string;
+  answer?: string;
+}
+export interface RunInput {
+  requestId: string;
+  submissionId: string;
+  content: string;
+  mode: 'followUp' | 'steer';
+  status: 'queued' | 'consumed' | 'withdrawn';
+}
+export interface RunInspection {
+  commands: { id: string; command: string; state: string; startedAt: number }[];
+  conversations: {
+    id: string;
+    role: string;
+    tools: { id: string; name: string; status: string }[];
+    usage: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      messages: number;
+      estimatedCost?: number;
+      partial: boolean;
+    };
+  }[];
+}
+export interface WorkflowRun {
+  contractVersion?: 2;
+  implementations?: BoundImplementation[];
+  pendingRepairCauses?: string[];
+  proofIndexes?: string[];
+  proofWorkspaces?: {
+    id: string;
+    root: string;
+    commit: string;
+    base: string;
+    source: string;
+    state: 'prepared' | 'ready' | 'removed';
+    results?: NonNullable<RunEvidence['results']>;
+    inventory?: { digest: string; files: number };
+  }[];
+  cleanup?: { state: 'pending' | 'blocked'; message: string };
+  id: string;
+  revision: number;
+  mode: 'simulation' | 'real';
+  planningConversationId: string;
+  issueSnapshot?: { title: string; body: string; updatedAt: string };
+  workspace?: {
+    path: string;
+    branch: string;
+    base: string;
+    includedIgnored: string[];
+  };
+  publicationLocked?: boolean;
+  repository: RepositoryRegistration;
+  issue: IssueLink;
+  specification: Ticket;
+  specificationRevision: number;
+  configuration: Settings;
+  configurationRevision: number;
+  status: RunStatus;
+  stage: RunStage;
+  createdAt: number;
+  queueOrder: number;
+  base: string;
+  currentBase: string;
+  source: string;
+  quiescent: boolean;
+  repairCount: number;
+  repairLimit: number;
+  repairPending: boolean;
+  setupRequired: boolean;
+  developerConversationId: string;
+  attempts: StageAttempt[];
+  evidence: RunEvidence[];
+  evidenceHistory?: RunEvidence[];
+  inputs: RunInput[];
+  interventions: Intervention[];
+  decisions: {
+    operationId: string;
+    action: string;
+    at: number;
+    detail: string;
+  }[];
+  publication?: {
+    id: string;
+    payload?: { title: string; body: string; head: string; base: string };
+    state: 'prepared' | 'uncertain' | 'confirmed';
+    result?: string;
+    commit?: string;
+    tree?: string;
+    cleanupIgnored?: { digest: string; files: number };
+    pushed?: boolean;
+    pushState?: 'prepared' | 'sending' | 'confirmed' | 'uncertain';
+    prState?: 'prepared' | 'sending' | 'confirmed' | 'uncertain';
+    prNumber?: number;
+    prHead?: string;
+  };
+  stopTarget?: 'paused' | 'needs_input' | 'cancelled';
+}
+export interface WorkflowSnapshot {
+  enabled: boolean;
+  mode: 'simulation' | 'real' | 'disabled';
+  missingPrerequisites?: string[];
+  revision: number;
+  slot?: string;
+  runs: WorkflowRun[];
+}
+export type RunAction =
+  | 'pause'
+  | 'resume'
+  | 'cancel'
+  | 'answer'
+  | 'continue'
+  | 'adopt_configuration'
+  | 'adopt_specification'
+  | 'reconcile'
+  | 'revalidate';
+export interface RunCommand {
+  operationId: string;
+  expectedRevision: number;
+  action: RunAction;
+  interventionId?: string;
+  interventionRevision?: number;
+  answer?: string;
+}
+export interface WorkflowFrame {
+  apiVersion: typeof API_VERSION;
+  streamId: string;
+  sequence: number;
+  type: 'snapshot' | 'update';
+  snapshot: WorkflowSnapshot;
+}
+export class WorkflowReducer {
+  streamId = '';
+  sequence = 0;
+  snapshot?: WorkflowSnapshot;
+  apply(frame: WorkflowFrame) {
+    if (frame.apiVersion !== API_VERSION)
+      throw new ApiError(
+        'UNSUPPORTED_VERSION',
+        'Reload the application to use this workflow API.',
+        409,
+      );
+    if (
+      frame.type !== 'snapshot' &&
+      (frame.streamId !== this.streamId || frame.sequence !== this.sequence + 1)
+    ) {
+      if (frame.streamId === this.streamId && frame.sequence <= this.sequence)
+        return false;
+      throw new Error('Workflow stream requires a fresh snapshot.');
+    }
+    if (frame.streamId === this.streamId && frame.sequence <= this.sequence)
+      return false;
+    this.streamId = frame.streamId;
+    this.sequence = frame.sequence;
+    this.snapshot = frame.snapshot;
+    return true;
+  }
+}
+export class WorkflowClient extends FactoryClient {
+  inspection(id: string) {
+    return this.request<RunInspection>(
+      `/runs/${encodeURIComponent(id)}/inspection`,
+    );
+  }
+  workflow() {
+    return this.request<WorkflowSnapshot>('/runs');
+  }
+  run(id: string) {
+    return this.request<WorkflowRun>(`/runs/${encodeURIComponent(id)}`);
+  }
+  startRun(conversationId: string, operationId: string, newRun = false) {
+    return this.mutation<WorkflowRun>('/runs', 'POST', {
+      conversationId,
+      operationId,
+      newRun,
+    });
+  }
+  startIssue(issueNumber: number, operationId: string) {
+    return this.mutation<WorkflowRun>('/runs', 'POST', {
+      issueNumber,
+      operationId,
+    });
+  }
+  newRun(id: string, operationId: string) {
+    return this.mutation<WorkflowRun>('/runs', 'POST', {
+      sourceRunId: id,
+      operationId,
+      newRun: true,
+    });
+  }
+  command(id: string, command: RunCommand) {
+    return this.mutation<WorkflowRun>(
+      `/runs/${encodeURIComponent(id)}/commands`,
+      'POST',
+      command,
+    );
+  }
+  watchRuns(
+    onSnapshot: (snapshot: WorkflowSnapshot) => void,
+    onConnection: (connected: boolean) => void,
+  ) {
+    const reducer = new WorkflowReducer();
+    let stopped = false;
+    let retry: ReturnType<typeof setTimeout>;
+    let source: EventSource;
+    let watchdog: ReturnType<typeof setTimeout>;
+    const open = () => {
+      if (stopped) return;
+      source = new EventSource(`${this.baseUrl}/api/v1/runs/events`);
+      const touch = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(reconnect, 45000);
+      };
+      const reconnect = () => {
+        source.close();
+        clearTimeout(watchdog);
+        onConnection(false);
+        if (!stopped) retry = setTimeout(open, 1000);
+      };
+      source.onopen = () => {
+        onConnection(true);
+        touch();
+      };
+      source.addEventListener('heartbeat', touch);
+      source.onmessage = (event) => {
+        try {
+          const frame = JSON.parse(event.data) as WorkflowFrame;
+          if (reducer.apply(frame)) onSnapshot(frame.snapshot);
+          touch();
+        } catch {
+          reconnect();
+        }
+      };
+      source.onerror = reconnect;
+    };
+    open();
+    return () => {
+      stopped = true;
+      source?.close();
+      clearTimeout(retry);
+      clearTimeout(watchdog);
+    };
+  }
+}
