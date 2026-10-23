@@ -1,6 +1,6 @@
 # Durable Factory — Architecture
 
-Status: architecture reference; stages 1–2 complete. Later workflow capabilities remain planned. See IMPLEMENTATION.md for delivery status.
+Status: architecture reference; stages 1–4 complete. Later workflow capabilities remain planned. See IMPLEMENTATION.md for delivery status.
 
 ## Purpose and first-version boundary
 
@@ -76,15 +76,15 @@ The role-specific workflow, React inspector, intervention records, and GitHub re
 
 One local background service serves the built React application and its API, and owns GitHub polling, the queue, run admission, Git operations, check execution, and browser updates. Use TypeScript on a supported Node.js runtime as the initial implementation direction, with Pi Durable and pi-ai versions pinned together after compatibility verification.
 
-Run independently of the browser. A local service supervisor starts it again after failure or login. A sleeping or powered-off computer performs no work; recovery begins when the service runs again. Bind the application to localhost for the personal first version.
+Run independently of the browser. Startup is currently manual through the repository Bun command; automatic startup at login is deferred. A sleeping or powered-off computer performs no work; recovery begins when the service runs again. Bind the application to localhost for the personal first version.
 
-Keep persistent databases, private credentials, logs, artifacts, and archives in a configurable application-data directory outside the application source checkout and target repository. Separate replaceable program code from runtime data. Worktrees remain run-scoped and their paths are recorded for recovery.
+Keep persistent databases, private credentials, logs and artifacts in a configurable application-data directory outside the application source checkout and target repository. Separate replaceable program code from runtime data. Worktrees remain run-scoped and their paths are recorded for recovery.
 
 Expose process health separately from readiness. Health indicates that the process responds; readiness indicates that storage ownership is established and startup reconciliation has finished enough to admit work safely. A failed provider connection blocks the affected operation, not the whole application's inspection UI. Report startup recovery progress, unavailable runs, and unresolved external operations in the application.
 
 On graceful shutdown, stop admission and scheduling, checkpoint supported work, and stop or account for child processes before releasing storage ownership. Interrupted unsafe commands remain subject to recovery inspection. Emit structured service logs with run, task, conversation, stage-attempt, and external-operation IDs where applicable; redact credentials and avoid logging full provider payloads by default.
 
-Back up SQLite using a consistent SQLite-aware snapshot, or quiesce writes and close the databases before copying them; do not copy only a live database file while ignoring its journal/WAL state. Include referenced artifacts and configuration in the backup set, and handle credentials as separately protected material. Archive records and associated data before explicit deletion; neither cancellation nor archiving deletes worktrees or GitHub objects automatically. Cleanup remains an explicit action.
+Future backup tooling must use a consistent SQLite-aware snapshot, or quiesce writes and close the databases before copying them; do not copy only a live database file while ignoring its journal/WAL state. Include referenced artifacts and configuration in the backup set, and handle credentials as separately protected material. The agreed first-version cleanup permanently removes local run data automatically after GitHub confirms the original PR is merged and the issue is closed, once work is quiescent and resource ownership/content checks pass. Shared planning conversations remain until unreferenced; no archive or permanent run marker is retained. Cancellation does not delete worktrees or GitHub objects. Backup/restore tooling is deferred.
 
 ### Pi Durable and SQLite
 
@@ -189,7 +189,7 @@ If the third repair still fails validation, pause with the latest evidence and u
 
 Publish only the exact source identity that passed both checks and review under the run's effective configuration revision. Immediately before publication, verify those identities and confirm developer work is stopped and no developer input remains undelivered. If the source or effective configuration differs, invalidate affected evidence and return through validation before publishing. Before publishing, verify that the base branch has not moved; if it has, update the branch and rerun validation. Conflicts return to the developer under the existing repair-accounting rules, or pause if user input is required. No automatic developer edits are allowed during publication or after PR readiness.
 
-Commit locally and verify that the resulting commit tree matches the validated source identity before pushing. If commit hooks or staging change the intended content, invalidate affected evidence and return through validation. Then push the dedicated branch and open a non-draft PR referencing the issue. Include the change summary, checks performed, review result, and any non-blocking observations. Record the PR URL and mark the run `pr_ready`. Never merge automatically. Keep the issue open until the user merges or closes it through their normal GitHub workflow.
+Commit locally and verify that the resulting commit tree matches the validated source identity before pushing. If commit hooks or staging change the intended content, invalidate affected evidence and return through validation. Then push the dedicated branch and open a non-draft PR referencing the issue. Include the change summary, checks performed, review result, and any non-blocking observations. Before any remote write, hook-produced content may repeat service-controlled checks and fresh review through an explicit intervention; implementation input stays closed. Further developer edits require a new run. Record the PR URL and mark the run `pr_ready`. Never merge automatically. Keep the issue open until the user merges or closes it through their normal GitHub workflow.
 
 ## Durable state and recovery
 
@@ -250,7 +250,7 @@ Force service termination at stage boundaries, during safe and unsafe tools, aft
 
 Test stream snapshots, heartbeat loss, slow-client eviction, reconnect backoff, duplicate submissions, withdrawal races, stale/conflicting answers, and cancellation propagation. Use browser tests for the run inspector, queued input, restored conversations, and pending questions. Verify old history is searchable after compaction and updates remain revision-safe across two browser tabs.
 
-Exercise provider errors, token refresh, usage-limit handling, and explicit provider changes with deterministic offline adapters. Include service shutdown/restart and backup/restore smoke scenarios using disposable data. Automated verification must not depend on production repositories, provider accounts, or paid calls.
+Exercise provider errors, token refresh, usage-limit handling, and explicit provider changes with deterministic offline adapters. Include service shutdown/restart and merged-run cleanup scenarios using disposable data. Backup/restore smoke scenarios are deferred with backup tooling. Automated verification must not depend on production repositories, provider accounts, or paid calls.
 
 ## Acceptance scenarios
 
@@ -280,7 +280,7 @@ Exercise provider errors, token refresh, usage-limit handling, and explicit prov
 24. Required role tools are configured through the harness and service: the reviewer cannot edit, run unrestricted shell commands, or publish changes.
 25. After compaction, paginated history and scoped agent search retrieve earlier decisions; the current specification and unresolved findings remain in durable documents.
 26. A slow or silent stream reconnects from a fresh snapshot with bounded buffers and no duplicate results; unsupported API versions produce an explicit error.
-27. Application upgrades leave external runtime data intact; consistent backup and restore recover conversations, evidence, and pending interventions.
+27. Application upgrades leave external runtime data intact. Merged-run cleanup removes local run data only after confirmed PR merge and issue closure, preserving other runs and shared planning. Backup/restore is deferred.
 28. A deterministic offline suite exercises success, repair exhaustion, external-action reconciliation, provider failure, stale updates, and forced restarts without provider accounts or paid model calls.
 29. Changing repository check/setup settings leaves an existing run's captured configuration unchanged; explicit adoption records a new revision, repeats setup/baseline where needed, and invalidates affected evidence.
 30. Developer mutations stop before checks/review. Source changes during validation invalidate affected evidence; committed generated files remain part of the source identity, while disposable build output does not.
@@ -303,3 +303,7 @@ Provider support and APIs must be checked against the pinned versions during imp
 - [durable-pi durable job record types](https://github.com/disler/durable-pi/blob/main/apps/dpi-sdk/src/jobs.ts)
 - [durable-pi storage layout](https://github.com/disler/durable-pi/blob/main/apps/dpi-backend/README.md#layout-on-a-device)
 - [durable-pi backend testing and recovery checks](https://github.com/disler/durable-pi/blob/main/apps/dpi-backend/README.md#development)
+
+## Handoffs and evidence extension
+
+The combined handoffs release extends the existing documents and `/api/v1` snapshots, without another queue, database, model role or agent loop. New real runs pin contract version 2; absent versions retain the legacy contract. Planning persists explicit numbered criteria and regression requirements and previews the entire issue before authorization. Developer reports, criterion assessments and optional regression evidence bind to existing candidate/configuration/specification identities. Temporary proof worktrees have durable ownership and supervised commands. Inspection derives the timeline from existing workflow records, and publication freezes its deterministic PR payload before dispatch. See docs/PLANNING.md and docs/WORKFLOW.md for the executable contract and compatibility behavior.

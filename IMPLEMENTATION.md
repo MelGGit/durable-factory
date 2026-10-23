@@ -1,6 +1,6 @@
 # Durable Factory — Implementation Roadmap
 
-Status: stages 1–2 complete, backed by the implemented foundation and passing offline tests. Later application stages have not started.
+Status: stages 1–8 complete under the agreed stage 8 scope, including real isolated development, checks, independent review, reconciled GitHub PR publication, and ready-label admission. Verification uses deterministic models, disposable Git repositories, and fake GitHub transport. Stage 8 adds manual local operation, inspection and merged-run cleanup; backup/restore and startup at login are explicitly deferred by agreement; account-backed access is not claimed by offline evidence.
 
 This roadmap accompanies [ARCHITECTURE.md](ARCHITECTURE.md). It describes implementation order, dependencies, deliverables, and the evidence required to finish each stage. The architecture remains the detailed behavior reference. The subsequently agreed Bun frontend tooling and GitHub token setup are recorded here; this roadmap does not rewrite the architecture document.
 
@@ -76,6 +76,8 @@ Cross-cutting rules for all stages:
 
 ## Stage 3 — Deliver durable web chat
 
+**Status:** Complete. Planning chat is the home screen; settings remain available at `/settings`. The shared client handles ordered SSE snapshots/updates, heartbeat recovery, history pagination, and submission reconciliation. Offline tools cover detailed transcript rendering; stage 4 adds production planning tools. At stage 3 completion, developer steering and reviewer restrictions had contract/fixture coverage; stages 5–7 now connect them to run execution. See [docs/CHAT.md](docs/CHAT.md) and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
+
 **Objective:** Make the persistent agent useful from the browser, including detailed inspection of its work.
 
 **Dependencies:** Stage 2's service, configuration, and shared contract.
@@ -93,6 +95,8 @@ Cross-cutting rules for all stages:
 
 ## Stage 4 — Complete planning → GitHub issue
 
+**Status:** Complete. Planning tools inspect current repository files and scoped history, persist revisioned tickets, and propose issue creation in chat. Affirmative replies authorize the proposed revision through service checks. The service-owned GitHub adapter validates access and reconciles issue operations using hidden markers. Offline tests cover duplicate approvals, rejection/uncertainty, pagination, stale approval, upgrade, token errors, repository boundaries and filters, and SIGKILL after issue creation. Browser verification covers ticket display, chat approval, retry, restart, GitHub validation, and mobile layout. Stage 4 itself did not implement development admission; stages 5–7 now provide it. See [the planning contract](docs/PLANNING.md) and [compatibility evidence](docs/COMPATIBILITY.md).
+
 **Objective:** Turn an agreed planning conversation into exactly one linked GitHub issue.
 
 **Dependencies:** Stage 3's durable chat and Stage 2's private configuration storage.
@@ -109,6 +113,8 @@ Cross-cutting rules for all stages:
 **Completion gate:** An explicit user instruction creates one issue from the agreed ticket and persists the link. Repeated submissions or ambiguous responses do not create duplicates. No development starts implicitly.
 
 ## Stage 5 — Implement the workflow using deterministic fake agents
+
+**Status:** Complete. Explicit simulation mode runs durable Pi stage tasks against scripted adapters, with a serial queue, captured settings/specification, revision-bound evidence, interventions, repair accounting, deadline/cancellation handling, and an activity inspector. Offline and browser evidence includes forced termination at validation, repair, question, and publication boundaries. Stage 5 establishes simulation only; stages 6–7 add real execution/publication adapters with offline verification. See [the workflow contract](docs/WORKFLOW.md) and [compatibility evidence](docs/COMPATIBILITY.md).
 
 **Objective:** Validate orchestration independently of unpredictable model behavior.
 
@@ -130,6 +136,8 @@ Cross-cutting rules for all stages:
 
 ## Stage 6 — Add real development, checks, and independent review
 
+**Status:** Complete. Real Pi agents use role-scoped worktree/candidate tools, supervised commands, baseline/check gates, structured review, and captured commit identity. Offline cases cover generated content, source changes, steering/withdrawal, provider deadlines, detached children and forced service termination. Worktree isolation is an application boundary, not an OS sandbox.
+
 **Objective:** Produce a verified local implementation from an issue.
 
 **Dependencies:** Stage 5's tested orchestration and the existing provider registration and credential integration.
@@ -149,6 +157,8 @@ Cross-cutting rules for all stages:
 
 ## Stage 7 — Publish PRs and add GitHub label triggers
 
+**Status:** Complete. Service-owned commit/push/PR operations use persisted identity, private credential delivery, base integration and commit-tree verification. Offline Git and fake-GitHub cases cover lost PR responses, startup/manual label races, commit/push/PR crashes, hook revalidation, and stable new-run retries. No live account write or paid call was used.
+
 **Objective:** Complete the handoff to GitHub and support unattended admission through the agreed label.
 
 **Dependencies:** Stage 6's validated change, Stage 4's GitHub adapter/token, and Stage 5's admission/recovery logic.
@@ -165,34 +175,39 @@ Cross-cutting rules for all stages:
 
 **Completion gate:** One issue produces one run and one ready-for-review PR under duplicate triggers and interruptions. Evidence matches the published change and effective configuration revision, with an identity check immediately before publication. Pending developer input is resolved before publishing; input during publication or after PR readiness cannot trigger automatic developer edits. No automatic merge occurs; no future publication starts after cancellation is observed.
 
-## Stage 8 — Finish local operation, inspection, and backup/restore
+## Stage 8 — Finish local operation, inspection, and merged-run cleanup
 
-**Objective:** Make the complete first version dependable for everyday personal use.
+**Status:** Implemented; verification is recorded in docs/COMPATIBILITY.md. Backup/restore and startup at login are deferred by agreement. The original archive/backup deliverables are replaced with automatic permanent cleanup after merge.
 
-**Dependencies:** Stages 1–7. Extend the minimal inspectors and health reporting already built rather than adding observability only now.
+**Objective:** Make the first version usable locally, with manual Bun startup and safe automatic removal of completed work.
 
 **Deliverables:**
 
-- Completed inspector for stages, active checks/tools, repair count, pending questions, role models, recovery events, and available usage data with clearly labelled cost estimates.
-- Local service startup at login, graceful shutdown, recovery reporting, and a usable settings flow for reconnecting providers or replacing the GitHub token.
-- Archive/explicit cleanup controls, consistent SQLite backup/restore, artifact retention, and documented handling of credentials and preserved worktrees.
-- Full browser and disposable-repository end-to-end coverage, setup instructions, and operating/troubleshooting notes.
+- Complete the inspector with active commands/tools, captured role models, repair counts, pending questions, recovery events, reported token usage and explicitly labelled cost estimates/unavailable values.
+- Retain `bun run start` after building, graceful shutdown/recovery, and settings/diagnostic instructions for reconnecting all three model connections or replacing the GitHub token. No login service is installed.
+- Reject closed GitHub issues through all real admission paths. Poll original PR identities on startup and every 30 seconds; clean up only after confirmed merge and issue closure.
+- Persist cleanup intent, wait for idle maintenance and confirmed process quiescence, verify worktree/branch ownership/content, and remove all run-owned files and records. Delete the planning conversation only if unshared. Keep settings, credentials, unrelated runs and GitHub objects.
+- Close Pi under exclusive ownership before schema-version-checked SQLite maintenance. Purge scoped entries/tasks/submissions/documents and historical session revisions, including agent-operation records and admission receipts. Retry interrupted filesystem phases safely; show blocked cleanup in the inspector. No archive or permanent local completion record remains.
 
-**Recovery verification:** Exercise browser closure, abrupt service termination, provider limits, token expiry, shutdown with active processes, and restoration into a disposable application-data directory. Verify restored questions, evidence, artifacts, and uncertain external operations.
+**Recovery verification:** Exercise browser reconnection, shutdown/restart, merge/issue state delays, changed worktrees, active processes, partial cleanup and incompatible storage. Use deterministic providers, disposable repositories and fake GitHub transport, with no account-backed writes or paid calls.
 
-**Completion gate:** Complete plan → issue → failed check → repair → independent review → PR using a disposable repository, including injected restarts. The app can resume safely or explain the required intervention. All three model connections remain supported, one active development run is enforced, and merging remains a user action.
+**Completion gate:** Plan → issue → failed check → repair → independent review → PR, including a restart, followed by confirmed merge/closure and automatic local cleanup. Shared planning, other runs/settings/credentials survive. Closed issues cannot restart after local deletion. One active development run and human-only merge remain enforced.
 
 ## First-version completion checklist
 
-- [ ] All eight stage gates have recorded results.
-- [ ] Offline workflow/recovery tests pass without paid model calls.
+- [x] All eight stage gates have recorded results.
+- [x] Offline workflow/recovery tests pass without paid model calls.
 - [x] Requesty, OpenAI subscription, and Anthropic subscription connections and private credential handling are implemented.
-- [ ] The user can inspect and steer development while preserving the agreed specification and validation rules.
-- [ ] Manual and label starts converge on the same durable admission operation.
-- [ ] Interrupted external operations reconcile without duplicate issues or PRs.
-- [ ] Backup/restore, local service startup, and explicit intervention paths are documented and exercised.
-- [ ] The implementation retains the architecture's one-repository, one-active-run, human-merge boundaries.
-- [ ] Per-run check/setup/timeout configuration remains stable unless explicitly adopted, with affected evidence invalidated.
-- [ ] Validation/publication uses the same intended commit content, including committed generated files, and automatic developer mutations stop during validation/publication.
-- [ ] Late developer input follows stage-boundary rules and never silently resets or bypasses the repair budget.
-- [ ] Unconfirmed process termination remains visible and retains the execution slot until reconciled.
+- [x] The user can inspect and steer development while preserving the agreed specification and validation rules.
+- [x] Manual and label starts converge on the same durable admission operation.
+- [x] Interrupted external operations reconcile without duplicate issues or PRs.
+- [x] Manual local startup, merged-run cleanup and explicit intervention paths are documented and exercised; backup/restore and startup at login are deferred.
+- [x] The implementation retains the architecture's one-repository, one-active-run, human-merge boundaries.
+- [x] Per-run check/setup/timeout configuration remains stable unless explicitly adopted, with affected evidence invalidated.
+- [x] Validation/publication uses the same intended commit content, including committed generated files, and automatic developer mutations stop during validation/publication.
+- [x] Late developer input follows stage-boundary rules and never silently resets or bypasses the repair budget.
+- [x] Unconfirmed process termination remains visible and retains the execution slot until reconciled.
+
+## Combined handoffs and evidence release
+
+Adds explicit approved issue criteria/regression requirements, developer implementation reports, criterion-based independent review, supervised before/after regression proof, a chronological inspector and deterministic frozen PR descriptions. New real runs capture contract version 2; older runs retain legacy behavior. Verification covers pure contract validation, temporary-repository integration, forced termination, browser rendering/reconnect, and existing workflow/cleanup regressions. No account-backed model/GitHub evidence is implied by offline testing.
