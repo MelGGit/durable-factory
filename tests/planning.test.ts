@@ -17,6 +17,7 @@ import { ChatClient } from '../packages/shared/src/index.js';
 import { configure, until } from './fixtures/chat.js';
 import { FakeGitHub, planningFixture, ticket } from './fixtures/planning.js';
 import { RepositoryReader } from '../apps/server/src/repository.js';
+import { ticketBody } from '../apps/server/src/planning.js';
 
 async function setup(github = new FakeGitHub()) {
   const directory = await mkdtemp(join(tmpdir(), 'factory-planning-'));
@@ -62,6 +63,49 @@ async function send(
   return submission;
 }
 
+test('saved tickets and proposals remain serializable after commits, replays, and later changes', async () => {
+  const s = await setup();
+  try {
+    const id = s.conversation.id;
+    const saved = await s.service.planning.save(id, ticket, 'save');
+    const expected = (await s.service.planning.read(id))!.ticket!;
+    const responses: unknown[] = [];
+    const serialized: string[] = [];
+    const remember = (value: unknown) => {
+      const json = JSON.stringify(value);
+      responses.push(value);
+      serialized.push(json);
+      return JSON.parse(json);
+    };
+    assert.deepEqual(remember(saved), expected);
+    assert.deepEqual(
+      remember(await s.service.planning.save(id, ticket, 'save')),
+      expected,
+    );
+    assert.deepEqual(
+      remember(await s.service.planning.save(id, ticket, 'unchanged-save')),
+      expected,
+    );
+    const proposal = remember(await s.service.planning.propose(id));
+    assert.deepEqual(proposal.ticket, expected);
+    assert.equal(proposal.issueBody, ticketBody(expected));
+    assert.deepEqual(remember(await s.service.planning.propose(id)), proposal);
+    await s.service.planning.save(
+      id,
+      { ...ticket, goal: 'A changed goal' },
+      'changed-save',
+    );
+    assert.equal((await s.service.planning.read(id))!.ticket!.revision, 2);
+    responses.forEach((value, index) => {
+      assert.equal(JSON.stringify(value), serialized[index]);
+    });
+    assert.equal(s.github.calls, 0);
+  } finally {
+    await s.service.close();
+    await rm(s.directory, { recursive: true, force: true });
+  }
+});
+
 test('planner tools save and propose, explicit chat approval creates one issue and snapshots restore', async () => {
   const s = await setup();
   let stop: (() => void) | undefined;
@@ -80,6 +124,20 @@ test('planner tools save and propose, explicit chat approval creates one issue a
       (p) => Boolean(p?.proposal),
     );
     assert.equal(planning.ticket.title, ticket.title);
+    const results = (await s.client.history(s.conversation.id)).entries
+      .flatMap((entry) => entry.tools)
+      .filter((tool) => tool.output !== undefined);
+    assert.deepEqual(
+      results.map((tool) => [tool.name, tool.status]),
+      [
+        ['save_ticket', 'completed'],
+        ['propose_issue', 'completed'],
+      ],
+    );
+    assert.deepEqual(JSON.parse(results[0].output!), planning.ticket);
+    const proposal = JSON.parse(results[1].output!);
+    assert.deepEqual(proposal.ticket, planning.ticket);
+    assert.equal(proposal.issueBody, ticketBody(planning.ticket));
     assert.equal(s.github.calls, 0);
     await send(s.client, s.conversation.id, 'force create', 'unauthorized');
     assert.equal(s.github.calls, 0);
@@ -92,12 +150,19 @@ test('planner tools save and propose, explicit chat approval creates one issue a
     assert.equal(s.github.calls, 1);
     assert.equal(planning.operation.requestId, 'approval-1');
     assert.ok(s.github.issues[0].body.includes('<!-- durable-factory:issue:'));
+    const existing = await s.service.planning.propose(s.conversation.id);
+    const existingJson = JSON.stringify(existing);
+    assert.deepEqual(
+      JSON.parse(existingJson),
+      await s.service.planning.read(s.conversation.id),
+    );
     await s.client.submit(s.conversation.id, 'yes', 'approval-1');
     await Promise.all([
       s.service.planning.create(s.conversation.id),
       s.service.planning.create(s.conversation.id),
     ]);
     assert.equal(s.github.calls, 1);
+    assert.equal(JSON.stringify(existing), existingJson);
     const identity = planning.repository.id;
     stop();
     stop = undefined;

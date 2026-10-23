@@ -73,6 +73,10 @@ function conflict(message: string): never {
   throw new ApiError('CONFLICT', message, 409);
 }
 export const ticketBody = formatTicketBody;
+// Transaction overlays cannot be read after their commit settles.
+function copyJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
 export const operationMarker = (id: string) =>
   `<!-- durable-factory:issue:${id} -->`;
 export class PlanningService {
@@ -191,7 +195,7 @@ export class PlanningService {
       const state = doc.value;
       signal?.throwIfAborted();
       if (!state) conflict('Repository registration is missing.');
-      if (doc.saves[callId]) return state.ticket;
+      if (doc.saves[callId]) return copyJson(state.ticket);
       if (state.operation)
         conflict('Issue creation already has a saved ticket.');
       for (const [key, maximum] of Object.entries({
@@ -241,7 +245,7 @@ export class PlanningService {
         delete state.authorization;
       }
       doc.saves[callId] = state.ticket!.revision;
-      return state.ticket;
+      return copyJson(state.ticket);
     }, context);
   }
   async propose(id: string, signal?: AbortSignal) {
@@ -251,14 +255,14 @@ export class PlanningService {
       signal?.throwIfAborted();
       if (!state?.ticket)
         conflict('Save a complete ticket before proposing it.');
-      if (state.operation) return state;
+      if (state.operation) return copyJson(state);
       state.proposal ??= { id: randomUUID(), revision: state.ticket.revision };
-      return {
+      return copyJson({
         ticket: state.ticket,
         issueBody: ticketBody(state.ticket),
         question:
           'Should I create this GitHub issue? Reply yes to create it, or describe changes.',
-      };
+      });
     }, context);
   }
   async create(id: string, signal?: AbortSignal) {
