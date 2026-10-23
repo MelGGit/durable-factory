@@ -4,7 +4,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, open } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import {
   API_VERSION,
@@ -20,8 +20,34 @@ import {
   sourceRoot,
 } from './runtime.js';
 import { PrivateCredentials } from './credentials.js';
-import { openConfiguration } from './storage.js';
-import { providerStatuses } from './providers.js';
+import { openConfiguration, context } from './storage.js';
+import { providerStatuses, createFactoryModels } from './providers.js';
+import { createRegistry } from '@earendil-works/pi-durable';
+import {
+  ChatService,
+  Catalog,
+  recordingTools,
+  outputPage,
+  type ChatDependencies,
+} from './chat.js';
+import { PlanningService } from './planning.js';
+import { createGitHub, GitHubFailure, type GitHubAdapter } from './github.js';
+import {
+  WorkflowService,
+  workflowExtension,
+  simulationAdapter,
+  type WorkflowAdapter,
+  type WorkflowClock,
+} from './workflow.js';
+import { RealWorkflow } from './real-workflow.js';
+import { ProcessSupervisor } from './processes.js';
+import {
+  cleanupSnapshot,
+  purgeRunStorage,
+  cleanupWorkspace,
+  cleanupArtifacts,
+} from './cleanup.js';
+import { Workspaces } from './workspace.js';
 import { parseUpdate, validateSettings } from './validation.js';
 
 export interface ServiceOptions {
@@ -29,6 +55,12 @@ export interface ServiceOptions {
   port?: number;
   development?: boolean;
   webDir?: string;
+  chat?: ChatDependencies;
+  github?: GitHubAdapter;
+  workflow?: { adapter: WorkflowAdapter; clock?: WorkflowClock };
+  workflowMode?: 'simulation' | 'real' | 'disabled';
+  /** Disposable local transport for offline real-workflow verification only. */
+  workflowRemote?: string;
 }
 export async function startService(options: ServiceOptions = {}) {
   const csrfToken = randomBytes(32).toString('hex');
@@ -38,7 +70,31 @@ export async function startService(options: ServiceOptions = {}) {
   let ownership: Awaited<ReturnType<typeof acquireOwnership>> | undefined;
   let configuration: Awaited<ReturnType<typeof openConfiguration>> | undefined;
   let credentials: PrivateCredentials;
+  let chat: ChatService | undefined;
+  let planning: PlanningService;
+  let github: GitHubAdapter;
+  let workflow: WorkflowService;
+  let processes: ProcessSupervisor;
+  let workspaces: Workspaces;
+  let maintenance = false;
+  let runtimeOpen = false;
+  let reopeningNeeded = false;
+  let reopeningUnsafe = false;
+  let reopeningAttempts = 0;
+  let reopeningTimer: ReturnType<typeof setTimeout> | undefined;
+  const maxReopeningAttempts = 3;
+  let cleanupTimer: ReturnType<typeof setInterval> | undefined;
+  let cleanupPolling: Promise<void> | undefined;
+  let nextCleanupPoll = 0;
+  const mode =
+    options.workflowMode ?? process.env.DURABLE_FACTORY_WORKFLOW_MODE ?? 'real';
+  if (!['disabled', 'simulation', 'real'].includes(mode))
+    throw new Error('Invalid workflow mode');
   let activeMutations = new Set<Promise<unknown>>();
+  let labelTimer: ReturnType<typeof setInterval> | undefined;
+  let labelPolling: Promise<void> | undefined;
+  let nextLabelPoll = 0;
+  let labelAbort = new AbortController();
   let port = options.port ?? 4317;
   const send = (res: ServerResponse, status: number, body: unknown) => {
     res.writeHead(status, {
@@ -105,7 +161,8 @@ export async function startService(options: ServiceOptions = {}) {
         'Cross-site requests are not allowed.',
         403,
       );
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const path = url.pathname;
     if (path === '/health' && req.method === 'GET')
       return send(res, 200, { status: 'healthy' });
     if (path === '/ready' && req.method === 'GET')
@@ -124,7 +181,7 @@ export async function startService(options: ServiceOptions = {}) {
         400,
       );
     if (path.startsWith('/api/v1/')) {
-      if (!ready || stopping)
+      if (!ready || stopping || maintenance)
         throw (
           startupError ??
           new ApiError(
@@ -148,6 +205,153 @@ export async function startService(options: ServiceOptions = {}) {
       }
       if (path === '/api/v1/session' && req.method === 'GET')
         return send(res, 200, { apiVersion: API_VERSION, csrfToken });
+      if (path === '/api/v1/runs/events' && req.method === 'GET')
+        return workflow.stream(res);
+      if (path === '/api/v1/runs') {
+        if (req.method === 'GET')
+          return send(res, 200, await workflow.snapshot());
+        if (req.method === 'POST')
+          return send(res, 202, await workflow.admit(await body(req)));
+      }
+      const commandArtifact =
+        /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/artifacts\/([A-Za-z0-9_-]+)$/.exec(
+          path,
+        );
+      if (commandArtifact && req.method === 'GET') {
+        const record = (await processes.records(commandArtifact[1])).find(
+          (r) => r.id === commandArtifact[2],
+        );
+        if (!record)
+          throw new ApiError('NOT_FOUND', 'Command output not found.', 404);
+        const offset = Number(url.searchParams.get('offset') ?? 0);
+        if (!Number.isSafeInteger(offset) || offset < 0)
+          throw new ApiError('INVALID_INPUT', 'Invalid output offset.', 400);
+        const file = await open(record.artifact, 'r');
+        try {
+          const size = (await file.stat()).size,
+            buffer = Buffer.alloc(65540);
+          const { bytesRead } = await file.read(
+            buffer,
+            0,
+            buffer.length,
+            offset,
+          );
+          return send(
+            res,
+            200,
+            outputPage(buffer.subarray(0, bytesRead), offset, size),
+          );
+        } finally {
+          await file.close();
+        }
+      }
+      const inspectionRoute =
+        /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/inspection$/.exec(path);
+      if (inspectionRoute && req.method === 'GET') {
+        const run = await workflow.get(inspectionRoute[1]);
+        const conversations = [
+          ...new Set([
+            run.developerConversationId,
+            ...run.attempts.map((a) => a.conversationId),
+          ]),
+        ];
+        return send(res, 200, {
+          conversations: await Promise.all(
+            conversations.map((id) => chat!.inspectConversation(id)),
+          ),
+          commands: (await processes.records(run.id))
+            .filter((r) => r.state !== 'finished')
+            .map((r) => ({
+              id: r.id,
+              command: r.command,
+              state: r.state,
+              startedAt: r.startedAt,
+            })),
+        });
+      }
+      const runRoute =
+        /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)(?:\/(commands))?$/.exec(path);
+      if (runRoute) {
+        if (req.method === 'GET' && !runRoute[2])
+          return send(res, 200, await workflow.get(runRoute[1]));
+        if (req.method === 'POST' && runRoute[2])
+          return send(
+            res,
+            200,
+            await workflow.command(runRoute[1], await body(req)),
+          );
+      }
+      if (path === '/api/v1/github/validate' && req.method === 'POST') {
+        await body(req);
+        return send(
+          res,
+          200,
+          await github.validate(
+            (await configuration!.read()).settings.repository.github,
+          ),
+        );
+      }
+      const issueRetry = /^\/api\/v1\/conversations\/(\d+)\/issue\/retry$/.exec(
+        path,
+      );
+      if (issueRetry && req.method === 'POST') {
+        await body(req);
+        await chat!.summary(issueRetry[1]);
+        return send(res, 200, await planning.retry(issueRetry[1]));
+      }
+      if (path === '/api/v1/conversations') {
+        if (req.method === 'GET')
+          return send(res, 200, { conversations: await chat!.list() });
+        if (req.method === 'POST')
+          return send(res, 201, await chat!.create(await body(req)));
+      }
+      const chatRoute =
+        /^\/api\/v1\/conversations\/([A-Za-z0-9_-]+)\/(history|events|submissions|interrupt|artifacts)(?:\/([A-Za-z0-9_-]+)(?:\/(withdraw))?)?$/.exec(
+          path,
+        );
+      if (chatRoute) {
+        const [, id, action, item, operation] = chatRoute;
+        const query = new URL(req.url!, 'http://localhost').searchParams;
+        if (action === 'events' && req.method === 'GET')
+          return chat!.stream(id, res);
+        if (action === 'history' && req.method === 'GET')
+          return send(
+            res,
+            200,
+            await chat!.history(
+              id,
+              query.get('cursor') ?? undefined,
+              Number(query.get('limit') ?? 50),
+            ),
+          );
+        if (action === 'submissions' && !item && req.method === 'GET')
+          return send(
+            res,
+            200,
+            await chat!.lookup(id, query.get('requestId') ?? ''),
+          );
+        if (action === 'submissions' && !item && req.method === 'POST')
+          return send(res, 202, await chat!.submit(id, await body(req)));
+        if (
+          action === 'submissions' &&
+          item &&
+          operation === 'withdraw' &&
+          req.method === 'POST'
+        ) {
+          await body(req);
+          return send(res, 200, await chat!.withdraw(id, item));
+        }
+        if (action === 'interrupt' && req.method === 'POST') {
+          await body(req);
+          return send(res, 202, await chat!.interrupt(id));
+        }
+        if (action === 'artifacts' && item && req.method === 'GET')
+          return send(
+            res,
+            200,
+            await chat!.artifact(id, item, Number(query.get('offset') ?? 0)),
+          );
+      }
       if (path === '/api/v1/settings' && req.method === 'GET')
         return send(res, 200, await snapshot());
       if (path === '/api/v1/providers' && req.method === 'GET')
@@ -275,14 +479,233 @@ export async function startService(options: ServiceOptions = {}) {
       resolve();
     });
   });
+  async function initializeRuntime() {
+    let openedConfiguration: typeof configuration;
+    let openedWorkflow: WorkflowService | undefined;
+    let openedChat: ChatService | undefined;
+    try {
+      const factoryModels = createFactoryModels(credentials);
+      const models = options.chat?.models ?? factoryModels;
+      planning = new PlanningService(
+        () => configuration!.harness,
+        github,
+        (id, query) => chat!.searchHistory(id, query),
+      );
+      const registry = createRegistry();
+      const workflowTasks = workflowExtension(() => workflow);
+      registry.install(workflowTasks.extension);
+      registry.install(
+        recordingTools(ownership!.dataDir, [
+          ...planning.tools(),
+          ...(options.chat?.tools ?? []),
+        ]),
+      );
+      openedConfiguration = await openConfiguration(ownership!.dataDir, {
+        models,
+        registry,
+        settings: { retry: { maxRetries: 0 } },
+      });
+      configuration = openedConfiguration;
+      const requestyIds = new Set<string>();
+      const registerRequesty = (id: string) => {
+        if (options.chat || requestyIds.has(id)) return;
+        requestyIds.add(id);
+        factoryModels.setProvider(
+          createFactoryModels(credentials, [...requestyIds]).getProvider(
+            'requesty',
+          )!,
+        );
+      };
+      processes = new ProcessSupervisor(
+        configuration.harness,
+        ownership!.dataDir,
+      );
+      workspaces = new Workspaces(
+        ownership!.dataDir,
+        processes,
+        credentials,
+        options.workflowRemote,
+      );
+      const real = new RealWorkflow({
+        harness: () => configuration!.harness,
+        workflow: () => workflow,
+        dataDir: ownership!.dataDir,
+        github,
+        processes,
+        workspaces,
+        settings: async () => (await configuration!.read()).settings,
+        credentialStatus: async () => (await credentials.inspect()).configured,
+        registerRequesty,
+        history: (id, query) => chat!.searchHistory(id, query),
+      });
+      registry.install({
+        ...real.extension,
+        tools: recordingTools(ownership!.dataDir, real.tools).tools,
+      });
+      workflow = new WorkflowService(
+        configuration.harness,
+        workflowTasks.task,
+        options.workflow?.adapter ??
+          (mode === 'simulation'
+            ? simulationAdapter(options.workflow?.clock)
+            : mode === 'real'
+              ? real.adapter()
+              : undefined),
+        options.workflow?.clock,
+      );
+      openedWorkflow = workflow;
+      planning.startRun = (input, signal) => workflow.admit(input, signal);
+      chat = new ChatService(
+        configuration.harness,
+        ownership!.dataDir,
+        () => configuration!.read(),
+        {
+          ...options.chat,
+          models,
+          registerRequesty,
+          planning,
+          workflowView: async (id) => {
+            const run = await workflow.get(id);
+            return {
+              runId: run.id,
+              status: run.status,
+              stage: run.stage,
+              acceptsInput:
+                !run.publicationLocked &&
+                !['publishing'].includes(run.stage) &&
+                ![
+                  'pr_ready',
+                  'cancelled',
+                  'cancelling',
+                  'termination_blocker',
+                ].includes(run.status),
+            };
+          },
+          workflowWithdraw: () => workflow.refreshInputs(),
+          workflowInput: (id, input) => workflow.input(id, input),
+          workflowInterrupt: (id) => workflow.interruptConversation(id),
+        },
+      );
+      openedChat = chat;
+      await validateRepositoryFromStorage();
+      await configuration.harness.inspect(
+        (await import('./storage.js')).context,
+      );
+      const savedConversations = await configuration.harness.snapshot(
+        Catalog,
+        context,
+      );
+      for (const conversation of Object.values(savedConversations?.items ?? {}))
+        if (conversation.model.provider === 'requesty')
+          registerRequesty(conversation.model.model);
+      await workflow.recover();
+      await chat.recover();
+      await workflow.activate();
+      runtimeOpen = true;
+      startupError = undefined;
+      ready = !maintenance && !stopping;
+    } catch (error) {
+      ready = false;
+      runtimeOpen = false;
+      try {
+        await openedWorkflow?.close();
+        await openedChat?.close();
+        await openedConfiguration?.close();
+        if (configuration === openedConfiguration) configuration = undefined;
+      } catch {
+        // Never open another harness over an instance whose close is uncertain.
+        reopeningUnsafe = true;
+      }
+      throw error;
+    }
+  }
+  async function reopenRuntime() {
+    if (stopping || reopeningUnsafe) return;
+    reopeningAttempts++;
+    try {
+      await initializeRuntime();
+      reopeningNeeded = false;
+      reopeningAttempts = 0;
+      clearTimeout(reopeningTimer);
+    } catch {
+      reopeningNeeded = true;
+      const retrying =
+        !reopeningUnsafe && reopeningAttempts < maxReopeningAttempts;
+      startupError = new ApiError(
+        'NOT_READY',
+        retrying
+          ? 'Local storage could not reopen after cleanup. Restore data-directory access; automatic recovery is retrying.'
+          : 'Local storage could not reopen after cleanup. Restore data-directory access and restart the service; automatic recovery attempts have stopped.',
+        503,
+      );
+      log('runtime_reopen_failed');
+      if (retrying)
+        reopeningTimer = setTimeout(
+          () => void pollCompletedRuns(),
+          1000 * 2 ** (reopeningAttempts - 1),
+        );
+    }
+  }
   try {
     ownership = await acquireOwnership(options.dataDir ?? defaultDataDir());
-    credentials = new PrivateCredentials(ownership.dataDir);
+    credentials = new PrivateCredentials(ownership!.dataDir);
     await credentials.init();
-    configuration = await openConfiguration(ownership.dataDir);
-    await validateRepositoryFromStorage();
-    await configuration.harness.inspect((await import('./storage.js')).context);
-    ready = true;
+    github = options.github ?? createGitHub(credentials);
+    await initializeRuntime();
+    const pollLabels = () => {
+      if (
+        labelPolling ||
+        !ready ||
+        !runtimeOpen ||
+        maintenance ||
+        stopping ||
+        Date.now() < nextLabelPoll ||
+        mode !== 'real' ||
+        options.workflow ||
+        !github.readyIssues
+      )
+        return;
+      labelPolling = (async () => {
+        const capability = await workflow.snapshot();
+        if (!capability.enabled) return;
+        const saved = await configuration!.read();
+        for (let page = 1; page <= 100; page++) {
+          const batch = await github.readyIssues!(
+            saved.settings.repository.github,
+            page,
+            labelAbort.signal,
+          );
+          for (const issue of batch.issues) {
+            if (stopping) return;
+            await workflow.admit(
+              {
+                issueNumber: issue.number,
+                operationId: `label-${saved.revision}-${issue.number}-${issue.updatedAt.replace(/[^A-Za-z0-9_-]/g, '')}`,
+              },
+              labelAbort.signal,
+              saved.revision,
+            );
+          }
+          if (!batch.hasNext) return;
+        }
+        throw new Error('Label inspection limit exceeded.');
+      })()
+        .catch((error) => {
+          nextLabelPoll =
+            Date.now() +
+            (error instanceof GitHubFailure
+              ? Math.max(30000, error.retryAfterMs)
+              : 30000);
+          log('label_poll_failed');
+        })
+        .finally(() => {
+          labelPolling = undefined;
+        });
+    };
+    pollLabels();
+    labelTimer = setInterval(pollLabels, 30000);
+    void pollCompletedRuns();
+    cleanupTimer = setInterval(() => void pollCompletedRuns(), 30000);
     log('service_ready', { port });
   } catch (error) {
     startupError =
@@ -303,6 +726,174 @@ export async function startService(options: ServiceOptions = {}) {
       ownership = undefined;
     }
   }
+  function pollCompletedRuns(): Promise<void> {
+    if (cleanupPolling) return cleanupPolling;
+    if (
+      stopping ||
+      (!ready && !reopeningNeeded) ||
+      (reopeningNeeded &&
+        (reopeningUnsafe || reopeningAttempts >= maxReopeningAttempts)) ||
+      (!reopeningNeeded && Date.now() < nextCleanupPoll) ||
+      mode !== 'real' ||
+      !github.getPull ||
+      !github.getIssue
+    )
+      return Promise.resolve();
+    cleanupPolling = (async () => {
+      if (reopeningNeeded) {
+        maintenance = true;
+        try {
+          await reopenRuntime();
+        } finally {
+          maintenance = false;
+          ready = runtimeOpen && !stopping;
+        }
+        if (!runtimeOpen || stopping) return;
+      }
+      for (const run of (await workflow.snapshot()).runs) {
+        if (
+          stopping ||
+          run.mode !== 'real' ||
+          run.status !== 'pr_ready' ||
+          !run.publication?.prNumber
+        )
+          continue;
+        const pull = await github.getPull!(
+          run.repository.github,
+          run.publication.prNumber,
+          labelAbort.signal,
+        );
+        if (
+          pull.number !== run.publication.prNumber ||
+          pull.state !== 'closed' ||
+          pull.merged !== true ||
+          pull.head !== run.publication.commit ||
+          pull.headRepository !== run.repository.github ||
+          pull.headBranch !== run.workspace?.branch ||
+          pull.baseRepository !== run.repository.github ||
+          pull.baseBranch !== run.repository.baseBranch
+        )
+          continue;
+        const issue = await github.getIssue!(
+          run.repository.github,
+          run.issue.number,
+          labelAbort.signal,
+        );
+        if (
+          issue.state !== 'closed' ||
+          issue.number !== run.issue.number ||
+          issue.pullRequest
+        )
+          continue;
+        if (stopping) return;
+        await workflow.cleanupState(run.id, {
+          state: 'pending',
+          message: 'PR merged and issue closed. Waiting for idle maintenance.',
+        });
+        // Admission is gated before draining accepted mutations; no unrelated work
+        // is interrupted just to reclaim completed runs.
+        maintenance = true;
+        ready = false;
+        try {
+          await labelPolling;
+          await Promise.allSettled([...activeMutations]);
+          const inspection = await configuration!.harness.inspect(context);
+          const state = await workflow.snapshot();
+          if (
+            stopping ||
+            inspection.tasks.length ||
+            inspection.submissions.length ||
+            state.slot ||
+            state.runs.some((r) =>
+              [
+                'running',
+                'queued',
+                'pausing',
+                'cancelling',
+                'termination_blocker',
+              ].includes(r.status),
+            )
+          )
+            continue;
+          if (!(await processes.quiescent(run.id)))
+            throw new Error('Run processes are not confirmed stopped.');
+          await workflow.close();
+          await chat!.close();
+          const snapshot = await cleanupSnapshot(
+            configuration!.harness,
+            await workflow.get(run.id),
+          );
+          runtimeOpen = false;
+          await configuration!.close();
+          configuration = undefined;
+          try {
+            snapshot.conversations = purgeRunStorage(
+              ownership!.dataDir,
+              snapshot,
+              true,
+            );
+            for (const id of snapshot.conversations)
+              delete snapshot.documents['factory.conversations'].items[id];
+            await cleanupWorkspace(ownership!.dataDir, run, workspaces);
+            await cleanupArtifacts(ownership!.dataDir, snapshot);
+            purgeRunStorage(ownership!.dataDir, snapshot);
+          } finally {
+            await reopenRuntime();
+          }
+        } catch (error) {
+          if (!runtimeOpen && !reopeningNeeded) {
+            reopeningNeeded = true;
+            reopeningUnsafe = true;
+            startupError = new ApiError(
+              'NOT_READY',
+              'Storage could not close safely for cleanup. Restart the service after checking data-directory access.',
+              503,
+            );
+          }
+          // Fixed messages only; Git/provider errors may contain private payloads.
+          const message =
+            error instanceof Error &&
+            [
+              'Worktree ownership is uncertain.',
+              'Worktree contains unexpected changes.',
+              'Ignored files changed after publication.',
+              'Ignored files have no saved cleanup baseline. Preserve or remove them before cleanup.',
+              'Local branch changed after publication.',
+              'Local branch is in use.',
+              'Run base reference changed.',
+              'Run processes are not confirmed stopped.',
+              'Worktree registration remains but its directory is missing.',
+              'Artifact ownership is uncertain.',
+              'Command artifact ownership is uncertain.',
+            ].includes(error.message)
+              ? error.message
+              : 'Cleanup could not finish. Check local repository access and storage compatibility; it will retry.';
+          if (
+            runtimeOpen &&
+            (await workflow.snapshot()).runs.some((r) => r.id === run.id)
+          )
+            await workflow.cleanupState(run.id, { state: 'blocked', message });
+          log('cleanup_blocked');
+        } finally {
+          maintenance = false;
+          if (!stopping) ready = runtimeOpen;
+        }
+        if (!runtimeOpen) return;
+      }
+    })()
+      .catch((error) => {
+        nextCleanupPoll =
+          Date.now() +
+          (error instanceof GitHubFailure
+            ? Math.max(30000, error.retryAfterMs)
+            : 30000);
+        log('cleanup_poll_failed');
+      })
+      .finally(() => {
+        cleanupPolling = undefined;
+      });
+    return cleanupPolling;
+  }
   async function validateRepositoryFromStorage() {
     const saved = await configuration!.read();
     const { validateRepositoryLocation } = await import('./runtime.js');
@@ -313,6 +904,16 @@ export async function startService(options: ServiceOptions = {}) {
   }
   return {
     server,
+    get chat() {
+      return chat;
+    },
+    get planning() {
+      return planning!;
+    },
+    get workflow() {
+      return workflow!;
+    },
+    pollCompletedRuns,
     port,
     url: `http://127.0.0.1:${port}`,
     async close() {
@@ -320,6 +921,14 @@ export async function startService(options: ServiceOptions = {}) {
       stopping = true;
       ready = false;
       log('service_stopping');
+      clearInterval(labelTimer);
+      clearInterval(cleanupTimer);
+      clearTimeout(reopeningTimer);
+      labelAbort.abort();
+      await cleanupPolling;
+      if (runtimeOpen) await workflow?.close();
+      await labelPolling;
+      await chat?.close();
       const closed = new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );

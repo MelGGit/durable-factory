@@ -5,6 +5,7 @@ import {
   Harness,
   createRegistry,
   type JsonObject,
+  type HarnessOptions,
 } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { createModels } from '@earendil-works/pi-ai/models';
@@ -26,10 +27,13 @@ export const Configuration = defineDoc({
   }),
   checkpointWhen: () => true,
 });
-export async function openConfiguration(dataDir: string) {
+export async function openConfiguration(
+  dataDir: string,
+  options?: HarnessOptions,
+) {
   const harness = await Harness.open(
     await openNodeSqliteStorage(join(dataDir, 'factory.sqlite')),
-    { models: createModels(), registry: createRegistry() },
+    options ?? { models: createModels(), registry: createRegistry() },
     context,
   );
   try {
@@ -37,7 +41,9 @@ export async function openConfiguration(dataDir: string) {
     if (existing && existing.schemaVersion !== 1)
       throw new Error('Unsupported schema');
     await harness.commit(async (tx) => {
-      await tx.doc(Configuration);
+      const config = await tx.doc(Configuration);
+      const settings = config.settings as unknown as Settings;
+      settings.commitIdentity ??= { name: '', email: '' };
     }, context);
   } catch {
     await harness.close(context);

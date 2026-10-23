@@ -34,11 +34,23 @@ export async function validateSettings(
   const s = object(input, [
     'schemaVersion',
     'repository',
+    'commitIdentity',
     'setupCommands',
     'requiredChecks',
     'timeouts',
     'roles',
   ]);
+  const identity = object(s.commitIdentity, ['name', 'email']);
+  if (
+    !Object.values(identity).every(
+      (value) => text(value, 200) && !/[\r\n<>]/.test(value as string),
+    )
+  )
+    invalid(
+      'Commit identity must contain a name and email without line breaks or angle brackets.',
+    );
+  if (identity.email && !/^[^\s@]+@[^\s@]+$/.test(identity.email as string))
+    invalid('Enter a valid commit email.');
   if (s.schemaVersion !== 1) invalid('Unsupported settings schema version.');
   const repository = object(s.repository, ['path', 'github', 'baseBranch']);
   if (!Object.values(repository).every((value) => text(value)))
