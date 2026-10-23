@@ -313,8 +313,23 @@ test(
           .getByRole('button', { name: 'Load older messages' })
           .isEnabled(),
       );
+      await page.getByLabel('Conversation transcript').evaluate((element) => {
+        element.scrollTop = 0;
+      });
+      const anchorText = await page
+        .locator('.message-text')
+        .first()
+        .textContent();
+      const anchorTop = await page
+        .locator('.message-text')
+        .first()
+        .evaluate((element) => element.getBoundingClientRect().top);
       await page.getByRole('button', { name: 'Load older messages' }).click();
       await page.getByText('B question 0', { exact: true }).waitFor();
+      const restoredTop = await page
+        .getByText(anchorText!, { exact: true })
+        .evaluate((element) => element.getBoundingClientRect().top);
+      assert.ok(Math.abs(restoredTop - anchorTop) < 3);
       assert.equal(await page.getByText(/A private question/).count(), 0);
       assert.equal(
         await page.getByRole('button', { name: 'Load older messages' }).count(),

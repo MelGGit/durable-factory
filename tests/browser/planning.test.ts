@@ -71,7 +71,7 @@ test(
         .getByText('Complete proposed GitHub issue body', { exact: true })
         .click();
       await page
-        .locator('pre')
+        .locator('.planning-ticket pre')
         .filter({ hasText: '## Regression proof' })
         .waitFor();
       await page
@@ -88,6 +88,13 @@ test(
         .getByRole('button', { name: 'Retry reconciliation', exact: true })
         .click();
       await page.getByRole('link', { name: 'View issue #1' }).waitFor();
+      await page
+        .getByRole('button', { name: 'Hide ticket', exact: true })
+        .click();
+      assert.equal(await page.locator('.ticket-panel').isVisible(), false);
+      await page
+        .getByRole('button', { name: 'Show ticket', exact: true })
+        .click();
       assert.equal(github.calls, 1);
       await mkdir(resolve('test-results'), { recursive: true });
       await page.screenshot({
@@ -105,6 +112,39 @@ test(
       await page.reload();
       await page.getByRole('link', { name: 'View issue #1' }).waitFor();
       await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator('.ticket-panel').waitFor({ state: 'detached' });
+      assert.equal(
+        await page.getByRole('link', { name: 'View issue #1' }).isVisible(),
+        false,
+      );
+      const ticketTrigger = page.getByRole('button', {
+        name: 'Show ticket',
+        exact: true,
+      });
+      await ticketTrigger.click();
+      const dialog = page.getByRole('dialog', { name: 'Saved ticket' });
+      await dialog.getByRole('link', { name: 'View issue #1' }).waitFor();
+      await dialog.getByRole('button', { name: 'Close saved ticket' }).focus();
+      await page.keyboard.press('Shift+Tab');
+      assert.ok(
+        await dialog.evaluate((element) =>
+          element.contains(document.activeElement),
+        ),
+      );
+      await page.keyboard.press('Escape');
+      assert.ok(
+        await ticketTrigger.evaluate(
+          (element) => element === document.activeElement,
+        ),
+      );
+      await page
+        .getByRole('button', { name: 'Conversations', exact: true })
+        .click();
+      await page
+        .getByRole('dialog', { name: 'Conversations' })
+        .getByLabel('Conversation title')
+        .fill('Mobile draft');
+      await page.keyboard.press('Escape');
       await page
         .getByRole('button', { name: /^Send/ })
         .scrollIntoViewIfNeeded();
@@ -115,6 +155,21 @@ test(
       assert.ok(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      );
+      await page.setViewportSize({ width: 1024, height: 900 });
+      await page
+        .getByRole('button', { name: 'Show ticket', exact: true })
+        .click();
+      await page.screenshot({
+        path: resolve('test-results/planning-tablet.png'),
+        fullPage: true,
+      });
+      await page.keyboard.press('Escape');
+      await page.setViewportSize({ width: 320, height: 700 });
+      assert.ok(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
         ),
       );
       await page.goto(`${service.url}/settings`);

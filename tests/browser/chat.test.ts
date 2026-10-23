@@ -104,11 +104,8 @@ test(
         (entries) =>
           entries.some((entry) => entry.tools.some((tool) => tool.artifact)),
       );
-      const result = page
-        .locator('.message')
-        .filter({ has: page.getByText('Tool result', { exact: true }) })
-        .locator('.tool-card')
-        .first();
+      const result = page.locator('.tool-card[data-tool-id="probe-call"]');
+      assert.equal(await result.count(), 1);
       await result.locator('summary').click();
       await result
         .getByRole('button', { name: 'Read complete output' })
