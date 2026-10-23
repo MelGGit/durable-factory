@@ -1,106 +1,62 @@
 # Durable Factory
 
-A personal, locally hosted tool for planning software with an LLM and implementing approved GitHub issues through a durable developer → checks → reviewer → PR workflow.
+Plan a software change, approve its GitHub issue, and let a durable developer → checks → reviewer workflow prepare the pull request.
 
-Stages 1–8 provide durable planning, approved GitHub issues, real development in isolated worktrees, required checks, independent review, ready-for-review PR publication, live inspection, and automatic local cleanup after merge. Offline verification uses deterministic models, disposable repositories, and fake GitHub responses; it does not claim account-backed model or GitHub access.
+Durable Factory is a personal, locally hosted application. A Node service owns the work, Pi Durable persists conversations and workflow state in SQLite, and a React interface lets you plan, steer, and inspect it. Closing the browser does not stop accepted work. Interrupted external effects are reconciled before retrying, and you decide whether to merge.
 
-## Start locally
+## What it does
 
-Requires **Node 24** and **Bun 1.4.3**. The backend always runs on Node; Bun manages dependencies, frontend tooling, and the Node-targeted service bundle.
+- **Plan with repository context.** Chat with an agent that can inspect files, uncommitted changes, and conversation history without editing code.
+- **Approve the complete issue.** Review its goal, scope, numbered acceptance criteria, validation approach, and regression-proof requirements before creation.
+- **Implement in isolation.** Each run gets a dedicated Git branch and worktree. Your original checkout and uncommitted changes stay separate.
+- **Require evidence.** Development produces a structured handoff, required commands run directly, and a fresh independent reviewer assesses every acceptance criterion against the candidate tree.
+- **Prove regressions when requested.** An approved targeted test must fail on the base with the expected signature and pass on the candidate.
+- **Inspect and recover.** Follow the run timeline, command output, repair causes, human questions, reports, and current or superseded evidence.
+- **Prepare a PR.** Publish a non-draft pull request with an implementation summary, acceptance evidence, validation, and remaining limitations. Nothing is merged automatically.
+
+The current version supports one configured repository and one active development run, with additional runs queued. Planning, development, and review have independent provider/model settings.
+
+## Requirements
+
+- **Node.js 24** — runs the backend, diagnostics, and tests.
+- **Bun 1.4.3** — installs dependencies and runs frontend/build commands.
+- **Git**, a local checkout of the repository you want to work on, and a GitHub.com repository with issues enabled.
+- **macOS or Linux** with working POSIX process inspection. Automated verification has been run on macOS; Linux uses the same supported supervision path but has not been verified here.
+- A supported model connection: Requesty API access, or Pi-supported OpenAI/Anthropic subscription authentication. Access to a listed model depends on your account.
+
+## Quick start
 
 ```sh
+git clone git@github.com:MelGGit/durable-factory.git
+cd durable-factory
 bun install --frozen-lockfile
 bun run dev
 ```
 
-Open [the development app](http://127.0.0.1:5173). Planning chat is the home screen; settings are at `/settings`. Vite proxies requests to the Node service on port 4317. Save a repository path, commands, and independent provider/model selections for each role. Configuration may be partial while setting up; no model is chosen automatically, and saving commands never runs them.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Planning chat is the home screen; configuration is at [Settings](http://127.0.0.1:5173/settings), and the queue and inspector are at [Runs](http://127.0.0.1:5173/runs).
 
-For the production build:
+Vite proxies API requests to the Node service on port 4317. Configuration can be saved incrementally. No model is selected automatically, and saving commands never executes them.
+
+For a production build:
 
 ```sh
 bun run build
 bun run start
 ```
 
-Startup is manual: run `bun run start` from this repository after building. Stop with Ctrl+C; the service drains accepted requests and accounts for owned processes before releasing storage. Nothing is installed to start at login. Sleeping or powering off the computer suspends local execution.
+Open [http://127.0.0.1:4317](http://127.0.0.1:4317). Node serves both the API and built frontend. Startup is manual; stop with Ctrl+C. Do not run development and production against the same data directory at the same time. Sleeping or powering off the computer suspends execution until the service runs again.
 
-Open [the local application](http://127.0.0.1:4317). Node serves the built frontend and API. Do not run development and production services against the same data directory simultaneously.
+### Configure the first repository
 
-## Planning chat
+1. Save the target repository's absolute local path, GitHub `owner/repository`, and base branch.
+2. Select the planning, development, and review providers/models and configure their connections.
+3. Enter setup commands if needed, at least one real required check, command/provider timeouts, and the commit author's name and email.
+4. Save a repository-scoped GitHub token. The complete workflow needs Issues, Contents, and Pull requests read/write permissions; changing GitHub workflow files may require additional permission.
+5. Use **Validate GitHub repository** to check readability. This does not prove write permission or model access. Open Runs to see any missing execution prerequisites.
 
-Choose a planning provider/model in settings, configure its connection, then create a named conversation from the home screen. Each conversation captures its repository and model settings; later settings saves affect new conversations. Planning can list, read, and search current non-ignored repository files, inspect tracked changes, and search its own persisted history. Uncommitted files are included. The planner cannot edit files or run arbitrary commands. Save repository settings before creating a conversation; existing conversations retain their captured repository.
+For a Bun project, setup might be `bun install --frozen-lockfile`, with required checks such as `bun run check` and `bun run test`. Use commands that actually validate your target repository.
 
-Messages are acknowledged after durable acceptance. Follow-ups queue while the agent is busy; withdraw them before consumption. **Interrupt conversation** stops the current work and withdraws queued inputs. Partial replies and results remain visible. Interrupting a planning turn prevents it from starting a new GitHub creation request; a request already sent may still create an issue, whose result is recorded or reconciled. An interrupted or failed input is never retried as a new message automatically; send a new message explicitly to continue. A lost response to a send retains its request ID for reconciliation. Explicit new-run requests also retain their operation ID in browser storage until acknowledged.
-
-Closing the browser does not stop accepted work. Reopening restores drafts and pending sends from this browser’s local storage; each tab keeps its own conversation selection. Separate records prevent another tab’s edits from overwriting saved drafts or uncertain sends. Drafts are local to the browser, while accepted input and conversation history live in SQLite. Changing the browser origin/port or clearing browser data removes local drafts, not server history. Pending sends reconcile when their conversation reconnects; use **Retry send** after an uncertain response. Browser connection status is separate from agent execution status.
-
-Load older messages on demand. Expand tool cards to inspect inputs, commands, results, and live output. Previews are bounded; complete tool logs and long messages are available through paginated output controls. No transcript content is executed as HTML. See [the chat API contract](docs/CHAT.md) for streaming and recovery details.
-
-## Planning → issue
-
-Ask the planner to shape a ticket. It saves a title, goal, scope, acceptance criteria, and validation approach, presents the ticket in chat, and asks whether to create the issue. Reply **yes**, **yes please**, **create it**, or **go ahead** to approve that exact ticket revision. Ambiguous or negative replies cancel the pending proposal; the agent must clarify and propose again. Ticket changes also require a fresh proposal. No separate preview screen or slash command is required.
-
-The saved ticket, creation status, and confirmed GitHub link restore after reconnecting. One planning conversation creates at most one linked issue. Issue creation never starts development or adds a ready label. Start a new conversation for another issue or to revise a ticket already submitted to GitHub.
-
-An operation marker in the issue body lets the service recover a lost response without creating another issue. **Retry reconciliation** checks open and closed issues for that marker. If an earlier request might have succeeded and no issue is found, it stays uncertain and is never blindly sent again. A confirmed rejection can be retried after repairing credentials or permissions. Multiple matching issues require inspection. Do not remove the marker while creation is pending.
-
-## Real development and PRs
-
-Complete repository/base-branch settings, commit author name/email, independent development/review models and connections, at least one required check, and the GitHub connection. Real execution activates automatically when configured. Setup commands are optional; saving settings does not itself execute commands. Open `/runs` to see missing prerequisites or start an existing issue by number. A linked planning issue also offers **Start implementation**. Explicit starts and open issues labelled `agent:ready` share one durable admission path; labels are checked at startup and every 30 seconds. Adding the label authorizes implementation and PR publication. Issue creation alone still never starts development.
-
-Set `DURABLE_FACTORY_WORKFLOW_MODE=disabled` to disable admission and polling, or `simulation` for the deterministic workflow below. Existing runs retain their mode. A real-mode service can inspect/recover simulation runs using the simulation adapter; simulation or disabled mode cannot execute real runs.
-
-Each run captures its issue, base commit, commands, deadlines, models, and commit identity. The service creates a dedicated branch and worktree under its private runtime directory. The original checkout and its uncommitted changes are not copied into the run. Worktrees and tool filtering are application boundaries, not an OS sandbox: repository commands and hooks run with the service user's permissions. macOS and Linux require working POSIX process inspection; unsupported or unavailable inspection blocks execution.
-
-Setup and the complete baseline gate must pass before development starts. Pre-existing failures pause with output. Developers can edit and run supervised commands; reviewers receive fresh, inspection-only conversations with the exact candidate Git tree and check evidence. Required checks and structured review must approve the same source/configuration/specification. Tracked changes and non-ignored additions are included; the developer explicitly selects ignored generated files intended for the commit. Unselected ignored build output does not affect validation. Submodules require manual handling.
-
-Before publishing, the service refreshes the base, integrates changes when necessary, and repeats validation. It commits with the captured identity, verifies the resulting tree including hook effects, pushes the dedicated branch without force, and creates a non-draft PR referencing the issue. It never merges. Lost push/PR responses reconcile existing effects before retrying. Credential replacement can repair the same operation without changing execution settings. Git authentication uses a private, short-lived helper channel; tokens are absent from remote URLs, ordinary logs, helper files, and agent environments.
-
-Developer input closes when publishing begins. Hook-generated content can use **Repeat checks and review** before any remote write; this keeps developer input closed. Further developer edits or changes to the target base branch require an explicit new run. After remote publication starts, resolve uncertainty before further action. Completed/cancelled issues require an explicit new run; persistent labels cannot restart them.
-
-Pausing/cancelling preserves worktrees and evidence. Deadlines stop supervised process groups and observed descendants; uncertain termination retains the execution slot. Commands must retain their ownership marker and must not deliberately evade supervision. On restart, the service reconciles processes before admitting resumed execution; interrupted mutating commands require inspection and explicit continuation. Merged-run cleanup is described below; backup/restore is deferred.
-
-## Workflow simulation
-
-Start the service with explicit simulation mode:
-
-```sh
-DURABLE_FACTORY_WORKFLOW_MODE=simulation bun run dev
-```
-
-After a planning conversation has a confirmed issue, choose **Start simulated run**, or explicitly tell the planner **start implementation**. Both use the same durable admission service. Issue creation alone never starts a run. The `/runs` inspector shows queue position, active stage, repairs, captured configuration/models, evidence, conversations, and questions. Simulation labels remain visible throughout: no coding model is called, no repository command runs, and no GitHub PR is created by the workflow. Planning and issue creation retain their existing real provider/GitHub behavior.
-
-One run holds the execution slot. Runs follow setup → baseline → developer → checks → independent reviewer → publication admission → simulated publishing. Pause, resume, cancellation, answers, configuration/specification adoption, and explicit repair continuation are revision checked. Guidance queues for a developer boundary; input during validation returns through development and validation. Reviewer conversations accept no ordinary input. Publishing closes implementation input; finished runs require **Start explicit new simulated run** for another implementation.
-
-Settings saves affect future runs. Pause before choosing **Adopt saved configuration**; setup changes repeat setup and baseline, and evidence is invalidated. **Adopt saved specification** takes the simulation adapter’s latest ticket (the default adapter retains the admitted ticket); scripted tests model updated issues. The initial attempt permits three repairs, with one additional repair only after explicit recorded authorization. Neither guidance nor adoption resets the repair count.
-
-Unconfirmed termination retains the execution slot until **Reconcile run** confirms quiescence. Lost publication responses require reconciliation before retrying; late outcomes remain recorded after cancellation. Restart with simulation or real mode to operate existing simulation runs; disabled mode preserves records and blocks unsafe recovery. New runs use the current service mode. Closing the browser does not stop a run; graceful service shutdown pauses active workflow work. See [the workflow contract](docs/WORKFLOW.md) for API and recovery details.
-
-## Completed-run cleanup and inspection
-
-The run inspector shows captured role models, repairs, pending questions, recovered attempts, active tools/commands and command output. Reported tokens include input, output and cache usage when available. Positive Requesty cost estimates are labelled in USD; missing estimates remain unavailable. Subscription token counts are not per-token bills. Long histories are bounded and labelled partial when necessary.
-
-In real mode the service checks completed PRs on startup and every 30 seconds. After GitHub confirms the original PR was merged and its linked issue is closed, cleanup runs automatically when the application is idle. Generated PR descriptions include `Closes #…`; GitHub closes the issue when that closing reference takes effect. Closed issues cannot start development through manual, label or planning-chat admission.
-
-Cleanup permanently removes the local run, its worktree, service-created local branch/base reference, conversations, questions, checks/reviews, usage, command/tool logs, artifacts and admission receipts. It deletes the originating planning conversation only when no retained run shares it. There is no archive or permanent completion marker. GitHub issues, PRs, merged code and remote branches remain on GitHub; settings, credentials and unrelated local runs are preserved. Browser-local drafts are separate from server data.
-
-The browser may briefly reconnect during cleanup. The service stops admission and closes Pi storage while retaining exclusive ownership, removes verified files, then transactionally purges records and their historical revisions before reopening. Interrupted cleanup is retried after restart. A failed storage reopening is retried automatically up to three times while readiness stays blocked. If recovery still fails, `/ready` and API errors explain that you must restore data-directory access and restart the service; partially initialized storage is closed before another attempt. SQLite maintenance supports only the pinned Pi Durable 1.3.0/schema 1; upgrades must update and verify the adapter first.
-
-A changed worktree/branch, active process or uncertain resource ownership blocks cleanup and shows a reason in the inspector. Inspect and preserve unexpected edits, then resolve the reported condition; cleanup retries on the next poll. Ignored files are fingerprinted before publication. Cleanup removes them only if their paths, contents and modes still match that baseline; new or changed ignored files block deletion too. Older runs without a baseline retain ignored files until you preserve or remove them. Cancelled runs, open issues and unmerged/closed PRs are retained. GitHub failures or rate limits defer cleanup without deleting data. Backup/restore and startup at login are deferred.
-
-## Runtime data and credentials
-
-On macOS, data defaults to `~/Library/Application Support/Durable Factory`. On Linux, it defaults to `$XDG_DATA_HOME/durable-factory` or `~/.local/share/durable-factory`. Set `DURABLE_FACTORY_DATA_DIR` to an absolute path to override it. Use a directory outside both this application and your target repository. `DURABLE_FACTORY_PORT` changes the Node service port; development uses a fixed Vite proxy to 4317.
-
-Configuration lives in Pi Durable documents in `factory.sqlite`; there is no second application database. Tokens and OAuth credentials live in private files under `credentials/` (directory mode 0700, files mode 0600), outside the checkout. Credentials are protected by filesystem permissions, **not encrypted at rest**. The browser can store or replace Requesty/GitHub tokens and disconnect accounts; it receives only credential status. A stored credential is not proof of valid account access. Provider catalogs are capability lists, not access guarantees. Requesty uses an explicitly entered model ID; unverified reasoning options are unavailable.
-
-One service or diagnostic owns a data directory at a time. Ownership uses an operating-system file lock held through Node's SQLite adapter; a stalled or suspended process keeps the lock, and process death releases it immediately. The empty `ownership.lock` and `credentials/write.lock` files are mutexes only, with no application records or second queue. Never delete or replace a lock file while a process may be using it. Graceful shutdown closes HTTP admission, drains accepted requests, closes Pi storage, then releases ownership.
-
-When upgrading from the original heartbeat-lock build, stop the older service and diagnostics first. A remaining legacy `<data-directory>.lock` directory blocks the upgrade rather than being silently reclaimed. If the old process crashed, verify that it has exited before explicitly removing that legacy directory. Do not remove the new lock files.
-
-## Connect providers
-
-Stop the service before running diagnostics. Use the same data-directory override in both shells if configured. Sign-in is interactive and uses Pi's provider-owned OAuth flow:
+Requesty and GitHub tokens are entered in Settings and stored privately by the service. For subscription sign-in, stop the service first and run the relevant interactive diagnostic:
 
 ```sh
 bun run diagnose status
@@ -108,11 +64,100 @@ bun run diagnose login openai
 bun run diagnose login anthropic
 ```
 
-Requesty and GitHub tokens are entered in the settings screen. Use a fine-grained GitHub token scoped to the selected repository with Issues, Contents, and Pull requests read/write permissions for the complete workflow. GitHub may require additional permission when changing workflow files. **Validate GitHub repository** checks repository and issue readability using the saved settings. Readability does not prove write permission; GitHub checks that when an approved issue is created. Saving a token alone does not contact GitHub.
+Use the same data-directory override for diagnostics and the service. `status` reports stored configuration without contacting providers; it is not an access check. Pi handles provider-owned token refresh when resolving authentication for a model request. The application never silently switches providers.
 
-The diagnostic interface provides only `status` and `login`. Status reports stored credential configuration without contacting providers or checking account access. Pi handles subscription token refresh automatically when resolving authentication for a model request. Provider/model availability depends on your account; an unavailable connection reports an error without silently switching providers.
+## From conversation to pull request
 
-## Verification
+```mermaid
+flowchart LR
+    Plan[Plan and inspect] --> Approve[Approve complete issue]
+    Approve --> Issue[Create GitHub issue]
+    Issue --> Start[Explicit start or agent:ready]
+    Start --> Develop[Setup and baseline, then develop]
+    Develop --> Checks[Required checks and optional regression proof]
+    Checks --> Review[Independent criterion review]
+    Review --> PR[Publish PR for human merge]
+```
+
+### 1. Agree and approve the issue
+
+Create a planning conversation after saving repository and planning-model settings. The planner can list, read, and search current non-ignored files, inspect tracked changes, and search its own persisted history. It cannot edit files, run unrestricted commands, or start development implicitly.
+
+The planner presents the entire proposed GitHub issue before asking for approval. Acceptance criteria use identifiers such as `AC-1`, with at most **100 criteria**. Every ticket explicitly says whether regression proof is required. If required, agree its command, exact test/fixture paths, and literal expected failure text before approval.
+
+Reply **yes**, **yes please**, **create it**, or **go ahead** to approve that exact ticket revision. Changed content requires fresh approval. One planning conversation creates at most one linked issue; use another conversation for a subsequent ticket. Creating an issue does not start development or add a ready label.
+
+For manually prepared issues, use the explicit sections and regression format documented in [Planning and the approved issue contract](docs/PLANNING.md). LF, CRLF, and mixed line endings are accepted. Missing or oversized criteria and incomplete proof instructions pause a run before setup. Update the GitHub issue, select **Adopt saved specification**, then **Resume run**. Downstream agents do not invent missing requirements.
+
+### 2. Start implementation
+
+Choose **Start implementation** on the linked issue, enter an issue number in Runs, explicitly ask the planner to start its linked issue, or label an open issue **`agent:ready`**. Label polling runs at startup and every 30 seconds. Adding that label authorizes implementation and PR publication; closed issues cannot start.
+
+Each run captures the issue, base commit, settings, models, commands, deadlines, and commit identity. Settings saves affect future runs. Adopting newer configuration or specification is an explicit recorded action that invalidates affected evidence.
+
+Setup and baseline checks must pass before development. The developer works in a service-owned worktree and submits a report covering changes, criterion references, validation performed, concerns, and reviewer notes. Declared files must match the actual candidate diff, including deletions and rename paths. Ignored generated files intended for the commit must be explicitly selected.
+
+### 3. Validate and review
+
+Required commands run under process supervision, with real exit codes and complete paginated output. If the approved issue requires regression proof, the service creates separate base and candidate snapshots, adds only the approved test/fixture files to the base, and runs setup independently in both. The test must fail on the base with the expected signature and pass on the candidate. Setup errors, timeouts, unrelated failures, and source mutations do not count as proof.
+
+A fresh inspection-only reviewer assesses every approved criterion with an explanation and candidate code/test references. Approval requires all criteria to be met, no blocking findings, and evidence for the same source/configuration/specification. Source changes invalidate validation.
+
+The initial attempt allows **three repair cycles**. Check failures and requested changes return to the developer. Exhaustion pauses for a recorded decision; **Authorize one additional repair** grants exactly one. Guidance, restarts, and settings adoption do not reset the count.
+
+### 4. Inspect and merge
+
+Runs exposes the queue, timeline, elapsed stage durations, repairs, recovery events, questions, reports, criterion assessments, and command output. Browser connection status is separate from execution status. Token usage is provider-reported and conversation-wide; available Requesty cost estimates are labelled, and subscription tokens are not presented as bills.
+
+Publication refreshes the base and repeats validation when necessary, creates a commit with the captured identity, verifies its tree, pushes the owned branch without force, and opens a non-draft PR. Its description is generated from the structured handoff and evidence, then frozen for retries. The user reviews and merges on GitHub.
+
+Developer input closes when publication begins. New-contract runs require a report matching the final candidate, so commit-hook changes can leave publication blocked even after service-only revalidation; preserve the change and start an explicit new run when a fresh developer handoff is needed. Completed or cancelled work also requires an explicit new run; persistent labels cannot restart it.
+
+## Recovery and controls
+
+- Accepted messages, queued inputs, stage attempts, human questions, and external-operation identities persist in Pi's SQLite storage. Closing a browser never cancels a run.
+- Drafts and uncertain sends remain in browser-local storage. Reconnect restores server snapshots; lost-response retries reuse their operation IDs rather than admitting duplicate work.
+- Follow-ups queue while an agent is busy and can be withdrawn before consumption. Developer steering applies at a supported tool boundary. Implementation-changing guidance must pass through development and validation again.
+- Pause and cancel preserve worktrees and evidence. Interrupted mutating commands require inspection and explicit continuation; they are not replayed automatically. Unconfirmed process termination retains the execution slot.
+- Lost issue/PR responses are reconciled through durable markers across open and closed GitHub objects. A missing search result alone never authorizes repeating an uncertain write. Do not remove a marker while an operation is unresolved.
+- Graceful shutdown stops admission, accounts for supervised processes, closes storage, and releases ownership. Restart reconciles existing work before allowing execution.
+
+New real runs use the stronger handoff contract. Older stored runs retain their captured behavior and show unavailable structured evidence explicitly. Detailed state transitions and recovery rules are in [the workflow contract](docs/WORKFLOW.md); message delivery and streaming are in [the chat contract](docs/CHAT.md).
+
+## Automatic cleanup after merge
+
+In real mode, the service checks recorded PRs at startup and every 30 seconds. When GitHub confirms that the original PR was merged and its linked issue is closed, cleanup runs while the application is idle.
+
+**Cleanup permanently removes local run data:** its worktree, service-created local branch/base reference, conversations, questions, reports, validation evidence, usage, command logs, artifacts, and admission receipts. An originating planning conversation is removed only when no retained run shares it. There is no local archive or permanent completion marker. GitHub issues, PRs, merged code, and remote branches remain on GitHub; unrelated runs, settings, credentials, and browser-local drafts remain.
+
+Changed worktree content, new or modified ignored files, substituted proof paths, active processes, or uncertain ownership block deletion and show a reason in the inspector. Cancelled runs, open issues, and unmerged/closed PRs are retained. Interrupted cleanup resumes after restart; GitHub errors and rate limits defer it. The browser may briefly reconnect during maintenance. Backup/restore tooling is deferred.
+
+## Configuration and storage
+
+| Variable                              | Default                             | Purpose                                                                                     |
+| ------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `DURABLE_FACTORY_DATA_DIR`            | Platform application-data directory | Absolute path outside this checkout and the target repository.                              |
+| `DURABLE_FACTORY_PORT`                | `4317`                              | Node service port; the development proxy expects 4317 unless changed in Vite configuration. |
+| `DURABLE_FACTORY_WORKFLOW_MODE`       | `real`                              | `real`, `simulation`, or `disabled`; real starts still require complete configuration.      |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Playwright-managed Chromium         | Optional existing Chromium executable for browser tests.                                    |
+
+Data defaults to `~/Library/Application Support/Durable Factory` on macOS, and `$XDG_DATA_HOME/durable-factory` or `~/.local/share/durable-factory` on Linux. Workflow state and configuration live in `factory.sqlite`. There is no separate application queue database.
+
+Credentials live in private files under `credentials/`, outside Git and agent environments. Directory/file permissions protect them; they are **not encrypted at rest**. API responses expose credential status, not tokens. Stored credentials and provider catalogs are not proof of account access.
+
+One service or diagnostic owns a data directory at a time using an operating-system lock. Never delete or replace `ownership.lock` or `credentials/write.lock` while a process may hold them. Legacy heartbeat-lock directories require stopping the older service and explicitly resolving its leftover lock before upgrading.
+
+## Simulation
+
+```sh
+DURABLE_FACTORY_WORKFLOW_MODE=simulation bun run dev
+```
+
+Simulation runs the durable queue and workflow with deterministic stages: it does not call coding/review models, run repository commands, or create a workflow PR. Planning and issue creation retain their configured real behavior, so simulation mode is not an offline switch for the entire app. Simulation labels remain visible throughout.
+
+Set `DURABLE_FACTORY_WORKFLOW_MODE=disabled` to disable starts and label polling. Existing runs retain their captured mode; simulation/disabled mode cannot execute real runs.
+
+## Development and verification
 
 ```sh
 bun run check
@@ -123,24 +168,31 @@ bunx playwright install chromium
 bun run test:browser
 ```
 
-The offline suite uses Node's test runner, real Pi SQLite storage, deterministic faux models, and disposable data directories. It requires no account or paid call. Crash tests send SIGKILL to child processes and verify immediate lock recovery. A separate regression stalls a live owner for 15 seconds and confirms that it cannot be replaced; the expanded offline suite takes about four minutes. The browser suite validates this checkout path read-only and requires a built frontend and installed Chromium. Optionally set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an existing Chromium executable. It saves desktop/mobile screenshots in ignored `test-results/`.
+The offline suite uses real Pi SQLite storage, deterministic faux models, fake GitHub responses, and disposable repositories/data directories. It needs no account or paid model call. Recovery tests deliberately terminate child processes and check persistence, process ownership, interrupted effects, and duplicate prevention. Allow several minutes for the complete suite.
 
-## Operating notes
+Browser tests require a built frontend and installed Chromium. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use an existing compatible browser. Desktop/mobile screenshots are saved under ignored `test-results/`. See [compatibility and verification evidence](docs/COMPATIBILITY.md) for observed results and limitations; offline evidence does not claim live account access.
 
-- `/health` reports process responsiveness; `/ready` admits work only after storage ownership, schema checks, and startup inspection succeed. A blocked service keeps health and readiness diagnostics available.
-- A newer application schema is never overwritten. Run a compatible application version or restore a compatible backup. Backup/restore tooling is deferred. Do not copy a live SQLite file without its WAL state.
-- A conflict means another window saved newer settings. Your current edits remain visible; reload settings explicitly to adopt the saved configuration. Reloading discards the current edits.
-- A malformed or unreadable credential produces a connection-specific error while settings remain editable. Replace a Requesty/GitHub token directly, or remove a damaged subscription connection and sign in again. Authentication still fails closed for damaged credentials.
-- Provider failures do not prevent inspecting or editing settings. There is no automatic authentication, token refresh, model call, or provider fallback on page load.
-- The service binds only to `127.0.0.1`. Host/origin checks and a per-process CSRF token protect local mutations. This is a personal local app, not a remotely hosted or multi-user service.
-- Source code can be replaced without replacing runtime data. Do not put credentials or runtime databases in Git. Run cancellation and supervised real process termination are available; merged-run cleanup is automatic as described below; backup/restore is deferred.
+### Repository layout
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for behavior and boundaries, [IMPLEMENTATION.md](IMPLEMENTATION.md) for stage gates, and [the workflow transition table](docs/WORKFLOW.md) for the simulation and real workflow adapters.
+| Path                   | Contents                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/`     | Local API, Pi conversations, planning, GitHub integration, workflow, process supervision, workspaces, and cleanup. |
+| `apps/web/src/`        | React planning chat, settings, run inspector, and browser-local draft storage.                                     |
+| `packages/shared/src/` | Typed API contracts, clients, stream reducers, approved issue format, and evidence validation.                     |
+| `scripts/`             | Development/diagnostic entrypoints and disposable recovery-test workers.                                           |
+| `tests/`               | Offline integration, client, workflow, and recovery tests; browser acceptance tests are in `tests/browser/`.       |
+| `docs/`                | Chat, planning, workflow, and compatibility references.                                                            |
 
-## Stronger handoffs and regression evidence
+## Operating boundaries
 
-New real runs require an explicit issue contract. During planning, review the complete proposed GitHub issue with numbered acceptance criteria (`AC-1`, `AC-2`, …), validation, and a regression-proof decision before approving creation. If proof is required, agree its test command, test/fixture paths and expected failure text in that issue. Agents cannot add requirements after approval. Existing manually or label-started issues without this information pause before setup: update the issue, adopt its specification in the run inspector, then resume.
+The service binds to `127.0.0.1` and applies host/origin checks and CSRF protection. It is a personal local application. Worktrees and role-specific tools provide application boundaries, not an operating-system sandbox: repository commands and hooks run with the service user's permissions. Deliberately evading supervision is outside this boundary. Submodules require manual handling.
 
-Developers submit a structured implementation report; independent review assesses every approved criterion with inspectable evidence. Required regression proof runs the approved test against isolated base and candidate snapshots, demonstrating the expected failure before the fix and success afterward. Failed proof uses the existing repair budget. Interrupted proof resources and output remain available for inspection; changed or unverified resources are retained rather than deleted automatically.
+`/health` reports responsiveness; `/ready` reports whether ownership and startup reconciliation permit work. Provider failures leave settings and inspection available. Newer unsupported storage schemas are never overwritten. If maintenance cannot reopen storage after its bounded retries, readiness explains the required restart.
 
-The run inspector provides a chronological timeline, repair causes, current and superseded reports/evidence, criterion assessments, and proof command output. PR descriptions summarize the implementation, acceptance evidence, validation and remaining limitations. Old runs retain their captured behavior and explicitly show unavailable structured evidence. See [the approved issue format](docs/PLANNING.md#approved-issue-contract--handoffs-release) and [workflow contract](docs/WORKFLOW.md#stronger-handoffs-and-evidence-contract).
+Keep runtime data outside the source checkout when updating the application. Do not copy only a live SQLite database while ignoring its WAL state. Automatic startup at login, backup/restore tooling, multi-device hosting, multiple configured repositories, and parallel development runs are deferred.
+
+## Design references
+
+[durable-pi](https://github.com/disler/durable-pi) informed the durable service/client and recovery patterns. [super-simple-software-factory](https://github.com/disler/super-simple-software-factory) informed explicit phase boundaries, structured handoffs, and evidence gates. Durable Factory implements its own TypeScript workflow and React interface around Pi Durable.
+
+For deeper implementation detail, read [Architecture](ARCHITECTURE.md), [Implementation roadmap](IMPLEMENTATION.md), [Chat](docs/CHAT.md), [Planning](docs/PLANNING.md), [Workflow](docs/WORKFLOW.md), and [Compatibility](docs/COMPATIBILITY.md).
