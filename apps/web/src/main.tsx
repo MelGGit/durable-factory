@@ -10,6 +10,8 @@ import {
   type ProviderId,
 } from '../../../packages/shared/src/index.js';
 import './style.css';
+import { RunsApp } from './runs.js';
+import { ChatApp } from './chat.js';
 const client = new FactoryClient();
 const names: Record<string, string> = {
   requesty: 'Requesty',
@@ -25,12 +27,14 @@ const descriptions: Record<string, string> = {
   development: 'Implement the agreed change and tests.',
   review: 'Independently inspect the result.',
 };
-function App() {
+function SettingsApp() {
   const [saved, setSaved] = useState<SettingsResponse>();
   const [draft, setDraft] = useState<Settings>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [githubValidation, setGitHubValidation] = useState('');
+  const [githubError, setGitHubError] = useState('');
   const [credentialInputs, setCredentialInputs] = useState({
     requesty: '',
     github: '',
@@ -191,7 +195,8 @@ function App() {
       <main>
         <header className="topbar">
           <span>
-            Workspace <span className="slash">/</span> <strong>Settings</strong>
+            <a href="/">Planning chat</a> <span className="slash">/</span>{' '}
+            <strong>Settings</strong>
           </span>
           <span className="local-badge">
             <span className={`status-dot ${saved ? '' : 'offline'}`} />
@@ -209,15 +214,15 @@ function App() {
               </p>
             </div>
             <span className="stage-badge">
-              FOUNDATION <span>01–02 / 08</span>
+              FOUNDATION <span>01–04 / 08</span>
             </span>
           </div>
           <div className="foundation-note">
             <span className="note-icon">↳</span>
             <p>
               <strong>Your factory starts here.</strong> Configure the
-              essentials now. Planning chat and development runs arrive in the
-              next stages.
+              essentials now. Planning chat is ready; development runs arrive in
+              later stages.
             </p>
             <span className="note-tag">Setup only</span>
           </div>
@@ -312,6 +317,39 @@ function App() {
                       </div>
                     </div>
                   </section>
+                  <div className="panel">
+                    <h2>Commit identity</h2>
+                    <div className="field-grid">
+                      <label>
+                        Commit author name
+                        <input
+                          value={draft.commitIdentity.name}
+                          onChange={(e) =>
+                            change((next) => {
+                              next.commitIdentity.name = e.target.value;
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Commit author email
+                        <input
+                          type="email"
+                          value={draft.commitIdentity.email}
+                          onChange={(e) =>
+                            change((next) => {
+                              next.commitIdentity.email = e.target.value;
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <p>
+                      Captured for future runs. Complete repository, models,
+                      checks, connections and identity to enable real execution
+                      and automatic agent:ready starts.
+                    </p>
+                  </div>
                   <section id="models" className="settings-section">
                     <div className="section-heading">
                       <span className="section-number">02</span>
@@ -539,6 +577,36 @@ function App() {
                   </div>
                 </div>
                 <div className="panel connections-panel">
+                  <div className="github-validation">
+                    <p>
+                      Use a fine-grained token scoped to your repository with
+                      Issues read and write permission. Save repository settings
+                      before validating. A readable repository does not prove
+                      issue write access.
+                    </p>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={busy || dirty}
+                      onClick={() => {
+                        setBusy(true);
+                        setError('');
+                        setGitHubValidation('');
+                        setGitHubError('');
+                        void client
+                          .validateGitHub()
+                          .then((result) => setGitHubValidation(result.message))
+                          .catch((e) => setGitHubError(e.message))
+                          .finally(() => setBusy(false));
+                      }}
+                    >
+                      Validate GitHub repository
+                    </button>
+                    {githubValidation && (
+                      <p role="status">{githubValidation}</p>
+                    )}
+                    {githubError && <p role="alert">{githubError}</p>}
+                  </div>
                   {(['requesty', 'openai', 'anthropic', 'github'] as const).map(
                     (id) => (
                       <div className="connection-row" key={id}>
@@ -684,4 +752,12 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  window.location.pathname === '/settings' ? (
+    <SettingsApp />
+  ) : window.location.pathname === '/runs' ? (
+    <RunsApp />
+  ) : (
+    <ChatApp />
+  ),
+);

@@ -30,7 +30,7 @@ test(
         if (response.url().includes('/api/'))
           void response.text().then((value) => responseBodies.push(value));
       });
-      await page.goto(service.url);
+      await page.goto(`${service.url}/settings`);
       await page.getByRole('heading', { name: 'The repository' }).waitFor();
       assert.equal(
         await page.getByRole('button', { name: 'Save settings' }).isDisabled(),
@@ -67,7 +67,7 @@ test(
         'bun run check\nbun run test',
       );
       const stale = await context.newPage();
-      await stale.goto(service.url);
+      await stale.goto(`${service.url}/settings`);
       await stale.getByLabel('Base branch').waitFor();
       await page.getByLabel('Base branch').fill('develop');
       await page.getByRole('button', { name: 'Save settings' }).click();
@@ -178,7 +178,7 @@ test(
       const page = await browser.newPage();
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
-      await page.goto(service.url);
+      await page.goto(`${service.url}/settings`);
       await page.getByRole('heading', { name: 'The repository' }).waitFor();
       const openai = page.locator('.connection-row').filter({
         has: page.getByRole('heading', { name: 'OpenAI', exact: true }),
