@@ -351,6 +351,7 @@ test('large tool output remains fully pageable while wire previews and slow-clie
       writes = 0;
       destroy() {}
       writeHead() {}
+      flushHeaders() {}
       write() {
         this.writes++;
         return false;
