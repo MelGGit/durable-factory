@@ -302,6 +302,7 @@ export class RunActivityService {
       'X-Accel-Buffering': 'no',
       'X-Content-Type-Options': 'nosniff',
     });
+    res.flushHeaders();
     const streamId = randomUUID();
     const held = JSON.stringify(initial);
     let sequence = 0,

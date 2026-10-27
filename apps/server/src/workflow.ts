@@ -2196,6 +2196,9 @@ export class WorkflowService {
       'X-Accel-Buffering': 'no',
       'X-Content-Type-Options': 'nosniff',
     });
+    // A resumed stream may have nothing to send for a while, and the client
+    // cannot tell the connection is open until it sees the headers.
+    res.flushHeaders();
     const streamId = randomUUID();
     let sequence = 0,
       closed = false,

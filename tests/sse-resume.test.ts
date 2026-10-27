@@ -16,12 +16,14 @@ function open(base: string, path: string, resume?: string) {
   const messages: Message[] = [];
   const waiting: (() => void)[] = [];
   let response: IncomingMessage | undefined;
+  let arrived = false;
   let buffer = '';
   const req = request(
     `${base}${path}`,
     { headers: resume === undefined ? {} : { 'Last-Event-ID': resume } },
     (res) => {
       response = res;
+      arrived = true;
       res.setEncoding('utf8');
       res.on('data', (chunk: string) => {
         buffer += chunk;
@@ -49,6 +51,13 @@ function open(base: string, path: string, resume?: string) {
   req.on('error', () => undefined);
   req.end();
   return {
+    /** Whether the response itself, not a frame, arrives in time. */
+    async opened(timeout: number) {
+      const deadline = Date.now() + timeout;
+      while (!arrived && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      return arrived;
+    },
     /** The next frame, or undefined if none arrives in time. */
     async next(timeout: number) {
       const deadline = Date.now() + timeout;
@@ -65,6 +74,35 @@ function open(base: string, path: string, resume?: string) {
     },
   };
 }
+
+test('a resumed stream is open at once, even though it has nothing to send yet', async () => {
+  const s = await workflowFixture();
+  try {
+    const fresh = open(s.service.url, '/api/v1/runs/events');
+    const first = await fresh.next(3000);
+    fresh.close();
+    // Nothing changes, so the first write would be a heartbeat 15 seconds away.
+    const resumed = open(s.service.url, '/api/v1/runs/events', first!.id);
+    assert.equal(await resumed.opened(1500), true);
+    assert.equal(await resumed.next(200), undefined);
+    resumed.close();
+    const conversation = await s.issue();
+    const run = await s.client.startRun(conversation, 'open-at-once');
+    for (const path of [
+      `/api/v1/runs/${run.id}/activity/events`,
+      `/api/v1/conversations/${conversation}/events`,
+    ]) {
+      const held = open(s.service.url, path);
+      const state = await held.next(3000);
+      held.close();
+      const again = open(s.service.url, path, state!.id);
+      assert.equal(await again.opened(1500), true, path);
+      again.close();
+    }
+  } finally {
+    await s.close();
+  }
+});
 
 test('the Last-Event-ID header is read as given, and ignored when empty or oversized', () => {
   const read = (value: string | undefined) =>

@@ -1067,6 +1067,7 @@ export class ChatService {
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
+    res.flushHeaders();
     const send = async (
       view: ConversationView,
       type: 'snapshot' | 'update',
