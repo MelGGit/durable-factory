@@ -1,10 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chromium } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { realFixture } from '../fixtures/real.js';
 import { until } from '../fixtures/chat.js';
+async function openDetails(page: Page, name = 'Details') {
+  const tab = page.getByRole('tab', { name, exact: true });
+  if (
+    (page.viewportSize()?.width ?? 1280) < 1200 &&
+    !(await page
+      .getByRole('dialog', { name: 'Implementation details', exact: true })
+      .isVisible())
+  )
+    await page
+      .getByRole('button', { name: 'Show details', exact: true })
+      .click();
+  await tab.click();
+}
+
 test(
   'browser starts a real issue, shows its workspace and verified PR, and preserves responsive inspection',
   { timeout: 60000 },
@@ -40,6 +54,7 @@ test(
         30000,
       );
       assert.equal(run.status, 'pr_ready');
+      await openDetails(page);
       await page
         .getByRole('heading', { name: 'Run timeline', exact: true })
         .waitFor();
@@ -70,6 +85,7 @@ test(
           .getAttribute('href'),
         'https://github.com/example/project/pull/9',
       );
+      await openDetails(page);
       await page
         .locator('summary')
         .filter({ hasText: 'checks: passed' })
@@ -77,7 +93,7 @@ test(
       await page
         .locator('details')
         .filter({ hasText: 'checks: passed' })
-        .getByRole('button', { name: 'View command output', exact: true })
+        .locator('.command-output > summary')
         .click();
       await page.getByText('Required gate passed', { exact: true }).waitFor();
       await mkdir(resolve('test-results'), { recursive: true });
@@ -86,10 +102,12 @@ test(
         fullPage: true,
       });
       await page.setViewportSize({ width: 390, height: 844 });
+      await openDetails(page);
       await page.screenshot({
         path: resolve('test-results/real-workflow-mobile.png'),
         fullPage: false,
       });
+      await openDetails(page);
       await page
         .locator('summary')
         .filter({ hasText: 'checks: passed' })
@@ -102,7 +120,7 @@ test(
         await page
           .getByRole('heading', { name: 'Workflow runs', exact: true })
           .count(),
-        1,
+        0,
       );
       assert.ok(
         await page.evaluate(
@@ -118,6 +136,7 @@ test(
         .first()
         .waitFor();
       await page.reload();
+      await openDetails(page);
       await page.getByRole('list', { name: 'Run timeline' }).waitFor();
       await page
         .locator('summary')
@@ -175,10 +194,14 @@ test(
       });
       page.setDefaultTimeout(15000);
       await page.goto(`${f.service.url}/runs`);
+      await page
+        .getByRole('button', { name: 'Conversations', exact: true })
+        .click();
       await page.getByLabel('GitHub issue number').fill('7');
       await page
         .getByRole('button', { name: 'Start implementation', exact: true })
         .click();
+      await openDetails(page, 'Run');
       await page
         .getByRole('heading', { name: 'specification_contract', exact: true })
         .waitFor();
@@ -208,6 +231,7 @@ test(
       await page
         .getByRole('link', { name: 'Open pull request', exact: true })
         .waitFor();
+      await openDetails(page);
       await page
         .locator('summary')
         .filter({ hasText: 'checks: passed' })
@@ -224,11 +248,12 @@ test(
         .click();
       await page
         .getByRole('region', { name: 'Regression proof resources' })
-        .getByRole('button', { name: 'View command output', exact: true })
+        .locator('.command-output > summary')
         .first()
         .click();
       await page.getByText('REGRESSION', { exact: true }).waitFor();
       await page.reload();
+      await openDetails(page);
       await page.getByRole('list', { name: 'Run timeline' }).waitFor();
       assert.ok(
         await page.evaluate(

@@ -23,7 +23,7 @@ async function installSnapshotStream(
             return new Response(new ReadableStream({ start(controller) {
               let sequence = 0;
               window.pushSnapshot = value => controller.enqueue(new TextEncoder().encode(
-                'data: ' + JSON.stringify({apiVersion:'v1', streamId:'ui-test', sequence:++sequence, type:sequence === 1 ? 'snapshot' : 'update', snapshot:value}) + String.fromCharCode(10,10)
+                'data: ' + JSON.stringify({type:'STATE_SNAPSHOT', snapshot:{factory:{schemaVersion:1,kind:'conversation',apiVersion:'v1', streamId:'ui-test', sequence:++sequence, type:sequence === 1 ? 'snapshot' : 'update', snapshot:value}}}) + String.fromCharCode(10,10)
               ));
               window.pushSnapshot(initial);
               init?.signal?.addEventListener('abort', () => controller.error(new Error('Aborted')), {once:true});
@@ -256,19 +256,30 @@ test(
       await page.route('**/history?*', (route) =>
         route.fulfill({
           json: {
-            entries: [
+            events: [
               {
-                id: '1',
-                kind: 'pi.assistant',
-                text: 'Older assistant context',
-                tools: [
-                  {
-                    id: 'old-call',
-                    name: 'probe',
-                    arguments: '{}',
-                    status: 'pending',
+                type: 'STATE_SNAPSHOT',
+                snapshot: {
+                  factory: {
+                    schemaVersion: 1,
+                    kind: 'history',
+                    entries: [
+                      {
+                        id: '1',
+                        kind: 'pi.assistant',
+                        text: 'Older assistant context',
+                        tools: [
+                          {
+                            id: 'old-call',
+                            name: 'probe',
+                            arguments: '{}',
+                            status: 'pending',
+                          },
+                        ],
+                      },
+                    ],
                   },
-                ],
+                },
               },
             ],
           },

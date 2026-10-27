@@ -33,7 +33,7 @@ export async function realFixture(
     afterCreate?: () => Promise<void>;
     beforeReview?: () => Promise<void>;
     afterImplementation?: () => Promise<void>;
-    baselineFailure?: boolean;
+    checkFailure?: boolean;
     lostPr?: boolean;
     malformedReview?: boolean;
     omitImplementation?: boolean;
@@ -313,7 +313,7 @@ export async function realFixture(
     };
     saved.settings.requiredChecks = [
       options.checkCommand ??
-        (options.baselineFailure
+        (options.checkFailure
           ? 'exit 2'
           : "node -e \"require('node:fs').readFileSync('value.txt')\""),
     ];

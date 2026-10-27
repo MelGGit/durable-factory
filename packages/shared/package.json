@@ -2,5 +2,8 @@
   "name": "@durable-factory/shared",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts"
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@ag-ui/core": "1.0.3"
+  }
 }

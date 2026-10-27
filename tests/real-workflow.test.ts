@@ -16,7 +16,10 @@ test('real tools, exact candidate review and local push produce one ready PR wit
     );
     assert.equal(run.status, 'pr_ready', JSON.stringify(run));
     assert.equal(f.creates, 1);
-    assert.equal(run.evidenceHistory?.[0].kind, 'baseline');
+    assert.equal(
+      run.attempts.some((a) => a.stage === 'baseline'),
+      false,
+    );
     assert.equal(run.mode, 'real');
     assert.equal(run.evidence.filter((e) => e.passed).length, 2);
     assert.equal(
@@ -40,20 +43,33 @@ test('real tools, exact candidate review and local push produce one ready PR wit
     await f.close();
   }
 });
-test('pre-existing baseline failures pause without calling the developer', async () => {
-  const f = await realFixture({ baselineFailure: true });
+test('required check failures are evaluated after development and still block publication', async () => {
+  const f = await realFixture({ checkFailure: true });
   try {
-    const started = await f.client.startIssue(7, 'baseline-start');
+    const started = await f.client.startIssue(7, 'failed-check-start');
     const run = await until(
       () => f.client.run(started.id),
       (r) => r.status === 'needs_input',
       20000,
     );
-    assert.equal(run.stage, 'baseline');
-    assert.equal(run.evidence[0].results![0].exitCode, 2);
+    assert.ok(
+      run.attempts.findIndex((a) => a.stage === 'checks') >
+        run.attempts.findIndex((a) => a.stage === 'developer'),
+    );
+    assert.equal(
+      [...run.evidence, ...(run.evidenceHistory ?? [])].find(
+        (e) => e.kind === 'checks',
+      )!.results![0].exitCode,
+      2,
+    );
+    assert.equal(
+      run.attempts.some((a) => a.stage === 'baseline'),
+      false,
+    );
+    assert.equal(run.repairCount, 3);
     assert.equal(
       run.attempts.some((a) => a.stage === 'developer'),
-      false,
+      true,
     );
     assert.equal(f.creates, 0);
   } finally {

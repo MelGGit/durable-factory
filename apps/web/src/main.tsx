@@ -10,7 +10,7 @@ import {
   type ProviderId,
 } from '../../../packages/shared/src/index.js';
 import './style.css';
-import { RunsApp } from './runs.js';
+import { LegacyRunsRedirect } from './run-chat.js';
 import { ChatApp } from './chat.js';
 const client = new FactoryClient();
 const names: Record<string, string> = {
@@ -756,7 +756,7 @@ createRoot(document.getElementById('root')!).render(
   window.location.pathname === '/settings' ? (
     <SettingsApp />
   ) : window.location.pathname === '/runs' ? (
-    <RunsApp />
+    <LegacyRunsRedirect />
   ) : (
     <ChatApp />
   ),

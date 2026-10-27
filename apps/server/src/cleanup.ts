@@ -4,6 +4,7 @@ import { lstat, realpath, readdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Harness } from '@earendil-works/pi-durable';
 import type { WorkflowRun } from '../../../packages/shared/src/index.js';
+import { Deletions, issueDeletionKey } from './deletion-state.js';
 import { Workflow } from './workflow.js';
 import { Catalog } from './chat.js';
 import { Processes } from './processes.js';
@@ -14,7 +15,23 @@ import { git, type Workspaces } from './workspace.js';
 const require = createRequire(import.meta.url);
 
 /** Capture materialized session documents before closing Pi. No database writes while Pi is open. */
-export async function cleanupSnapshot(harness: Harness, run: WorkflowRun) {
+export async function cleanupSnapshot(
+  harness: Harness,
+  run?: WorkflowRun,
+  options: { preservePlanning?: boolean; conversationId?: string } = {},
+) {
+  await harness.commit(async (tx) => {
+    await tx.doc(Workflow);
+    await tx.doc(Catalog);
+    const deletions = await tx.doc(Deletions);
+    if (run && options.preservePlanning) {
+      // Also cover deletion requests saved by versions without suppression metadata.
+      deletions.suppressedIssues ??= {};
+      deletions.suppressedIssues[
+        issueDeletionKey(run.repository, run.issue.number)
+      ] = true;
+    }
+  }, context);
   const workflow = structuredClone(
     (await harness.snapshot(Workflow, context))!,
   );
@@ -26,17 +43,24 @@ export async function cleanupSnapshot(harness: Harness, run: WorkflowRun) {
     (await harness.snapshot(AgentOperations, context)) ?? { items: {} },
   );
   for (const [id, operation] of Object.entries(operations.items))
-    if (operation.runId === run.id) delete operations.items[id];
-  if (workflow.slot === run.id) throw new Error('Run still owns execution.');
+    if (run && operation.runId === run.id) delete operations.items[id];
+  if (run && workflow.slot === run.id)
+    throw new Error('Run still owns execution.');
   const conversations = new Set([
-    run.developerConversationId,
-    ...run.attempts.map((a) => a.conversationId),
+    ...(options.conversationId ? [options.conversationId] : []),
+    ...(run
+      ? [
+          run.developerConversationId,
+          ...run.attempts.map((a) => a.conversationId),
+        ]
+      : []),
     ...Object.values(catalog.items)
-      .filter((c) => c.runId === run.id)
+      .filter((c) => run && c.runId === run.id)
       .map((c) => c.id),
   ]);
   if (
-    run.planningConversationId &&
+    !options.preservePlanning &&
+    run?.planningConversationId &&
     !Object.values(workflow.runs).some(
       (r) =>
         r.id !== run.id &&
@@ -45,19 +69,26 @@ export async function cleanupSnapshot(harness: Harness, run: WorkflowRun) {
   )
     conversations.add(run.planningConversationId);
   conversations.delete('');
-  delete workflow.runs[run.id];
+  if (run) delete workflow.runs[run.id];
+  if (options.conversationId)
+    for (const retained of Object.values(workflow.runs))
+      if (retained.planningConversationId === options.conversationId)
+        retained.planningConversationId = '';
   (workflow as { revision: number }).revision++;
   for (const [id, receipt] of Object.entries(workflow.receipts))
-    if (receipt.runId === run.id) delete workflow.receipts[id];
+    if (run && receipt.runId === run.id) delete workflow.receipts[id];
   for (const id of conversations) delete catalog.items[id];
   const commands = Object.values(processes.records)
-    .filter((p) => p.runId === run.id)
+    .filter((p) => run && p.runId === run.id)
     .map((p) => p.id);
   for (const id of commands) delete processes.records[id];
   return {
     conversations: [...conversations],
     commands,
     documents: {
+      'factory.deletions': structuredClone(
+        (await harness.snapshot(Deletions, context))!,
+      ),
       'factory.workflow': workflow,
       'factory.conversations': catalog,
       'factory.processes': processes,
@@ -200,26 +231,52 @@ async function exists(path: string) {
   }
 }
 
-/** Never force-remove a changed worktree, or follow a substituted path. Git hooks are disabled. */
+/** Automatic cleanup preserves changed content; explicit manual deletion discards owned content. */
 export async function cleanupWorkspace(
   dataDir: string,
   run: WorkflowRun,
   workspaces: Workspaces,
+  discard = false,
 ) {
   if (!/^[A-Za-z0-9_-]+$/.test(run.id))
     throw new Error('Invalid run identity.');
+  const directory = join(dataDir, 'worktrees');
+  if ((await exists(directory)) && (await realpath(directory)) !== directory)
+    throw new Error('Worktree ownership is uncertain.');
   await workspaces.cleanupProofIndexes(run);
   for (const resource of run.proofWorkspaces ?? [])
-    await workspaces.cleanupProofWorkspace(run, resource);
-  if (!run.workspace) return;
+    await workspaces.cleanupProofWorkspace(run, resource, discard);
+  if (!run.workspace) {
+    if (!discard || run.mode !== 'real') return;
+    // Setup may have created Git resources before its workspace receipt was saved.
+    run = {
+      ...run,
+      workspace: {
+        path: workspaces.path(run),
+        branch: workspaces.branch(run),
+        base: run.base,
+        includedIgnored: [],
+      },
+    };
+  }
+  const workspace = run.workspace!;
   const expected = join(dataDir, 'worktrees', run.id);
   if (
-    run.workspace.path !== expected ||
-    run.workspace.branch !== workspaces.branch(run)
+    workspace.path !== expected ||
+    workspace.branch !== workspaces.branch(run)
   )
     throw new Error('Worktree ownership is uncertain.');
-  const branch = `refs/heads/${run.workspace.branch}`;
+  const branch = `refs/heads/${workspace.branch}`;
   const ref = `refs/durable-factory/${run.id}/base`;
+  const base = (
+    await git(run.repository.path, [
+      'for-each-ref',
+      '--format=%(objectname)',
+      ref,
+    ])
+  ).trim();
+  if (base && base !== workspace.base)
+    throw new Error('Run base reference changed.');
   const listed = await git(run.repository.path, [
     'worktree',
     'list',
@@ -245,25 +302,45 @@ export async function cleanupWorkspace(
       throw new Error('Worktree ownership is uncertain.');
     if (
       (await git(expected, ['symbolic-ref', '--short', 'HEAD'])).trim() !==
-        run.workspace.branch ||
-      (await git(expected, ['rev-parse', 'HEAD'])).trim() !==
-        run.publication?.commit ||
-      (await workspaces.candidate(run)) !== run.publication?.tree ||
-      (
-        await git(expected, ['status', '--porcelain', '--untracked-files=all'])
-      ).trim()
+      workspace.branch
+    )
+      throw new Error('Worktree ownership is uncertain.');
+    if (
+      !discard &&
+      ((await git(expected, ['symbolic-ref', '--short', 'HEAD'])).trim() !==
+        workspace.branch ||
+        (await git(expected, ['rev-parse', 'HEAD'])).trim() !==
+          run.publication?.commit ||
+        (await workspaces.candidate(run)) !== run.publication?.tree ||
+        (
+          await git(expected, [
+            'status',
+            '--porcelain',
+            '--untracked-files=all',
+          ])
+        ).trim())
     )
       throw new Error('Worktree contains unexpected changes.');
-    const ignored = await workspaces.ignoredInventory(run);
+    const ignored = discard
+      ? undefined
+      : await workspaces.ignoredInventory(run);
     const baseline = run.publication?.cleanupIgnored;
-    if (baseline ? ignored.digest !== baseline.digest : ignored.files > 0)
+    if (
+      !discard &&
+      (baseline ? ignored!.digest !== baseline.digest : ignored!.files > 0)
+    )
       throw new Error(
         baseline
           ? 'Ignored files changed after publication.'
           : 'Ignored files have no saved cleanup baseline. Preserve or remove them before cleanup.',
       );
     // Git also refuses tracked/untracked changes and locked/submodule worktrees.
-    await git(run.repository.path, ['worktree', 'remove', expected]);
+    await git(run.repository.path, [
+      'worktree',
+      'remove',
+      ...(discard ? ['--force'] : []),
+      expected,
+    ]);
   } else if (listed.includes(`worktree ${expected}\n`)) {
     throw new Error(
       'Worktree registration remains but its directory is missing.',
@@ -277,7 +354,7 @@ export async function cleanupWorkspace(
     ])
   ).trim();
   if (head) {
-    if (head !== run.publication?.commit)
+    if (!discard && head !== run.publication?.commit)
       throw new Error('Local branch changed after publication.');
     if (
       (
@@ -287,19 +364,10 @@ export async function cleanupWorkspace(
       throw new Error('Local branch is in use.');
     await git(run.repository.path, ['update-ref', '-d', branch, head]);
   }
-  const base = (
-    await git(run.repository.path, [
-      'for-each-ref',
-      '--format=%(objectname)',
-      ref,
-    ])
-  ).trim();
   if (base) {
-    if (base !== run.workspace.base)
-      throw new Error('Run base reference changed.');
+    if (base !== workspace.base) throw new Error('Run base reference changed.');
     await git(run.repository.path, ['update-ref', '-d', ref, base]);
   }
-  const directory = join(dataDir, 'worktrees');
   if (await exists(directory)) {
     if ((await realpath(directory)) !== directory)
       throw new Error('Worktree ownership is uncertain.');

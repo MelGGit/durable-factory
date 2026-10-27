@@ -1,11 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chromium } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { workflowFixture } from '../fixtures/workflow.js';
 import { simulationAdapter } from '../../apps/server/src/workflow.js';
 import { until } from '../fixtures/chat.js';
+
+async function openDetails(page: Page, name = 'Run') {
+  const tab = page.getByRole('tab', { name, exact: true });
+  if (
+    (page.viewportSize()?.width ?? 1280) < 1200 &&
+    !(await page
+      .getByRole('dialog', { name: 'Implementation details', exact: true })
+      .isVisible())
+  )
+    await page
+      .getByRole('button', { name: 'Show details', exact: true })
+      .click();
+  await tab.click();
+}
 
 test(
   'browser starts labelled simulation, restores question after restart, answers, and inspects evidence on desktop/mobile',
@@ -41,7 +55,11 @@ test(
       page.on('pageerror', (e) => errors.push(e.message));
       await page.goto(`${s.service.url}/?conversation=${conversationId}`);
       await page.getByRole('button', { name: 'Start simulated run' }).click();
-      await page.getByRole('heading', { name: 'Workflow runs' }).waitFor();
+      await page.getByRole('tab', { name: 'Run', exact: true }).waitFor();
+      assert.match(page.url(), /\/\?conversation=/);
+      await page
+        .getByRole('navigation', { name: 'Implementation conversations' })
+        .waitFor();
       await page
         .locator('.run-question')
         .getByText('Which search behavior should be used?', { exact: true })
@@ -62,6 +80,7 @@ test(
         fullPage: true,
       });
       await page.setViewportSize({ width: 390, height: 844 });
+      await openDetails(page);
       await page.screenshot({
         path: resolve('test-results/workflow-mobile.png'),
         fullPage: true,
@@ -84,9 +103,13 @@ test(
         .filter({ hasText: 'Simulated PR' })
         .waitFor();
       await page
-        .getByRole('link', { name: 'Open reviewer conversation', exact: true })
+        .getByRole('button', {
+          name: 'Close implementation details',
+          exact: true,
+        })
         .click();
       await page
+        .locator('.implementation-events')
         .getByText('Simulated reviewer passed.', { exact: true })
         .waitFor();
       assert.equal(
@@ -128,12 +151,13 @@ test(
       page.setDefaultTimeout(10000);
       await page.goto(`${s.service.url}/runs#${run.id}`);
       await page
-        .getByLabel('Developer guidance', { exact: true })
+        .getByLabel('Message', { exact: true })
         .fill('Keep the accepted scope.');
-      await page.getByRole('button', { name: 'Queue guidance' }).click();
-      await page.getByRole('button', { name: 'Withdraw input' }).click();
+      await page.getByRole('button', { name: 'Send', exact: false }).click();
+      await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
       await page
-        .getByText('Keep the accepted scope. · withdrawn', { exact: true })
+        .locator('.implementation-events')
+        .getByText('Guidance withdrawn', { exact: true })
         .waitFor();
       await page
         .getByRole('button', { name: 'Pause run', exact: true })
@@ -280,8 +304,8 @@ test(
         })
         .click();
       await until(
-        async () => new URL(page.url()).hash,
-        (hash) => hash !== `#${original.id}`,
+        async () => new URL(page.url()).searchParams.get('conversation'),
+        (id) => id !== original.developerConversationId,
       );
       assert.equal(retryId, operationId);
       assert.equal((await fixture.client.workflow()).runs.length, 2);

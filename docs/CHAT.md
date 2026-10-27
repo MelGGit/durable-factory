@@ -1,5 +1,7 @@
 # Durable chat contract — stages 3–7
 
+The shipped frontend now consumes [AG-UI observation views](AG_UI.md). The original endpoints below remain available; the AG-UI POST/run endpoint delegates to the same durable admission and role boundaries.
+
 The Node service owns one Pi harness in `factory.sqlite`. Configuration, conversation catalog/metadata, admission receipts, submissions, transcripts, and execution share that storage and its existing exclusive process ownership. A conversation and its metadata are created atomically. There is no independent application agent loop or queue database.
 
 ## HTTP interface
@@ -48,10 +50,27 @@ Snapshots optionally include `planning`: captured repository registration, saved
 
 Simulation admission atomically creates a run-owned developer conversation using captured role/repository settings. Stage tasks belong to that conversation; each reviewed attempt gets its own task-owned reviewer conversation. These conversations use no model generation or mutation tools. Simulated stage output is persisted as transcript entries and renders through the existing history/SSE interface.
 
-Developer submissions use durable Pi submission records and the workflow’s revision-serialized admission boundary. Follow-ups and steering wait for a controlled developer boundary; withdrawal applies only before consumption. They are never independently scheduled by chat recovery. Reviewers reject ordinary input. Chat snapshots include `workflow` with run ID, status, stage, and input availability, and watch the workflow document so pause/publication updates also restore correctly. Developer interruption requests a workflow pause rather than independently aborting its conversation. Use `/runs` for full controls.
+Developer submissions use durable Pi submission records and the workflow’s revision-serialized admission boundary. Follow-ups and steering wait for a controlled developer boundary; withdrawal applies only before consumption. They are never independently scheduled by chat recovery. Reviewers reject ordinary input. Chat snapshots include `workflow` with run ID, status, stage, and input availability, and watch the workflow document so pause/publication updates also restore correctly. Developer interruption requests a workflow pause rather than independently aborting its conversation. Use the implementation sidebar for full run controls.
 
 The planner’s `start_development` tool requires a consumed, explicit subsequent human start instruction and a confirmed issue. The service derives a stable admission operation from that instruction. Tool invocation alone, issue approval, repository text, and ordinary planning messages grant no start authorization. A repeated start and the application start button converge on one run. The planner cannot request an explicit new run after completion; that is a separate inspector action.
 
 ## Real run conversations
 
 Real developer/reviewer conversations use captured providers and role-specific tools. Developer reads/edits/commands target the recorded worktree; reviewer reads target the validated candidate tree. Tools and provider callbacks require the active attempt and conversation. Real steering is placed at Pi's post-tool boundary; ordinary follow-ups wait for a developer boundary. Questions persist before stopping, and reviewer verdicts require structured tool submission. Publication closes admission to implementation input, including during service-only revalidation. Internal agent submissions and human guidance retain separate durable identities. Provider requests and compaction use captured deadlines without a short whole-conversation timeout.
+
+
+## Independent implementation conversations
+
+The root workspace groups Planning and Implementation conversations separately. Starting an issue opens its existing developer conversation, while reviewer contexts remain independent internally. The implementation transcript presents developer/reviewer messages, tools and service events in chronological order; model prompts are excluded from this presentation. Run/Ticket/Details sidebar tabs expose current execution, controls, the captured specification and retained evidence. Settings stays at `/settings`; legacy `/runs#<id>` links redirect to the implementation conversation.
+
+`GET /api/v1/runs/:id/activity` returns a bounded, cursor-paginated read model with stable item IDs, available timestamps, actor and source references. `/activity/events` supplies a fresh snapshot and sequenced updates, with heartbeats and bounded buffering. Reconnect fills missed history and merges updates by identity. The activity stream also carries developer composer state, so each implementation tab uses one persistent connection. Navigation refreshes through cancellable, non-overlapping short requests; additional tabs cannot exhaust the browser connection pool with redundant streams. Tool cards keep stable identities across live updates, durable commits and older history loads, preserving expanded output. Original conversations and workflow/process records stay authoritative; display events do not enter model context. Command output is read separately in bounded pages, including new bytes after temporary EOF while running.
+
+Dependency setup precedes development. Repository-configured checks run afterward, followed by independent review. Targeted base/candidate regression proof remains a separate post-development requirement when approved. Historical baseline evidence is retained; stopped legacy baseline attempts are skipped only after process reconciliation, preserving pause and intervention state.
+
+## Permanent chat deletion
+
+`DELETE /api/v1/conversations/:id` and `DELETE /api/v1/runs/:id` accept an empty JSON object using the normal CSRF header and return `202` with a durable `DeletionOperation`. A run-owned conversation deletes its entire implementation. Repeated requests return the same operation; requesting a blocked target again retries it. `GET /api/v1/deletions/:id` returns its current state, and `GET /api/v1/deletions` lists operations for navigation and cross-tab reconciliation.
+
+The states are `pending`, `stopping`, `waiting`, `deleting`, `blocked`, and `completed`. Intent is saved before cancellation and suppresses target admission, recovery, and scheduling. Deletion waits for application-wide idle maintenance, serializes with automatic cleanup, removes owned files first, then purges Pi history with storage closed. A minimal completion receipt retains identifiers for retries and browser draft removal. Planning and implementation chats are deleted independently; retained links are cleared. Automatic cleanup retains its existing stricter checks for unpublished content.
+
+Manual implementation deletion retains repository and issue identifiers to suppress automatic label admission across restarts. Only an explicit successful new admission clears this suppression. Maintenance preparation failures reopen the runtime before reporting the deletion as blocked, so unrelated chats remain usable.

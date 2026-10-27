@@ -1,3 +1,18 @@
+import { Deletions, deleting, issueDeletionKey } from './deletion-state.js';
+import { Planning } from './planning.js';
+import type { ConversationId } from '@earendil-works/pi-durable';
+import type { DeletionOperation } from '../../../packages/shared/src/deletion.js';
+import { RunActivityService } from './activity.js';
+import {
+  runAgUi,
+  encodeAgUiConversation,
+  encodeAgUiActivity,
+  agUiSnapshot,
+} from './ag-ui.js';
+import {
+  agUiMessages,
+  agUiViewEvents,
+} from '../../../packages/shared/src/ag-ui.js';
 import {
   createServer,
   type IncomingMessage,
@@ -71,6 +86,7 @@ export async function startService(options: ServiceOptions = {}) {
   let configuration: Awaited<ReturnType<typeof openConfiguration>> | undefined;
   let credentials: PrivateCredentials;
   let chat: ChatService | undefined;
+  let activity: RunActivityService | undefined;
   let planning: PlanningService;
   let github: GitHubAdapter;
   let workflow: WorkflowService;
@@ -85,6 +101,8 @@ export async function startService(options: ServiceOptions = {}) {
   const maxReopeningAttempts = 3;
   let cleanupTimer: ReturnType<typeof setInterval> | undefined;
   let cleanupPolling: Promise<void> | undefined;
+  let deletionPolling: Promise<void> | undefined;
+  let deletionTimer: ReturnType<typeof setInterval> | undefined;
   let nextCleanupPoll = 0;
   const mode =
     options.workflowMode ?? process.env.DURABLE_FACTORY_WORKFLOW_MODE ?? 'real';
@@ -115,7 +133,10 @@ export async function startService(options: ServiceOptions = {}) {
       providers: await providerStatuses(credentials, metadata),
     };
   }
-  async function body(req: IncomingMessage): Promise<unknown> {
+  async function body(
+    req: IncomingMessage,
+    maxBytes = 65536,
+  ): Promise<unknown> {
     if (req.headers['content-type']?.split(';')[0] !== 'application/json')
       throw new ApiError(
         'INVALID_INPUT',
@@ -126,8 +147,12 @@ export async function startService(options: ServiceOptions = {}) {
     let length = 0;
     for await (const chunk of req) {
       length += chunk.length;
-      if (length > 65536)
-        throw new ApiError('INVALID_INPUT', 'Request exceeds 64 KiB.', 413);
+      if (length > maxBytes)
+        throw new ApiError(
+          'INVALID_INPUT',
+          'Request exceeds the allowed size.',
+          413,
+        );
       chunks.push(Buffer.from(chunk));
     }
     try {
@@ -203,8 +228,107 @@ export async function startService(options: ServiceOptions = {}) {
             403,
           );
       }
+      if (path === '/api/v1/deletions' && req.method === 'GET')
+        return send(res, 200, {
+          operations: Object.values(
+            (await configuration!.harness.snapshot(Deletions, context))
+              ?.items ?? {},
+          ),
+        });
+      const deletionRoute = /^\/api\/v1\/deletions\/([A-Za-z0-9_-]+)$/.exec(
+        path,
+      );
+      if (deletionRoute && req.method === 'GET') {
+        const operation = (
+          await configuration!.harness.snapshot(Deletions, context)
+        )?.items[deletionRoute[1]];
+        if (!operation)
+          throw new ApiError('NOT_FOUND', 'Deletion not found.', 404);
+        return send(res, 200, operation);
+      }
+      const deleteTarget =
+        /^\/api\/v1\/(conversations|runs)\/([A-Za-z0-9_-]+)$/.exec(path);
+      if (deleteTarget && req.method === 'DELETE') {
+        await body(req);
+        return send(
+          res,
+          202,
+          await requestDeletion(deleteTarget[1] === 'runs', deleteTarget[2]),
+        );
+      }
       if (path === '/api/v1/session' && req.method === 'GET')
         return send(res, 200, { apiVersion: API_VERSION, csrfToken });
+      const targetMutation =
+        /^\/api\/v1\/(conversations|runs)\/([A-Za-z0-9_-]+)/.exec(path);
+      if (
+        req.method !== 'GET' &&
+        targetMutation &&
+        deleting(
+          await configuration!.harness.snapshot(Deletions, context),
+          targetMutation[1] === 'conversations' ? targetMutation[2] : undefined,
+          targetMutation[1] === 'runs' ? targetMutation[2] : undefined,
+        )
+      )
+        throw new ApiError('CONFLICT', 'This chat is being deleted.', 409);
+      if (path === '/api/v1/ag-ui/run' && req.method === 'POST')
+        return runAgUi(chat!, await body(req, 2 * 1024 * 1024), res);
+      const agUiConversation =
+        /^\/api\/v1\/conversations\/(\d+)\/ag-ui\/(events|snapshot|history)$/.exec(
+          path,
+        );
+      if (agUiConversation && req.method === 'GET') {
+        const [, id, action] = agUiConversation;
+        if (action === 'events')
+          return chat!.stream(id, res, encodeAgUiConversation);
+        if (action === 'snapshot')
+          return send(res, 200, {
+            events: agUiSnapshot(await chat!.activitySnapshot(id)),
+          });
+        const page = await chat!.history(
+          id,
+          url.searchParams.get('cursor') ?? undefined,
+          Number(url.searchParams.get('limit') ?? 50),
+        );
+        return send(res, 200, {
+          events: [
+            {
+              type: 'MESSAGES_SNAPSHOT',
+              messages: agUiMessages(id, page.entries),
+            },
+            {
+              type: 'STATE_SNAPSHOT',
+              snapshot: {
+                factory: { schemaVersion: 1, kind: 'history', ...page },
+              },
+            },
+          ],
+        });
+      }
+      const agUiActivity =
+        /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/activity\/ag-ui(?:\/(events))?$/.exec(
+          path,
+        );
+      if (agUiActivity && req.method === 'GET') {
+        const [, id, events] = agUiActivity;
+        if (events) return activity!.stream(id, res, encodeAgUiActivity);
+        const snapshot = await activity!.page(
+          id,
+          url.searchParams.get('cursor') ?? undefined,
+          Number(url.searchParams.get('limit') ?? 50),
+        );
+        return send(res, 200, {
+          events: agUiViewEvents(
+            {
+              apiVersion: API_VERSION,
+              streamId: 'page',
+              sequence: 1,
+              type: 'snapshot',
+              snapshot,
+            },
+            'activity',
+          ),
+        });
+      }
       if (path === '/api/v1/runs/events' && req.method === 'GET')
         return workflow.stream(res);
       if (path === '/api/v1/runs') {
@@ -244,6 +368,22 @@ export async function startService(options: ServiceOptions = {}) {
         } finally {
           await file.close();
         }
+      }
+      const activityRoute =
+        /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/activity(?:\/(events))?$/.exec(
+          path,
+        );
+      if (activityRoute && req.method === 'GET') {
+        if (activityRoute[2]) return activity!.stream(activityRoute[1], res);
+        return send(
+          res,
+          200,
+          await activity!.page(
+            activityRoute[1],
+            url.searchParams.get('cursor') ?? undefined,
+            Number(url.searchParams.get('limit') ?? 50),
+          ),
+        );
       }
       const inspectionRoute =
         /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/inspection$/.exec(path);
@@ -587,6 +727,7 @@ export async function startService(options: ServiceOptions = {}) {
         },
       );
       openedChat = chat;
+      activity = new RunActivityService(workflow, chat, processes);
       await validateRepositoryFromStorage();
       await configuration.harness.inspect(
         (await import('./storage.js')).context,
@@ -598,6 +739,7 @@ export async function startService(options: ServiceOptions = {}) {
       for (const conversation of Object.values(savedConversations?.items ?? {}))
         if (conversation.model.provider === 'requesty')
           registerRequesty(conversation.model.model);
+      await stopPendingDeletions();
       await workflow.recover();
       await chat.recover();
       await workflow.activate();
@@ -669,6 +811,10 @@ export async function startService(options: ServiceOptions = {}) {
         const capability = await workflow.snapshot();
         if (!capability.enabled) return;
         const saved = await configuration!.read();
+        const repository = {
+          ...saved.settings.repository,
+          path: await realpath(saved.settings.repository.path),
+        };
         for (let page = 1; page <= 100; page++) {
           const batch = await github.readyIssues!(
             saved.settings.repository.github,
@@ -677,6 +823,16 @@ export async function startService(options: ServiceOptions = {}) {
           );
           for (const issue of batch.issues) {
             if (stopping) return;
+            const deletions = await configuration!.harness.snapshot(
+              Deletions,
+              context,
+            );
+            if (
+              deletions?.suppressedIssues?.[
+                issueDeletionKey(repository, issue.number)
+              ]
+            )
+              continue;
             await workflow.admit(
               {
                 issueNumber: issue.number,
@@ -684,6 +840,7 @@ export async function startService(options: ServiceOptions = {}) {
               },
               labelAbort.signal,
               saved.revision,
+              'label',
             );
           }
           if (!batch.hasNext) return;
@@ -704,6 +861,8 @@ export async function startService(options: ServiceOptions = {}) {
     };
     pollLabels();
     labelTimer = setInterval(pollLabels, 30000);
+    deletionTimer = setInterval(() => void pollDeletions(), 1000);
+    void pollDeletions();
     void pollCompletedRuns();
     cleanupTimer = setInterval(() => void pollCompletedRuns(), 30000);
     log('service_ready', { port });
@@ -726,7 +885,258 @@ export async function startService(options: ServiceOptions = {}) {
       ownership = undefined;
     }
   }
+  async function requestDeletion(
+    isRun: boolean,
+    id: string,
+  ): Promise<DeletionOperation> {
+    return configuration!.harness.commit(async (tx) => {
+      const operations = await tx.doc(Deletions);
+      const existing = Object.values(operations.items).find((operation) =>
+        isRun ? operation.runId === id : operation.conversationIds.includes(id),
+      );
+      if (existing) {
+        if (existing.state === 'blocked') {
+          existing.state = 'pending';
+          existing.message = 'Deletion requested.';
+        }
+        return JSON.parse(JSON.stringify(existing)) as DeletionOperation;
+      }
+      const catalog = await tx.doc(Catalog);
+      const summary = isRun ? undefined : catalog.items[id];
+      if (!isRun && !summary)
+        throw new ApiError('NOT_FOUND', 'Conversation not found.', 404);
+      const runId = isRun ? id : summary?.runId;
+      const state = await tx.doc((await import('./workflow.js')).Workflow);
+      const run = runId ? state.runs[runId] : undefined;
+      if (runId && !run) throw new ApiError('NOT_FOUND', 'Run not found.', 404);
+      const conversationIds = run
+        ? [
+            ...new Set([
+              run.developerConversationId,
+              ...run.attempts.map((attempt) => attempt.conversationId),
+              ...Object.values(catalog.items)
+                .filter((item) => item.runId === runId)
+                .map((item) => item.id),
+            ]),
+          ].filter(Boolean)
+        : [id];
+      const operation: DeletionOperation = {
+        id: runId ? `run-${runId}` : `conversation-${id}`,
+        conversationIds,
+        ...(runId ? { runId } : {}),
+        state: 'pending',
+        message: 'Deletion requested.',
+      };
+      if (run) {
+        operations.suppressedIssues ??= {};
+        operations.suppressedIssues[
+          issueDeletionKey(run.repository, run.issue.number)
+        ] = true;
+      }
+      operations.items[operation.id] = operation;
+      return operation;
+    }, context);
+  }
+  async function deletionState(
+    id: string,
+    state: DeletionOperation['state'],
+    message: string,
+  ) {
+    await configuration!.harness.commit(async (tx) => {
+      const operation = (await tx.doc(Deletions)).items[id];
+      operation.state = state;
+      operation.message = message;
+    }, context);
+  }
+  async function stopPendingDeletions() {
+    const operations = Object.values(
+      (await configuration!.harness.snapshot(Deletions, context))?.items ?? {},
+    );
+    for (const operation of operations) {
+      if (['completed', 'blocked', 'waiting'].includes(operation.state))
+        continue;
+      try {
+        await deletionState(operation.id, 'stopping', 'Stopping…');
+        if (operation.runId) {
+          await workflow.stopForDeletion(operation.runId);
+          if (!(await processes.quiescent(operation.runId)))
+            throw new Error('Termination could not be confirmed.');
+        } else {
+          for (const id of operation.conversationIds)
+            await chat!.stopForDeletion(id);
+        }
+        await deletionState(
+          operation.id,
+          'waiting',
+          'Waiting for other work to finish…',
+        );
+      } catch {
+        await deletionState(
+          operation.id,
+          'blocked',
+          'Agent or command termination could not be confirmed. Resolve the termination blocker and retry deletion.',
+        );
+      }
+    }
+  }
+  /** Reopen every service if preparation fails after shutdown has begun. */
+  async function withClosedRuntime<T>(
+    prepare: () => Promise<T>,
+    work: (snapshot: T) => Promise<void>,
+  ) {
+    let snapshot: T;
+    try {
+      await workflow.close();
+      await activity?.close();
+      await chat!.close();
+      snapshot = await prepare();
+    } catch (error) {
+      // A live harness does not imply that its service objects still accept work.
+      // Finish closing it before opening replacements; never allow two writers.
+      runtimeOpen = false;
+      await workflow.close();
+      await activity?.close();
+      await chat!.close();
+      await configuration!.close();
+      configuration = undefined;
+      await reopenRuntime();
+      throw error;
+    }
+    runtimeOpen = false;
+    await configuration!.close();
+    configuration = undefined;
+    try {
+      await work(snapshot);
+    } finally {
+      await reopenRuntime();
+    }
+  }
+  function pollDeletions(): Promise<void> {
+    if (deletionPolling) return deletionPolling;
+    if (stopping || !ready || maintenance || cleanupPolling)
+      return Promise.resolve();
+    deletionPolling = (async () => {
+      await stopPendingDeletions();
+      const operations = Object.values(
+        (await configuration!.harness.snapshot(Deletions, context))?.items ??
+          {},
+      );
+      for (const operation of operations) {
+        if (stopping || operation.state !== 'waiting') continue;
+        const idle = async () => {
+          const inspection = await configuration!.harness.inspect(context);
+          const state = await workflow.snapshot();
+          return (
+            !inspection.tasks.length &&
+            !inspection.submissions.length &&
+            !state.slot &&
+            !state.runs.some((run) =>
+              [
+                'running',
+                'queued',
+                'pausing',
+                'cancelling',
+                'termination_blocker',
+              ].includes(run.status),
+            )
+          );
+        };
+        if (!(await idle())) continue;
+        maintenance = true;
+        ready = false;
+        try {
+          await labelPolling;
+          await Promise.allSettled([...activeMutations]);
+          if (stopping || !(await idle())) continue;
+          if (operation.runId && !(await processes.quiescent(operation.runId)))
+            throw new Error('Run processes are not confirmed stopped.');
+          await deletionState(operation.id, 'deleting', 'Deleting…');
+          const run = operation.runId
+            ? await workflow.get(operation.runId)
+            : undefined;
+          // Remove only links to this implementation, preserving its planning transcript.
+          if (run?.planningConversationId) {
+            await configuration!.harness.commit(async (tx) => {
+              const planning = (
+                await tx.doc(
+                  Planning,
+                  Number(run.planningConversationId) as ConversationId,
+                )
+              ).value;
+              if (planning?.runId === run.id) delete planning.runId;
+            }, context);
+          }
+          await withClosedRuntime(
+            () =>
+              cleanupSnapshot(configuration!.harness, run, {
+                preservePlanning: true,
+                ...(!run
+                  ? { conversationId: operation.conversationIds[0] }
+                  : {}),
+              }),
+            async (snapshot) => {
+              snapshot.conversations = purgeRunStorage(
+                ownership!.dataDir,
+                snapshot,
+                true,
+              );
+              for (const id of snapshot.conversations)
+                delete snapshot.documents['factory.conversations'].items[id];
+              if (run)
+                await cleanupWorkspace(
+                  ownership!.dataDir,
+                  run,
+                  workspaces,
+                  true,
+                );
+              await cleanupArtifacts(ownership!.dataDir, snapshot);
+              snapshot.documents['factory.deletions'].items[operation.id] = {
+                ...operation,
+                conversationIds: snapshot.conversations,
+                state: 'completed',
+                message: 'Deleted.',
+              };
+              purgeRunStorage(ownership!.dataDir, snapshot);
+            },
+          );
+        } catch (error) {
+          if (!runtimeOpen && !reopeningNeeded) {
+            reopeningNeeded = true;
+            reopeningUnsafe = true;
+            startupError = new ApiError(
+              'NOT_READY',
+              'Storage could not close safely for deletion. Restart the service after checking data-directory access.',
+              503,
+            );
+          }
+          if (runtimeOpen) {
+            const reason =
+              error instanceof Error &&
+              /^(?:Worktree ownership is uncertain\.|Proof workspace ownership is uncertain\.|Worktree registration remains but its directory is missing\.|Run processes are not confirmed stopped\.|Run base reference changed\.|Local branch is in use\.|Artifact ownership is uncertain\.|Command artifact ownership is uncertain\.)$/.test(
+                error.message,
+              )
+                ? error.message
+                : 'Deletion could not finish. Check local repository access and storage compatibility, then retry.';
+            await deletionState(operation.id, 'blocked', reason);
+          }
+          log('deletion_blocked');
+        } finally {
+          maintenance = false;
+          if (!stopping) ready = runtimeOpen;
+        }
+        if (!runtimeOpen) return;
+      }
+    })()
+      .catch(() => {
+        log('deletion_failed');
+      })
+      .finally(() => {
+        deletionPolling = undefined;
+      });
+    return deletionPolling;
+  }
   function pollCompletedRuns(): Promise<void> {
+    if (deletionPolling) return Promise.resolve();
     if (cleanupPolling) return cleanupPolling;
     if (
       stopping ||
@@ -734,9 +1144,8 @@ export async function startService(options: ServiceOptions = {}) {
       (reopeningNeeded &&
         (reopeningUnsafe || reopeningAttempts >= maxReopeningAttempts)) ||
       (!reopeningNeeded && Date.now() < nextCleanupPoll) ||
-      mode !== 'real' ||
-      !github.getPull ||
-      !github.getIssue
+      (!reopeningNeeded &&
+        (mode !== 'real' || !github.getPull || !github.getIssue))
     )
       return Promise.resolve();
     cleanupPolling = (async () => {
@@ -750,9 +1159,15 @@ export async function startService(options: ServiceOptions = {}) {
         }
         if (!runtimeOpen || stopping) return;
       }
+      if (mode !== 'real' || !github.getPull || !github.getIssue) return;
       for (const run of (await workflow.snapshot()).runs) {
         if (
           stopping ||
+          deleting(
+            await configuration!.harness.snapshot(Deletions, context),
+            run.planningConversationId,
+            run.id,
+          ) ||
           run.mode !== 'real' ||
           run.status !== 'pr_ready' ||
           !run.publication?.prNumber
@@ -815,31 +1230,35 @@ export async function startService(options: ServiceOptions = {}) {
             )
           )
             continue;
+          if (
+            deleting(
+              await configuration!.harness.snapshot(Deletions, context),
+              run.planningConversationId,
+              run.id,
+            )
+          )
+            continue;
           if (!(await processes.quiescent(run.id)))
             throw new Error('Run processes are not confirmed stopped.');
-          await workflow.close();
-          await chat!.close();
-          const snapshot = await cleanupSnapshot(
-            configuration!.harness,
-            await workflow.get(run.id),
+          await withClosedRuntime(
+            async () =>
+              cleanupSnapshot(
+                configuration!.harness,
+                await workflow.get(run.id),
+              ),
+            async (snapshot) => {
+              snapshot.conversations = purgeRunStorage(
+                ownership!.dataDir,
+                snapshot,
+                true,
+              );
+              for (const id of snapshot.conversations)
+                delete snapshot.documents['factory.conversations'].items[id];
+              await cleanupWorkspace(ownership!.dataDir, run, workspaces);
+              await cleanupArtifacts(ownership!.dataDir, snapshot);
+              purgeRunStorage(ownership!.dataDir, snapshot);
+            },
           );
-          runtimeOpen = false;
-          await configuration!.close();
-          configuration = undefined;
-          try {
-            snapshot.conversations = purgeRunStorage(
-              ownership!.dataDir,
-              snapshot,
-              true,
-            );
-            for (const id of snapshot.conversations)
-              delete snapshot.documents['factory.conversations'].items[id];
-            await cleanupWorkspace(ownership!.dataDir, run, workspaces);
-            await cleanupArtifacts(ownership!.dataDir, snapshot);
-            purgeRunStorage(ownership!.dataDir, snapshot);
-          } finally {
-            await reopenRuntime();
-          }
         } catch (error) {
           if (!runtimeOpen && !reopeningNeeded) {
             reopeningNeeded = true;
@@ -914,6 +1333,7 @@ export async function startService(options: ServiceOptions = {}) {
       return workflow!;
     },
     pollCompletedRuns,
+    pollDeletions,
     port,
     url: `http://127.0.0.1:${port}`,
     async close() {
@@ -923,17 +1343,24 @@ export async function startService(options: ServiceOptions = {}) {
       log('service_stopping');
       clearInterval(labelTimer);
       clearInterval(cleanupTimer);
+      clearInterval(deletionTimer);
       clearTimeout(reopeningTimer);
       labelAbort.abort();
       await cleanupPolling;
+      await deletionPolling;
       if (runtimeOpen) await workflow?.close();
       await labelPolling;
+      await activity?.close();
       await chat?.close();
       const closed = new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
       server.closeIdleConnections();
       await Promise.allSettled([...activeMutations]);
+      // Browsers can leave speculative TCP connections without a complete HTTP
+      // request. Once actions and observers have drained, these must not keep
+      // shutdown waiting for the browser to return from offline mode.
+      server.closeAllConnections();
       await closed;
       // A failed close deliberately retains ownership: never permit a second writer.
       if (configuration) await configuration.close();

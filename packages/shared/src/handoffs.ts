@@ -319,3 +319,20 @@ export function runTimeline(run: WorkflowRun) {
       });
   return events.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
 }
+
+/** Best available durable update time, including legacy runs without activity records. */
+export function runUpdatedAt(run: WorkflowRun) {
+  return Math.max(
+    run.createdAt,
+    ...(run.activity ?? []).map((event) => event.at),
+    ...run.decisions.map((decision) => decision.at),
+    ...run.attempts.flatMap((attempt) => [
+      attempt.startedAt,
+      attempt.finishedAt ?? 0,
+    ]),
+    ...run.interventions.flatMap((question) => [
+      question.createdAt ?? 0,
+      question.resolvedAt ?? 0,
+    ]),
+  );
+}

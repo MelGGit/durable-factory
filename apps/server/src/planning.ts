@@ -1,3 +1,4 @@
+import { assertNotDeleting } from './deletion-state.js';
 import { realpath } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import {
@@ -176,7 +177,12 @@ export class PlanningService {
   }
   private async serial<T>(id: string, work: () => Promise<T>): Promise<T> {
     const previous = this.lines.get(id) ?? Promise.resolve();
-    const pending = previous.catch(() => {}).then(work);
+    const pending = previous
+      .catch(() => {})
+      .then(async () => {
+        await this.harness.commit((tx) => assertNotDeleting(tx, id), context);
+        return work();
+      });
     this.lines.set(id, pending);
     try {
       return await pending;

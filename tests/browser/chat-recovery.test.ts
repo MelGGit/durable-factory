@@ -287,7 +287,7 @@ test(
       let requested = false,
         delivered = false;
       await page.route(
-        `**/api/v1/conversations/${a.id}/history?*`,
+        `**/api/v1/conversations/${a.id}/ag-ui/history?*`,
         async (route) => {
           const response = await route.fetch();
           requested = true;

@@ -24,12 +24,21 @@
     "format": "prettier --write apps packages scripts tests package.json tsconfig.json .prettierrc.json"
   },
   "devDependencies": {
+    "@ag-ui/client": "1.0.3",
+    "@ag-ui/core": "1.0.3",
+    "@assistant-ui/react": "0.15.31",
+    "@assistant-ui/react-ag-ui": "0.1.0",
     "@playwright/test": "1.56.1",
     "@types/node": "24.10.0",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
+    "@types/react-test-renderer": "19.3.0",
     "prettier": "3.6.2",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-test-renderer": "19.2.0",
     "tsx": "4.20.6",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "zod": "4.4.3"
   }
 }

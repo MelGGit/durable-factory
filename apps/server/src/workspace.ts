@@ -413,6 +413,7 @@ export class Workspaces {
   async cleanupProofWorkspace(
     run: WorkflowRun,
     resource: NonNullable<WorkflowRun['proofWorkspaces']>[number],
+    discard = false,
   ) {
     const expected = join(this.dataDir, 'proofs', resource.id);
     if (
@@ -442,7 +443,10 @@ export class Workspaces {
       !listed.includes(`worktree ${expected}\n`)
     )
       throw new Error('Proof workspace ownership is uncertain.');
-    if ((await git(expected, ['rev-parse', 'HEAD'])).trim() !== resource.commit)
+    if (
+      !discard &&
+      (await git(expected, ['rev-parse', 'HEAD'])).trim() !== resource.commit
+    )
       throw new Error('Proof workspace HEAD changed.');
     const common = async (root: string) =>
       realpath(
@@ -456,7 +460,9 @@ export class Workspaces {
       );
     if ((await common(expected)) !== (await common(run.repository.path)))
       throw new Error('Proof repository changed.');
-    if (resource.inventory) {
+    if (discard) {
+      // Explicit manual deletion discards content only after ownership checks above.
+    } else if (resource.inventory) {
       if (
         JSON.stringify(await this.fileInventory(expected)) !==
         JSON.stringify(resource.inventory)

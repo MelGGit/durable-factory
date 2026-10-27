@@ -40,19 +40,11 @@ test('simulation completes durable Pi stages and deduplicates admission, with ca
       () => s.client.run(a.id),
       (r) => r.status === 'pr_ready',
     );
-    assert.equal(run.attempts.length, 7);
+    assert.equal(run.attempts.length, 6);
     assert.equal(run.repairCount, 0);
     assert.deepEqual(
       run.attempts.map((a) => a.stage),
-      [
-        'setup',
-        'baseline',
-        'developer',
-        'checks',
-        'reviewer',
-        'publication',
-        'publishing',
-      ],
+      ['setup', 'developer', 'checks', 'reviewer', 'publication', 'publishing'],
     );
     assert.notEqual(
       run.attempts.find((a) => a.stage === 'reviewer')!.conversationId,
@@ -273,7 +265,7 @@ test('settings are captured, adoption invalidates evidence, setup is repeated, a
       (r) => r.stage === 'checks' && r.status === 'running',
     );
     assert.equal(run.attempts.filter((a) => a.stage === 'setup').length, 2);
-    assert.equal(run.attempts.filter((a) => a.stage === 'baseline').length, 2);
+    assert.equal(run.attempts.filter((a) => a.stage === 'baseline').length, 0);
     assert.equal(run.repairCount, 0);
   } finally {
     await s.close();
@@ -339,13 +331,11 @@ test('guidance during checks returns through development without bypassing failu
   }
 });
 
-test('review rejection repairs with fresh review; malformed verdict and baseline failure require input', async () => {
-  for (const scenario of ['reject', 'malformed', 'baseline'] as const) {
+test('review rejection repairs with fresh review; malformed verdict requires input', async () => {
+  for (const scenario of ['reject', 'malformed'] as const) {
     const adapter = simulationAdapter();
     let reviews = 0;
     adapter.execute = async (_run, attempt) => {
-      if (attempt.stage === 'baseline' && scenario === 'baseline')
-        return { outcome: 'failed', message: 'Pre-existing test failure' };
       if (attempt.stage === 'reviewer') {
         if (scenario === 'malformed')
           return { outcome: 'passed', message: 'Unstructured approval' };
@@ -750,7 +740,7 @@ test('provider failure pauses without repair or fallback; resumed work reacquire
   }
 });
 
-for (const stage of ['setup', 'baseline'] as const) {
+for (const stage of ['setup'] as const) {
   for (const adoption of [
     'adopt_specification',
     'adopt_configuration',
@@ -778,13 +768,14 @@ for (const stage of ['setup', 'baseline'] as const) {
         const setup = run.attempts.findIndex(
           (a) => a.stage === 'setup' && a.outcome === 'passed',
         );
-        const baseline = run.attempts.findIndex(
-          (a) => a.stage === 'baseline' && a.outcome === 'passed',
-        );
         const developer = run.attempts.findIndex(
           (a) => a.stage === 'developer',
         );
-        assert.ok(setup >= 0 && baseline > setup && developer > baseline);
+        assert.ok(setup >= 0 && developer > setup);
+        assert.equal(
+          run.attempts.some((a) => a.stage === 'baseline'),
+          false,
+        );
         assert.equal(run.setupRequired, false);
         assert.equal(run.repairCount, 0);
       } finally {

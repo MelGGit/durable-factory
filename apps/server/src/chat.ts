@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { Deletions, deleting, assertNotDeleting } from './deletion-state.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { writeSse } from './sse.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -65,6 +67,21 @@ export const Requests = defineDoc({
     requests: {} as Record<
       string,
       { content: string; mode: 'followUp' | 'steer'; withdrawn?: boolean }
+    >,
+  }),
+  checkpointWhen: () => true,
+});
+// Conversation-scoped so the existing cleanup removes these receipts with their owner.
+const AgUiBindings = defineDoc({
+  kind: 'factory.ag-ui',
+  scope: 'conversation',
+  version: 1,
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({
+    exchanges: {} as Record<
+      string,
+      { runId: string; messageId: string; content: string; requestId: string }
     >,
   }),
   checkpointWhen: () => true,
@@ -174,6 +191,18 @@ export function transcript(entry: EntryRecord): TranscriptEntry {
   return {
     id: String(entry.id),
     kind: entry.kind,
+    ...(entry.model?.some((message) => typeof message.timestamp === 'number')
+      ? {
+          at: entry.model.find(
+            (message) => typeof message.timestamp === 'number',
+          )!.timestamp,
+        }
+      : entry.data &&
+          typeof entry.data === 'object' &&
+          !Array.isArray(entry.data) &&
+          typeof entry.data.at === 'number'
+        ? { at: entry.data.at }
+        : {}),
     text: preview(text).text,
     tools,
     ...(Buffer.byteLength(text) > LIMIT
@@ -407,6 +436,72 @@ export class ChatService {
             : ('acknowledged' as const),
         };
   }
+  async submitAgUi(
+    id: string,
+    runId: string,
+    messageId: string,
+    content: string,
+  ) {
+    const summary = await this.summary(id);
+    await this.harness.commit(
+      (tx) => assertNotDeleting(tx, id, summary.runId),
+      context,
+    );
+    if (!roleCapabilities(summary.role).followUp)
+      throw new ApiError(
+        'FORBIDDEN',
+        'This conversation is inspection-only.',
+        403,
+      );
+    return this.serial(`ag-ui:${id}`, async () => {
+      if (this.closing)
+        throw new ApiError('NOT_READY', 'The service is stopping.', 503);
+      const hash = (value: string) =>
+        createHash('sha256').update(value).digest('hex');
+      const requestId = `agui_${hash(messageId)}`;
+      await this.harness.commit(async (tx) => {
+        await assertNotDeleting(tx, id, summary.runId);
+        const doc = await tx.doc(AgUiBindings, Number(id) as ConversationId);
+        const previous = doc.exchanges[hash(runId)];
+        if (
+          previous &&
+          (previous.runId !== runId ||
+            previous.messageId !== messageId ||
+            previous.content !== content)
+        )
+          throw new ApiError(
+            'CONFLICT',
+            'This AG-UI run ID belongs to different input.',
+            409,
+          );
+        if (
+          Object.values(doc.exchanges).some(
+            (item) => item.messageId === messageId && item.content !== content,
+          )
+        )
+          throw new ApiError(
+            'CONFLICT',
+            'This AG-UI message ID belongs to different input.',
+            409,
+          );
+        doc.exchanges[hash(runId)] = { runId, messageId, content, requestId };
+      }, context);
+      try {
+        const previous = await this.lookup(id, requestId);
+        if (previous.content !== content || previous.mode !== 'followUp')
+          throw new ApiError(
+            'CONFLICT',
+            'This message ID belongs to different input.',
+            409,
+          );
+        return previous;
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== 'NOT_FOUND')
+          throw error;
+      }
+      return this.submit(id, { content, requestId, mode: 'followUp' });
+    });
+  }
   async submit(id: string, input: unknown) {
     if ((await this.summary(id)).runId && this.deps.workflowInput) {
       await this.deps.workflowInput(id, input);
@@ -435,6 +530,10 @@ export class ChatService {
       if (this.closing)
         throw new ApiError('NOT_READY', 'The service is stopping.', 503);
       const summary = await this.summary(id);
+      await this.harness.commit(
+        (tx) => assertNotDeleting(tx, id, summary.runId),
+        context,
+      );
       const capability = roleCapabilities(summary.role);
       if (
         !capability.followUp ||
@@ -448,6 +547,7 @@ export class ChatService {
         );
       const conversation = await this.conversation(id);
       const shouldSubmit = await this.harness.commit(async (tx) => {
+        await assertNotDeleting(tx, id, summary.runId);
         const doc = await tx.doc(Requests, conversation.id);
         if (doc.interrupting)
           throw new ApiError('BUSY', 'Wait for interruption to finish.', 409);
@@ -545,13 +645,21 @@ export class ChatService {
       return { status: 'interrupting' };
     });
   }
+  async stopForDeletion(id: string) {
+    await this.interrupt(id);
+    await Promise.all([...this.interrupts]);
+  }
   async recover() {
     const conversations = await this.list();
     for (const summary of conversations)
       if (summary.model.provider === 'requesty')
         this.deps.registerRequesty?.(summary.model.model);
     for (const summary of conversations) {
-      if (summary.runId) continue;
+      if (
+        summary.runId ||
+        deleting(await this.harness.snapshot(Deletions, context), summary.id)
+      )
+        continue;
       await this.deps.planning?.upgrade(summary, this.deps.tools);
       await this.deps.planning?.recover(summary.id);
       const conversation = await this.conversation(summary.id);
@@ -611,7 +719,10 @@ export class ChatService {
         undefined,
         context,
       );
-      const entries = page.items.map(transcript).reverse();
+      const entries = await this.agUiEntryIds(
+        id,
+        page.items.map(transcript).reverse(),
+      );
       return {
         entries,
         ...(page.next && entries.length
@@ -623,6 +734,49 @@ export class ChatService {
       invalid('Invalid history cursor.');
     }
   }
+  private async agUiEntryIds(id: string, entries: TranscriptEntry[]) {
+    const bindings = await this.harness.snapshot(
+      AgUiBindings,
+      Number(id) as ConversationId,
+      context,
+    );
+    if (!bindings) return entries;
+    const wanted = new Set(
+      entries
+        .filter((entry) => entry.kind === 'pi.user')
+        .map((entry) => entry.id),
+    );
+    const aliases = await this.harness.commit(async (tx) => {
+      const result = new Map<string, string>();
+      const receipts = new Map(
+        Object.values(bindings.exchanges).map((item) => [item.requestId, item]),
+      );
+      for (const receipt of receipts.values()) {
+        const record = await tx.submissionByRequest(
+          Number(id) as ConversationId,
+          receipt.requestId,
+        );
+        if (record?.entry && wanted.has(String(record.entry)))
+          result.set(String(record.entry), receipt.messageId);
+      }
+      return result;
+    }, context);
+    return entries.map((entry) =>
+      aliases.has(entry.id)
+        ? { ...entry, messageId: aliases.get(entry.id)! }
+        : entry,
+    );
+  }
+  async activitySnapshot(id: string) {
+    const conversation = await this.conversation(id);
+    const watch = await conversation.watch(context);
+    try {
+      return await this.project(id, watch.value);
+    } finally {
+      await watch.stop();
+    }
+  }
+
   async inspectConversation(id: string) {
     const summary = await this.summary(id);
     const conversation = await this.conversation(id);
@@ -752,7 +906,7 @@ export class ChatService {
       return items;
     }, context);
     const live = view.docs['pi.live'] as LiveState | undefined;
-    const entries = view.entries.slice(-50).map((raw) => {
+    const projectedEntries = view.entries.slice(-50).map((raw) => {
       const entry = transcript(raw);
       const budget = Math.floor((64 * 1024) / Math.max(1, entry.tools.length));
       entry.tools = entry.tools.map((tool) => {
@@ -776,6 +930,7 @@ export class ChatService {
       });
       return entry;
     });
+    const entries = await this.agUiEntryIds(id, projectedEntries);
     // Keep the wire snapshot below the slow-client ceiling; older entries remain pageable.
     while (
       entries.length > 1 &&
@@ -842,7 +997,16 @@ export class ChatService {
         : {}),
     };
   }
-  async stream(id: string, res: ServerResponse) {
+  async stream(
+    id: string,
+    res: ServerResponse,
+    encode?: (
+      frame: ChatFrame,
+    ) =>
+      | { payload: string; done?: boolean }
+      | Promise<{ payload: string; done?: boolean }>,
+    onStreamError?: () => string,
+  ) {
     const conversation = await this.conversation(id);
     const watch = await conversation.watch(context);
     const requestsWatch = await this.harness.watchDoc(
@@ -861,21 +1025,31 @@ export class ChatService {
       : undefined;
     const streamId = randomUUID();
     let sequence = 0,
-      stopped = false;
+      stopped = false,
+      writing = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
-    const stop = async () => {
+    const stop = async (graceful = false) => {
       if (stopped) return;
       stopped = true;
       clearInterval(heartbeat);
       this.streams.delete(stop);
       res.end();
-      if (res.writableLength > 0) res.destroy();
+      if (!graceful && res.writableLength > 0) res.destroy();
       await Promise.all([
         watch.stop(),
         requestsWatch?.stop(),
         planningWatch?.stop(),
         workflowWatch?.stop(),
       ]);
+    };
+    const fail = () => {
+      if (stopped) return;
+      if (onStreamError && !res.destroyed) {
+        const payload = onStreamError();
+        if (res.writableLength + Buffer.byteLength(payload) <= 1024 * 1024)
+          res.write(payload);
+      }
+      void stop(true);
     };
     if (res.destroyed) {
       await stop();
@@ -903,28 +1077,35 @@ export class ChatService {
         type,
         snapshot: await this.project(id, view),
       };
-      const payload = `data: ${JSON.stringify(frame)}\n\n`;
+      const encoded = encode
+        ? await encode(frame)
+        : { payload: `data: ${JSON.stringify(frame)}\n\n` };
+      const { payload } = encoded;
       if (stopped) return;
-      if (res.writableLength + Buffer.byteLength(payload) > 1024 * 1024) {
+      let written: boolean;
+      writing = true;
+      try {
+        written = await writeSse(res, payload);
+      } finally {
+        writing = false;
+      }
+      if (!written) {
         void stop();
         return;
       }
-      res.write(payload);
+      if (encoded.done) void stop(true);
     };
     try {
       await send(watch.value, 'snapshot');
       if (stopped) return;
       heartbeat = setInterval(() => {
+        if (writing) return;
         if (res.writableLength + 16 > 1024 * 1024) void stop();
         else res.write(': heartbeat\n\n');
       }, 15000);
       let delivery = Promise.resolve();
       const enqueue = (view: ConversationView) => {
-        delivery = delivery
-          .then(() => send(view, 'update'))
-          .catch(() => {
-            void stop();
-          });
+        delivery = delivery.then(() => send(view, 'update')).catch(fail);
         return delivery;
       };
       watch.start((view) => enqueue(view));
@@ -932,7 +1113,7 @@ export class ChatService {
       workflowWatch?.start(() => enqueue(watch.value));
       planningWatch?.start(() => enqueue(watch.value));
     } catch (error) {
-      void stop();
+      fail();
       throw error;
     }
   }
@@ -995,7 +1176,7 @@ export class ChatService {
   }
 }
 
-/** Workflow-created conversations never call a paid provider in simulation mode. */
+/** Workflow conversations are inert until the stage adapter configures their role. */
 export async function createRunConversation(
   tx: Tx,
   runId: string,
@@ -1021,7 +1202,7 @@ export async function createRunConversation(
   catalog.items[String(record.id)] = {
     id: String(record.id),
     runId,
-    title: `Simulation ${role} · ${runId.slice(0, 8)}`,
+    title: `${role} · ${runId.slice(0, 8)}`,
     role,
     repository,
     model,

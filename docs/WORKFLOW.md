@@ -5,7 +5,8 @@ Stages 5–7 implement this contract with deterministic simulation and real repo
 | Current state | Trigger / prerequisite | Next state and required action |
 | --- | --- | --- |
 | No run | Explicit start or ready-label admission | Queued; deduplicate by repository/issue identity and capture specification, models, execution configuration and base revision |
-| Queued | Execution slot acquired | Developer; establish isolated workspace, setup and passing baseline before mutations |
+| Queued | Execution slot acquired | Setup; establish isolated workspace and install dependencies |
+| Setup | Dependency setup passes | Developer; begin implementation without baseline checks |
 | Developer | Developer stops; mutations confirmed quiescent | Checks; record intended source identity and effective configuration revision |
 | Checks | Every required check passes for that identity/configuration | Reviewer; start an independent inspection-only conversation |
 | Checks | Required validation fails; repair budget remains | Developer; consume the next repair cycle when repair work starts |
@@ -24,7 +25,7 @@ Stages 5–7 implement this contract with deterministic simulation and real repo
 | Any unfinished stage | Service restart | Inspect/reconcile existing attempt before scheduling; preserve attempt identity and repair count; increment recovery count only |
 | Completed / Cancelled | Explicit new-run instruction | Admit a new run; persistent labels and duplicate requests cannot restart it |
 
-Commit outcomes before scheduling the next stage. A developer statement does not authorize a transition. User guidance, retries and recovery do not reset repair accounting; guidance accompanying a failed-check/reviewer repair still consumes its normal cycle. Setup changes require setup and baseline checks again. Adoption preserves any outstanding setup/baseline prerequisite, even when the new setup commands are unchanged. Publication-time source or configuration changes invalidate evidence rather than bypassing validation. Active external requests may finish after cancellation; record their outcome without claiming they were undone.
+Commit outcomes before scheduling the next stage. A developer statement does not authorize a transition. User guidance, retries and recovery do not reset repair accounting; guidance accompanying a failed-check/reviewer repair still consumes its normal cycle. Setup changes require dependency setup again. Adoption preserves any outstanding setup prerequisite, even when the new setup commands are unchanged. Publication-time source or configuration changes invalidate evidence rather than bypassing validation. Active external requests may finish after cancellation; record their outcome without claiming they were undone.
 
 ## Simulation and durable execution
 
@@ -54,7 +55,7 @@ Command actions are `pause`, `resume`, `cancel`, `answer`, `continue`, `adopt_co
 
 Developer input and withdrawal use the existing chat routes. Publication closes new input atomically; previously accepted retries remain idempotent. A queued/active/paused run is returned for duplicate issue starts. A completed/cancelled issue is also returned unless `newRun: true` explicitly admits a new run; persistent labels cannot request it. Real mode polls open `agent:ready` issues at startup and every 30 seconds, with pagination, no overlapping polls, rate-limit backoff, and shared deduplication. Persistent labels never request explicit new runs.
 
-The `/runs` inspector separates browser connection status from execution status and exposes simulation labels, queue/slot ownership, stage results, pending questions, captured commands/timeouts/models, repairs and conversation links. Streaming bounds the response buffer to 1 MiB and disconnects slow clients; the client reconnects with a fresh snapshot, detects sequence gaps and watches heartbeat loss. Workflow event snapshots currently contain the run collection; archival and retention are stage 8 work.
+The implementation conversation inspector separates browser connection status from execution status and exposes simulation labels, queue/slot ownership, stage results, pending questions, captured commands/timeouts/models, repairs and conversation links. Streaming bounds the response buffer to 1 MiB and disconnects slow clients; the client reconnects with a fresh snapshot, detects sequence gaps and watches heartbeat loss. Workflow event snapshots currently contain the run collection; archival and retention are stage 8 work.
 
 ## Real execution and recovery
 

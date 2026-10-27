@@ -4,6 +4,8 @@ Plan a software change, approve its GitHub issue, and let a durable developer â†
 
 Durable Factory is a personal, locally hosted application. A Node service owns the work, Pi Durable persists conversations and workflow state in SQLite, and a React interface lets you plan, steer, and inspect it. Closing the browser does not stop accepted work. Interrupted external effects are reconciled before retrying, and you decide whether to merge.
 
+The backend also exposes an [AG-UI 1.0 integration](docs/AG_UI.md) for compatible clients. Our chat components consume AG-UI observation views; durable workflow controls retain their factory APIs.
+
 ## What it does
 
 - **Plan with repository context.** Chat with an agent that can inspect files, uncommitted changes, and conversation history without editing code.
@@ -33,7 +35,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Planning chat is the home screen; configuration is at [Settings](http://127.0.0.1:5173/settings), and the queue and inspector are at [Runs](http://127.0.0.1:5173/runs).
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Planning chat is the home screen; configuration is at [Settings](http://127.0.0.1:5173/settings), and implementation conversations and their run inspector are on the same root page.
 
 Vite proxies API requests to the Node service on port 4317. Configuration can be saved incrementally. No model is selected automatically, and saving commands never executes them.
 
@@ -52,7 +54,7 @@ Open [http://127.0.0.1:4317](http://127.0.0.1:4317). Node serves both the API an
 2. Select the planning, development, and review providers/models and configure their connections.
 3. Enter setup commands if needed, at least one real required check, command/provider timeouts, and the commit author's name and email.
 4. Save a repository-scoped GitHub token. The complete workflow needs Issues, Contents, and Pull requests read/write permissions; changing GitHub workflow files may require additional permission.
-5. Use **Validate GitHub repository** to check readability. This does not prove write permission or model access. Open Runs to see any missing execution prerequisites.
+5. Use **Validate GitHub repository** to check readability. This does not prove write permission or model access. Open the conversation navigation to see missing execution prerequisites.
 
 For a Bun project, setup might be `bun install --frozen-lockfile`, with required checks such as `bun run check` and `bun run test`. Use commands that actually validate your target repository.
 
@@ -73,7 +75,7 @@ flowchart LR
     Plan[Plan and inspect] --> Approve[Approve complete issue]
     Approve --> Issue[Create GitHub issue]
     Issue --> Start[Explicit start or agent:ready]
-    Start --> Develop[Setup and baseline, then develop]
+    Start --> Develop[Setup, then develop]
     Develop --> Checks[Required checks and optional regression proof]
     Checks --> Review[Independent criterion review]
     Review --> PR[Publish PR for human merge]
@@ -91,11 +93,11 @@ For manually prepared issues, use the explicit sections and regression format do
 
 ### 2. Start implementation
 
-Choose **Start implementation** on the linked issue, enter an issue number in Runs, explicitly ask the planner to start its linked issue, or label an open issue **`agent:ready`**. Label polling runs at startup and every 30 seconds. Adding that label authorizes implementation and PR publication; closed issues cannot start.
+Choose **Start implementation** on the linked issue, enter an issue number under Implementation, explicitly ask the planner to start its linked issue, or label an open issue **`agent:ready`**. Label polling runs at startup and every 30 seconds. Adding that label authorizes implementation and PR publication; closed issues cannot start.
 
 Each run captures the issue, base commit, settings, models, commands, deadlines, and commit identity. Settings saves affect future runs. Adopting newer configuration or specification is an explicit recorded action that invalidates affected evidence.
 
-Setup and baseline checks must pass before development. The developer works in a service-owned worktree and submits a report covering changes, criterion references, validation performed, concerns, and reviewer notes. Declared files must match the actual candidate diff, including deletions and rename paths. Ignored generated files intended for the commit must be explicitly selected.
+Dependency setup must pass before development. Required checks run after the developer finishes. The developer works in a service-owned worktree and submits a report covering changes, criterion references, validation performed, concerns, and reviewer notes. Declared files must match the actual candidate diff, including deletions and rename paths. Ignored generated files intended for the commit must be explicitly selected.
 
 ### 3. Validate and review
 
@@ -107,7 +109,7 @@ The initial attempt allows **three repair cycles**. Check failures and requested
 
 ### 4. Inspect and merge
 
-Runs exposes the queue, timeline, elapsed stage durations, repairs, recovery events, questions, reports, criterion assessments, and command output. Browser connection status is separate from execution status. Token usage is provider-reported and conversation-wide; available Requesty cost estimates are labelled, and subscription tokens are not presented as bills.
+Implementation chat logs the queue, timeline, elapsed stage durations, repairs, recovery events, questions, reports, criterion assessments, and command output. Browser connection status is separate from execution status. Token usage is provider-reported and conversation-wide; available Requesty cost estimates are labelled, and subscription tokens are not presented as bills.
 
 Publication refreshes the base and repeats validation when necessary, creates a commit with the captured identity, verifies its tree, pushes the owned branch without force, and opens a non-draft PR. Its description is generated from the structured handoff and evidence, then frozen for retries. The user reviews and merges on GitHub.
 
@@ -123,6 +125,12 @@ Developer input closes when publication begins. New-contract runs require a repo
 - Graceful shutdown stops admission, accounts for supervised processes, closes storage, and releases ownership. Restart reconciles existing work before allowing execution.
 
 New real runs use the stronger handoff contract. Older stored runs retain their captured behavior and show unavailable structured evidence explicitly. Detailed state transitions and recovery rules are in [the workflow contract](docs/WORKFLOW.md); message delivery and streaming are in [the chat contract](docs/CHAT.md).
+
+## Delete chats
+
+Use **Delete** beside a planning or implementation chat, then confirm permanent deletion. Planning deletion keeps linked implementations. Implementation deletion keeps linked planning chats and removes the run, its agent conversations and artifacts, and the entire local worktreeâ€”including unpublished, untracked, and ignored files. GitHub issues, pull requests, and remote branches are unchanged.
+
+Deletion stops the target's agents and commands first, then waits for unrelated work to finish before briefly reopening shared storage. Progress and blocked reasons appear beside the chat; use **Retry deletion** after resolving a blocker. Saved deletion requests resume after restart. Confirmed deletion has no undo. Ready labels cannot restart a deleted implementation; starting a new implementation explicitly allows work on that issue again.
 
 ## Automatic cleanup after merge
 

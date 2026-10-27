@@ -34,7 +34,13 @@ export interface StageAttempt {
   recoveryCount: number;
   repairCauses?: string[];
   recoveries?: { at: number }[];
-  outcome?: 'passed' | 'failed' | 'interrupted' | 'needs_input' | 'uncertain';
+  outcome?:
+    | 'passed'
+    | 'failed'
+    | 'interrupted'
+    | 'needs_input'
+    | 'uncertain'
+    | 'skipped';
   finishedAt?: number;
   message?: string;
 }
@@ -79,6 +85,7 @@ export interface Intervention {
   answer?: string;
 }
 export interface RunInput {
+  at?: number;
   requestId: string;
   submissionId: string;
   content: string;
@@ -103,6 +110,14 @@ export interface RunInspection {
   }[];
 }
 export interface WorkflowRun {
+  activity?: {
+    id: string;
+    at: number;
+    signature: string;
+    title: string;
+    detail: string;
+    attemptId?: string;
+  }[];
   contractVersion?: 2;
   implementations?: BoundImplementation[];
   pendingRepairCauses?: string[];
@@ -242,8 +257,8 @@ export class WorkflowClient extends FactoryClient {
       `/runs/${encodeURIComponent(id)}/inspection`,
     );
   }
-  workflow() {
-    return this.request<WorkflowSnapshot>('/runs');
+  workflow(signal?: AbortSignal) {
+    return this.request<WorkflowSnapshot>('/runs', { signal });
   }
   run(id: string) {
     return this.request<WorkflowRun>(`/runs/${encodeURIComponent(id)}`);

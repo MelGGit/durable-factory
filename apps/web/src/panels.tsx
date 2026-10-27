@@ -16,11 +16,19 @@ export function useMedia(query: string) {
 export function Overlay({
   open,
   label,
+  title,
+  className,
+  descriptionId,
+  closeDisabled = false,
   onClose,
   children,
 }: {
   open: boolean;
   label: string;
+  title?: string;
+  className?: string;
+  descriptionId?: string;
+  closeDisabled?: boolean;
   onClose: () => void;
   children: React.ReactNode;
 }) {
@@ -41,7 +49,8 @@ export function Overlay({
   return (
     <dialog
       ref={ref}
-      className="chat-overlay"
+      className={`chat-overlay${className ? ` ${className}` : ''}`}
+      aria-describedby={descriptionId}
       aria-label={label}
       onKeyDown={(event) => {
         if (event.key !== 'Tab') return;
@@ -62,13 +71,31 @@ export function Overlay({
       }}
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        if (!closeDisabled) onClose();
       }}
     >
       <div className="overlay-toolbar">
-        <strong>{label}</strong>
-        <button autoFocus type="button" className="secondary" onClick={onClose}>
-          Close {label.toLowerCase()}
+        {title ? <h2>{title}</h2> : <strong>{label}</strong>}
+        <button
+          autoFocus
+          type="button"
+          className="overlay-close"
+          aria-label={`Close ${label.toLowerCase()}`}
+          disabled={closeDisabled}
+          onClick={onClose}
+        >
+          <svg
+            aria-hidden="true"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          >
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
         </button>
       </div>
       {children}

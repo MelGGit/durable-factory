@@ -703,7 +703,7 @@ export class RealWorkflow {
       };
       const catalog = await tx.doc(Catalog);
       catalog.items[attempt.conversationId].title =
-        `${role} · ${run.id.slice(0, 8)}`;
+        `Issue #${run.issue.number} · ${run.specification.title}${role === 'reviewer' ? ' · Review' : ''}`;
     }, context);
     this.active.set(attempt.conversationId, {
       runId: run.id,

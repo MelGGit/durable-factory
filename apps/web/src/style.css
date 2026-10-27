@@ -1685,3 +1685,268 @@ h3 {
 .planning-ticket section p {
   white-space: pre-wrap;
 }
+
+/* Planning and implementation share navigation, while retaining independent transcripts. */
+.chat-sidebar nav {
+  flex: 0 0 auto;
+}
+.chat-sidebar {
+  overflow-y: auto;
+}
+.start-issue {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 24px;
+}
+.start-issue label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+.start-issue input {
+  width: 100%;
+  min-width: 0;
+}
+.start-issue button {
+  white-space: normal;
+}
+.navigation-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 0;
+}
+.implementation-events {
+  min-width: 0;
+}
+.implementation-events .message-author {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.implementation-events time {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+}
+.run-event {
+  border-left: 2px solid var(--line);
+  padding-left: 14px;
+}
+.run-event p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 6px;
+}
+.command-output {
+  margin-top: 10px;
+}
+.command-output summary {
+  cursor: pointer;
+}
+.command-output pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+}
+.implementation-sidebar {
+  padding: 20px 16px;
+  overflow-wrap: anywhere;
+}
+.run-sidebar-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.run-sidebar-tabs button {
+  background: transparent;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+}
+.run-sidebar-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--green);
+}
+.implementation-sidebar h2 {
+  font-size: 19px;
+  margin-bottom: 12px;
+}
+.implementation-sidebar h3 {
+  font-size: 15px;
+  margin: 20px 0 10px;
+}
+.implementation-sidebar p {
+  margin: 10px 0;
+}
+.implementation-sidebar a,
+.linked-implementation {
+  color: var(--green);
+  text-decoration: underline;
+}
+.implementation-sidebar .run-inspector {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+.implementation-sidebar .run-inspector button {
+  white-space: normal;
+  max-width: 100%;
+}
+.implementation-sidebar .run-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 20px 0;
+}
+.implementation-sidebar .run-question {
+  padding: 12px;
+}
+.implementation-sidebar pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.implementation-sidebar [hidden] {
+  display: none;
+}
+.run-stepper {
+  padding-left: 22px;
+  margin: 20px 0;
+  display: grid;
+  gap: 8px;
+}
+.run-stepper [aria-current='step'] {
+  font-weight: 650;
+  color: var(--green);
+}
+.run-stepper [data-complete='true']::marker {
+  color: var(--green);
+}
+.linked-implementation {
+  display: block;
+  padding: 12px 20px;
+}
+.redirect-message {
+  padding: 32px;
+}
+.implementation-sidebar .run-inspector button {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--green);
+  font-size: 12px;
+}
+.implementation-sidebar .run-inspector button:hover {
+  border-color: var(--green);
+}
+
+.chat-navigation-row {
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+}
+.chat-delete-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 8px 6px;
+}
+.chat-delete-control small {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.chat-sidebar nav .delete-chat {
+  width: auto;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: #963e32;
+}
+.confirmation-overlay {
+  width: min(480px, calc(100% - 32px));
+  box-shadow: 0 20px 64px #183f3426;
+}
+.confirmation-overlay .overlay-toolbar {
+  align-items: flex-start;
+  padding: 24px 24px 16px;
+  border-bottom: 0;
+}
+.confirmation-overlay .overlay-toolbar h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.4px;
+  overflow-wrap: anywhere;
+}
+.overlay-close {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: #65746b;
+  background: transparent;
+}
+.overlay-close:hover:not(:disabled) {
+  background: #edf1e7;
+  color: var(--green);
+}
+.confirmation-overlay .overlay-close {
+  margin: -5px -8px 0 0;
+}
+.delete-confirmation {
+  padding: 0 24px 24px;
+}
+.delete-confirmation p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.delete-confirmation .delete-context {
+  color: #65746b;
+  font-size: 13px;
+}
+.delete-confirmation .delete-warning {
+  margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #963e32;
+}
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  background: #f7f8f2;
+}
+.confirmation-actions .secondary,
+.danger {
+  min-height: 42px;
+  padding: 11px 16px;
+  border: 1px solid #dce4d4;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.danger {
+  border-color: #963e32;
+  background: #963e32;
+  color: #fffefa;
+}
+.danger:hover:not(:disabled) {
+  border-color: #803226;
+  background: #803226;
+}
+.confirmation-actions .secondary:hover:not(:disabled) {
+  background: #eaf0e0;
+}
+.chat-workspace[inert] {
+  opacity: 0.65;
+}

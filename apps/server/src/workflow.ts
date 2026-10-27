@@ -1,3 +1,9 @@
+import {
+  Deletions,
+  deleting,
+  assertNotDeleting,
+  issueDeletionKey,
+} from './deletion-state.js';
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -289,6 +295,64 @@ export class WorkflowService {
     return run;
   }
   private changed(state: State, run: WorkflowRun) {
+    const attempt = run.attempts.at(-1);
+    const labels: Record<RunStage, string> = {
+      setup: 'Workspace setup',
+      baseline: 'Legacy baseline checks',
+      developer: 'Development',
+      checks: 'Required checks',
+      reviewer: 'Independent review',
+      publication: 'Publication preparation',
+      publishing: 'PR publication',
+    };
+    run.activity ??= [];
+    const append = (
+      signature: string,
+      title: string,
+      detail = '',
+      at = this.clock.now(),
+    ) => {
+      if (run.activity!.some((event) => event.signature === signature)) return;
+      run.activity!.push({
+        id: String(run.activity!.length + 1),
+        at,
+        signature,
+        title,
+        detail,
+        ...(attempt ? { attemptId: attempt.id } : {}),
+      });
+    };
+    if (attempt?.outcome)
+      append(
+        `outcome:${attempt.id}:${attempt.taskId}:${attempt.outcome}`,
+        `${labels[attempt.stage]} · ${attempt.outcome.replaceAll('_', ' ')}`,
+        attempt.message ?? '',
+        attempt.finishedAt,
+      );
+    const active =
+      attempt?.stage === run.stage && !attempt.outcome ? attempt : undefined;
+    // Scheduling sets the next stage before creating its task. Do not report the
+    // preceding attempt's outcome as though it belonged to that next stage.
+    if (run.status !== 'running' || active) {
+      const signature = `state:${JSON.stringify([run.status, run.stage, active?.id, active?.taskId, run.repairCount, run.cleanup, run.publication?.state, run.publication?.pushState, run.publication?.prState])}:${run.decisions.length}`;
+      const statuses: Partial<Record<WorkflowRun['status'], string>> = {
+        queued: 'Implementation queued',
+        pausing: 'Pausing implementation',
+        paused: 'Implementation paused',
+        needs_input: 'Waiting for your input',
+        cancelling: 'Cancelling implementation',
+        cancelled: 'Implementation cancelled',
+        termination_blocker: 'Process reconciliation required',
+        pr_ready: 'Pull request ready',
+      };
+      append(
+        signature,
+        run.cleanup
+          ? `Cleanup ${run.cleanup.state}`
+          : (statuses[run.status] ?? `${labels[run.stage]} started`),
+        run.cleanup?.message ?? '',
+      );
+    }
     state.revision++;
     run.revision++;
   }
@@ -322,7 +386,7 @@ export class WorkflowService {
       model: user
         ? [{ role: 'user', content: text, timestamp: this.clock.now() }]
         : undefined,
-      data: { text },
+      data: { text, at: this.clock.now() },
     });
   }
   private async pendingInputs(tx: Tx, run: WorkflowRun) {
@@ -336,10 +400,25 @@ export class WorkflowService {
     return run.inputs.some((i) => i.status === 'queued');
   }
   private async schedule(state: State, tx: Tx) {
+    const deletions = await tx.doc(Deletions);
     if (this.closing || this.recovering || !this.adapter) return;
+    // Unconfirmed processes exclude all new work, including legacy runs whose
+    // execution slot was released before recovery discovered the blocker.
+    const blocker = Object.values(state.runs).find(
+      (run) => run.status === 'termination_blocker',
+    );
+    if (blocker) {
+      state.slot ||= blocker.id;
+      return;
+    }
     if (!state.slot) {
       const next = Object.values(state.runs)
-        .filter((r) => r.status === 'queued' && this.compatible(r))
+        .filter(
+          (r) =>
+            r.status === 'queued' &&
+            this.compatible(r) &&
+            !deleting(deletions, undefined, r.id),
+        )
         .sort((a, b) => a.queueOrder - b.queueOrder)[0];
       if (!next) return;
       state.slot = next.id;
@@ -348,6 +427,7 @@ export class WorkflowService {
     }
     const run = state.runs[state.slot];
     if (
+      deleting(deletions, undefined, run.id) ||
       !this.compatible(run) ||
       run.status !== 'running' ||
       (run.attempts.length && !run.attempts.at(-1)!.outcome)
@@ -376,9 +456,8 @@ export class WorkflowService {
         return;
       }
     }
-    // Pending setup/baseline work remains a prerequisite after adoption or recovery.
-    if (run.setupRequired && !['setup', 'baseline'].includes(run.stage))
-      run.stage = 'setup';
+    // Only dependency setup precedes development. Validation follows edits.
+    if (run.setupRequired && run.stage !== 'setup') run.stage = 'setup';
     if (run.stage === 'developer' && run.repairPending) {
       if (run.repairCount >= run.repairLimit) {
         this.question(
@@ -452,6 +531,10 @@ export class WorkflowService {
         deadline: this.clock.now() + timeout * 1000,
         recoveryCount: 0,
       });
+    const catalog = await tx.doc(Catalog);
+    const item = catalog.items[conversationId];
+    if (item)
+      item.title = `${run.mode === 'simulation' ? 'Simulation · ' : ''}Issue #${run.issue.number} · ${run.specification.title}${run.stage === 'reviewer' ? ' · Review' : ''}`;
     if (run.stage === 'developer') delete run.pendingRepairCauses;
     run.quiescent = false;
     if (run.stage === 'publishing') {
@@ -474,6 +557,7 @@ export class WorkflowService {
     input: unknown,
     signal?: AbortSignal,
     expectedConfigurationRevision?: number,
+    source: 'explicit' | 'label' = 'explicit',
   ) {
     if (!this.adapter || this.closing)
       throw new ApiError(
@@ -508,6 +592,10 @@ export class WorkflowService {
       issueNumber: body.issueNumber,
       sourceRunId: body.sourceRunId,
     });
+    await this.harness.commit(
+      (tx) => assertNotDeleting(tx, body.conversationId, body.sourceRunId),
+      context,
+    );
     const prior = body.sourceRunId
       ? await this.get(body.sourceRunId)
       : undefined;
@@ -575,6 +663,7 @@ export class WorkflowService {
         );
       await this.transaction(async (state, tx) => {
         checkConfiguration((await tx.doc(Configuration)).revision);
+        await assertNotDeleting(tx, undefined, existing.id);
         state.receipts[body.operationId] = { payload, runId: existing.id };
       });
       return this.get(existing.id);
@@ -618,6 +707,7 @@ export class WorkflowService {
           conflict('Operation ID already belongs to another command.');
         return receipt.runId;
       }
+      await assertNotDeleting(tx, body.conversationId, body.sourceRunId);
       const planning = body.conversationId
         ? (
             await tx.doc(
@@ -656,6 +746,15 @@ export class WorkflowService {
       if (!planning?.operation?.issue || planning.operation.state !== 'created')
         invalid('Start from a confirmed linked planning issue.');
       const operation = planning.operation;
+      const deletions = await tx.doc(Deletions);
+      const suppressionKey = issueDeletionKey(
+        operation.repository,
+        operation.issue!.number,
+      );
+      if (source === 'label' && deletions.suppressedIssues?.[suppressionKey])
+        conflict(
+          'Automatic admission is disabled for this deleted implementation. Start a new implementation explicitly.',
+        );
       const existing = Object.values(state.runs)
         .filter(
           (r) =>
@@ -670,6 +769,7 @@ export class WorkflowService {
           conflict(
             'Finish or cancel the existing run before explicitly starting another.',
           );
+        await assertNotDeleting(tx, undefined, existing.id);
         state.receipts[body.operationId] = { payload, runId: existing.id };
         return existing.id;
       }
@@ -689,6 +789,9 @@ export class WorkflowService {
             'Settings changed while resolving admission. Retry the same operation.',
           );
       }
+      // Only an explicit, successful new admission clears a manual deletion.
+      if (source === 'explicit' && deletions.suppressedIssues)
+        delete deletions.suppressedIssues[suppressionKey];
       const id = randomUUID();
       const developerConversationId = await createRunConversation(
         tx,
@@ -780,9 +883,12 @@ export class WorkflowService {
           );
         }
       }
+      const catalog = await tx.doc(Catalog);
+      catalog.items[developerConversationId].title =
+        `${run.mode === 'simulation' ? 'Simulation · ' : ''}Issue #${run.issue.number} · ${run.specification.title}`;
+      this.changed(state, run);
       state.runs[id] = run;
       state.receipts[body.operationId] = { payload, runId: id };
-      this.changed(state, run);
       await this.schedule(state, tx);
       return id;
     });
@@ -814,6 +920,7 @@ export class WorkflowService {
           'Reviewer conversations do not accept ordinary input.',
           403,
         );
+      await assertNotDeleting(tx, conversationId, run.id);
       const previous = run.inputs.find((i) => i.requestId === body.requestId);
       if (previous) {
         if (
@@ -852,6 +959,7 @@ export class WorkflowService {
         mode: body.mode ?? 'followUp',
       };
       run.inputs.push({
+        at: this.clock.now(),
         requestId: body.requestId,
         submissionId: String(submission.id),
         content: body.content,
@@ -886,11 +994,7 @@ export class WorkflowService {
     );
   }
   private developmentEntry(run: WorkflowRun): RunStage {
-    return run.setupRequired
-      ? run.stage === 'baseline'
-        ? 'baseline'
-        : 'setup'
-      : 'developer';
+    return run.setupRequired ? 'setup' : 'developer';
   }
   private invalidate(run: WorkflowRun) {
     if (run.mode === 'real')
@@ -902,6 +1006,11 @@ export class WorkflowService {
     let run = await this.get(runId);
     const attempt = run.attempts.find((a) => a.id === attemptId)!;
     if (
+      deleting(
+        await this.harness.snapshot(Deletions, context),
+        undefined,
+        runId,
+      ) ||
       !this.adapter ||
       !this.compatible(run) ||
       run.status !== 'running' ||
@@ -1230,7 +1339,7 @@ export class WorkflowService {
           this.question(current, attempt.stage, result.message);
         } else {
           const next: Record<RunStage, RunStage> = {
-            setup: 'baseline',
+            setup: 'developer',
             baseline: 'developer',
             developer: 'checks',
             checks: 'reviewer',
@@ -1238,7 +1347,7 @@ export class WorkflowService {
             publication: 'publishing',
             publishing: 'publishing',
           };
-          if (attempt.stage === 'baseline') current.setupRequired = false;
+          if (attempt.stage === 'setup') current.setupRequired = false;
           if (
             attempt.stage === 'publication' &&
             (!current.quiescent ||
@@ -1357,6 +1466,7 @@ export class WorkflowService {
           }
         }
       }
+      if (confirmed) this.skipStoppedBaselines(state, run.id);
       this.changed(state, run);
       await this.schedule(state, tx);
     });
@@ -1441,6 +1551,16 @@ export class WorkflowService {
   async refreshInputs() {
     await this.transaction(async () => {});
   }
+  async stopForDeletion(id: string) {
+    await this.requestStop(id, 'cancelled');
+    const run = await this.get(id);
+    if (!terminal(run) || (await this.snapshot()).slot === id)
+      throw new ApiError(
+        'CONFLICT',
+        'Agent termination could not be confirmed. Retry deletion after resolving the termination blocker.',
+        409,
+      );
+  }
   async interruptConversation(conversationId: string) {
     const run = (await this.snapshot()).runs.find(
       (r) => r.developerConversationId === conversationId,
@@ -1450,6 +1570,10 @@ export class WorkflowService {
     await this.requestStop(run.id, 'paused');
   }
   async command(id: string, value: unknown) {
+    await this.harness.commit(
+      (tx) => assertNotDeleting(tx, undefined, id),
+      context,
+    );
     const body = value as RunCommand;
     if (
       !body ||
@@ -1550,6 +1674,7 @@ export class WorkflowService {
         );
     }
     await this.transaction(async (state, tx) => {
+      await assertNotDeleting(tx, undefined, id);
       const run = state.runs[id];
       if (!run) throw new ApiError('NOT_FOUND', 'Run not found.', 404);
       const receipt = state.receipts[body.operationId];
@@ -1845,8 +1970,21 @@ export class WorkflowService {
   async recover() {
     this.recovering = true;
     await this.transaction(async (state, tx) => {
+      const catalog = await tx.doc(Catalog);
       for (const run of Object.values(state.runs)) {
-        if (terminal(run)) continue;
+        for (const id of new Set([
+          run.developerConversationId,
+          ...run.attempts.map((a) => a.conversationId),
+        ])) {
+          const item = catalog.items[id];
+          if (item)
+            item.title = `${run.mode === 'simulation' ? 'Simulation · ' : ''}Issue #${run.issue.number} · ${run.specification.title}${item.role === 'review' ? ' · Review' : ''}`;
+        }
+        if (
+          terminal(run) ||
+          deleting(await tx.doc(Deletions), undefined, run.id)
+        )
+          continue;
         const existing = run.attempts.at(-1);
         if (existing && !existing.outcome) {
           const task = await tx.task(Number(existing.taskId) as never);
@@ -1895,9 +2033,21 @@ export class WorkflowService {
     });
     for (const run of (await this.snapshot()).runs) {
       if (
+        deleting(
+          await this.harness.snapshot(Deletions, context),
+          undefined,
+          run.id,
+        )
+      )
+        continue;
+      if (
         !this.adapter ||
         !this.compatible(run) ||
-        !['running', 'termination_blocker'].includes(run.status)
+        (!['running', 'termination_blocker'].includes(run.status) &&
+          !(
+            run.stage === 'baseline' &&
+            ['paused', 'needs_input', 'queued'].includes(run.status)
+          ))
       )
         continue;
       let observation: {
@@ -1918,6 +2068,16 @@ export class WorkflowService {
       }
       if (observation.publicationResult)
         await this.recordPublication(run.id, observation.publicationResult);
+      if (
+        run.stage === 'baseline' &&
+        observation.quiescent &&
+        ['paused', 'needs_input', 'queued'].includes(run.status)
+      ) {
+        await this.transaction(async (state) => {
+          state.runs[run.id].quiescent = true;
+          this.skipStoppedBaselines(state, run.id);
+        });
+      }
       if (run.status === 'termination_blocker') {
         if (observation.quiescent)
           await this.finishStop(
@@ -1930,6 +2090,7 @@ export class WorkflowService {
         await this.transaction(async (state) => {
           const current = state.runs[run.id];
           current.status = 'termination_blocker';
+          state.slot ||= current.id;
           current.stopTarget ??= 'needs_input';
           this.question(
             current,
@@ -1939,6 +2100,40 @@ export class WorkflowService {
           this.changed(state, current);
         });
       }
+    }
+  }
+
+  private skipStoppedBaselines(state: State, id: string) {
+    for (const run of Object.values(state.runs)) {
+      if (
+        run.id !== id ||
+        run.stage !== 'baseline' ||
+        !run.quiescent ||
+        terminal(run) ||
+        ['running', 'pausing', 'cancelling', 'termination_blocker'].includes(
+          run.status,
+        )
+      )
+        continue;
+      const attempt = run.attempts.at(-1);
+      if (attempt?.stage === 'baseline' && attempt.outcome !== 'passed') {
+        attempt.outcome = 'skipped';
+        attempt.finishedAt ??= this.clock.now();
+        attempt.message =
+          'Pre-development baseline checks removed; retained for history.';
+      }
+      run.stage = 'developer';
+      run.setupRequired = false;
+      for (const question of run.interventions) {
+        if (question.state === 'pending' && question.reason === 'baseline') {
+          question.state = 'resolved';
+          question.revision++;
+          question.resolvedAt = this.clock.now();
+          question.answer =
+            'Obsolete baseline gate superseded. Explicit resume is still required.';
+        }
+      }
+      this.changed(state, run);
     }
   }
 

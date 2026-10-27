@@ -1,4 +1,6 @@
+import type { DeletionOperation } from './deletion.js';
 import type { PlanningState } from './planning.js';
+import { AgUiViewReducer, type AgUiEvent } from './ag-ui.js';
 import {
   API_VERSION,
   ApiError,
@@ -43,6 +45,9 @@ export interface ToolView {
   truncated?: boolean;
 }
 export interface TranscriptEntry {
+  /** Original AG-UI user identity, when this entry was admitted through AG-UI. */
+  messageId?: string;
+  at?: number;
   id: string;
   kind: string;
   text: string;
@@ -135,6 +140,29 @@ export class ChatReducer {
   }
 }
 export class ChatClient extends FactoryClient {
+  protected agUi = false;
+  deleteConversation(id: string) {
+    return this.mutation<DeletionOperation>(
+      `/conversations/${encodeURIComponent(id)}`,
+      'DELETE',
+      {},
+    );
+  }
+  deleteRun(id: string) {
+    return this.mutation<DeletionOperation>(
+      `/runs/${encodeURIComponent(id)}`,
+      'DELETE',
+      {},
+    );
+  }
+  deletions() {
+    return this.request<{ operations: DeletionOperation[] }>('/deletions');
+  }
+  deletion(id: string) {
+    return this.request<DeletionOperation>(
+      `/deletions/${encodeURIComponent(id)}`,
+    );
+  }
   conversations() {
     return this.request<{ conversations: ConversationSummary[] }>(
       '/conversations',
@@ -153,11 +181,32 @@ export class ChatClient extends FactoryClient {
       requestId,
     });
   }
-  history(id: string, cursor?: string, signal?: AbortSignal) {
-    return this.request<HistoryPage>(
-      `/conversations/${encodeURIComponent(id)}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+  async history(id: string, cursor?: string, signal?: AbortSignal) {
+    const response = await this.request<HistoryPage | { events: AgUiEvent[] }>(
+      `/conversations/${encodeURIComponent(id)}/${this.agUi ? 'ag-ui/' : ''}history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
       { signal },
     );
+    if (!this.agUi) return response as HistoryPage;
+    const state = (
+      response as {
+        events: (AgUiEvent & {
+          snapshot?: {
+            factory?: HistoryPage & { schemaVersion: number; kind: string };
+          };
+        })[];
+      }
+    ).events.find((event) => event.type === 'STATE_SNAPSHOT')?.snapshot
+      ?.factory;
+    if (!state || state.schemaVersion !== 1 || state.kind !== 'history')
+      throw new ApiError(
+        'UNSUPPORTED_VERSION',
+        'Unsupported AG-UI history.',
+        409,
+      );
+    return {
+      entries: state.entries,
+      ...(state.cursor ? { cursor: state.cursor } : {}),
+    };
   }
   submit(
     id: string,
@@ -223,7 +272,7 @@ export class ChatClient extends FactoryClient {
           resetTimeout();
           const response = await this.fetcher.call(
             globalThis,
-            `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/events`,
+            `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/${this.agUi ? 'ag-ui/' : ''}events`,
             { signal: active.signal },
           );
           if (!response.ok) {
@@ -238,6 +287,7 @@ export class ChatClient extends FactoryClient {
           reader = response.body.getReader();
           const decoder = new TextDecoder();
           const reducer = new ChatReducer();
+          const agUiReducer = new AgUiViewReducer();
           let buffer = '';
           for (;;) {
             const chunk = await reader.read();
@@ -257,7 +307,11 @@ export class ChatClient extends FactoryClient {
                 .map((line) => line.slice(5).trimStart())
                 .join('\n');
               if (!data) continue;
-              const frame = JSON.parse(data) as ChatFrame;
+              const parsed = JSON.parse(data);
+              const frame = this.agUi
+                ? agUiReducer.apply(parsed, 'conversation')
+                : (parsed as ChatFrame);
+              if (!frame) continue;
               if (reducer.apply(frame)) {
                 retries = 0;
                 onConnection('connected');
@@ -302,4 +356,9 @@ export class ChatClient extends FactoryClient {
       wake?.();
     };
   }
+}
+
+/** Uses standard AG-UI events for passive views and factory APIs for durable controls. */
+export class AgUiChatClient extends ChatClient {
+  protected override agUi = true;
 }
