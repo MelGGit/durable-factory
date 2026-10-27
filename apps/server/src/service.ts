@@ -90,6 +90,8 @@ export interface ServiceOptions {
 }
 const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
 const wildcardHosts = new Set(['0.0.0.0', '::']);
+/** How a host is written in a URL or Host header, where IPv6 needs brackets. */
+const hostLabel = (host: string) => (host.includes(':') ? `[${host}]` : host);
 const digest = (value: string) => createHash('sha256').update(value).digest();
 const forwardingHeaders = [
   'forwarded',
@@ -101,7 +103,9 @@ const forwardingHeaders = [
 /** A same-machine caller. A proxy on this machine also connects from
  * loopback, so a forwarded or renamed request does not count as local. */
 function isLocal(req: IncomingMessage) {
-  const hostname = req.headers.host?.replace(/:\d+$/, '');
+  const hostname = req.headers.host
+    ?.replace(/:\d+$/, '')
+    .replace(/^\[(.*)\]$/, '$1');
   return (
     ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(
       req.socket.remoteAddress ?? '',
@@ -241,9 +245,7 @@ export async function startService(options: ServiceOptions = {}) {
       `127.0.0.1:${port}`,
       `localhost:${port}`,
       ...(options.development ? ['127.0.0.1:5173', 'localhost:5173'] : []),
-      ...(loopbackHosts.has(host) || wildcardHosts.has(host)
-        ? []
-        : [`${host}:${port}`]),
+      ...(wildcardHosts.has(host) ? [] : [`${hostLabel(host)}:${port}`]),
       ...(options.allowedHosts ?? []),
     ]);
     if (!req.headers.host || !hosts.has(req.headers.host))
@@ -1453,7 +1455,7 @@ export async function startService(options: ServiceOptions = {}) {
     pollCompletedRuns,
     pollDeletions,
     port,
-    url: `http://${wildcardHosts.has(host) ? '127.0.0.1' : host}:${port}`,
+    url: `http://${wildcardHosts.has(host) ? '127.0.0.1' : hostLabel(host)}:${port}`,
     async close() {
       if (stopping) return;
       stopping = true;

@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startService } from '../apps/server/src/service.js';
+import { serviceOptions } from '../apps/server/src/environment.js';
 
 const token = 'factory-test-token-0123456789abcdef0123456789';
 
@@ -313,4 +314,102 @@ test('settings and credentials can only be changed from the server itself', asyn
       );
     },
   );
+});
+
+test('blank environment variables count as unset and lists are split', () => {
+  assert.deepEqual(
+    serviceOptions({
+      DURABLE_FACTORY_HOST: '',
+      DURABLE_FACTORY_API_TOKEN: '  ',
+      DURABLE_FACTORY_ALLOWED_HOSTS: '',
+      DURABLE_FACTORY_ALLOWED_ORIGINS: ' , ',
+    }),
+    {
+      host: undefined,
+      authToken: undefined,
+      allowedHosts: undefined,
+      allowedOrigins: undefined,
+    },
+  );
+  assert.deepEqual(serviceOptions({}), {
+    host: undefined,
+    authToken: undefined,
+    allowedHosts: undefined,
+    allowedOrigins: undefined,
+  });
+  assert.deepEqual(
+    serviceOptions({
+      DURABLE_FACTORY_HOST: ' 0.0.0.0 ',
+      DURABLE_FACTORY_API_TOKEN: ` ${token}\n`,
+      DURABLE_FACTORY_ALLOWED_HOSTS: 'a.example, b.example:8443',
+      DURABLE_FACTORY_ALLOWED_ORIGINS: 'https://a.example',
+    }),
+    {
+      host: '0.0.0.0',
+      authToken: token,
+      allowedHosts: ['a.example', 'b.example:8443'],
+      allowedOrigins: ['https://a.example'],
+    },
+  );
+});
+
+test('an IPv6 listen address gets a valid URL and is accepted as the server itself', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'factory-auth-'));
+  let service: Awaited<ReturnType<typeof startService>> | undefined;
+  try {
+    try {
+      service = await startService({
+        dataDir,
+        port: 0,
+        host: '::1',
+        authToken: token,
+      });
+    } catch (error) {
+      if (
+        ['EADDRNOTAVAIL', 'EAFNOSUPPORT'].includes(
+          (error as { code?: string }).code ?? '',
+        )
+      )
+        return t.skip('IPv6 loopback is not available here');
+      throw error;
+    }
+    assert.equal(service.url, `http://[::1]:${service.port}`);
+    const headers = { Authorization: `Bearer ${token}` };
+    const settings = await fetch(`${service.url}/api/v1/settings`, { headers });
+    assert.equal(settings.status, 200);
+    const current = await settings.json();
+    // Changing settings is allowed only from the server itself.
+    const saved = await fetch(`${service.url}/api/v1/settings`, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expectedRevision: current.revision,
+        settings: current.settings,
+      }),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal((await fetch(`${service.url}/api/v1/settings`)).status, 401);
+  } finally {
+    await service?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('a blank host is not mistaken for a wildcard address', async () => {
+  // main.ts passes whatever the environment gives, so a blank value must
+  // reach the service as undefined and leave it on loopback.
+  const dataDir = await mkdtemp(join(tmpdir(), 'factory-auth-'));
+  const service = await startService({
+    dataDir,
+    port: 0,
+    ...serviceOptions({ DURABLE_FACTORY_HOST: '' }),
+  });
+  try {
+    assert.match(service.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const address = service.server.address() as { address: string };
+    assert.equal(address.address, '127.0.0.1');
+  } finally {
+    await service.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });
