@@ -19,6 +19,8 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { homedir } from 'node:os';
+import { redactResponse, type Redaction } from './redaction.js';
 import { readFile, realpath, open } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import {
@@ -180,6 +182,27 @@ export async function startService(options: ServiceOptions = {}) {
       providers: await providerStatuses(credentials, metadata),
     };
   }
+  /** Directories a remote client has no use for. Longer paths win, so the
+   * repository is named before the home directory that contains it. */
+  async function redactions(withRepository: boolean) {
+    const found: Redaction[] = [];
+    const add = async (path: string | undefined, label: string) => {
+      if (!path) return;
+      found.push([path, label]);
+      const real = await realpath(path).catch(() => path);
+      if (real !== path) found.push([real, label]);
+    };
+    await add(
+      withRepository
+        ? (await configuration?.read().catch(() => undefined))?.settings
+            .repository.path
+        : undefined,
+      '<repository>',
+    );
+    await add(ownership?.dataDir, '<data>');
+    await add(homedir(), '~');
+    return found;
+  }
   async function body(
     req: IncomingMessage,
     maxBytes = 65536,
@@ -244,6 +267,8 @@ export async function startService(options: ServiceOptions = {}) {
       );
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
+    if (tokenDigest && !isLocal(req))
+      redactResponse(res, await redactions(path.startsWith('/api/')));
     if (path === '/health' && req.method === 'GET')
       return send(res, 200, { status: 'healthy' });
     if (path === '/ready' && req.method === 'GET')
