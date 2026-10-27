@@ -88,6 +88,35 @@ export interface ServiceOptions {
 const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
 const wildcardHosts = new Set(['0.0.0.0', '::']);
 const digest = (value: string) => createHash('sha256').update(value).digest();
+const forwardingHeaders = [
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+];
+/** A same-machine caller. A proxy on this machine also connects from
+ * loopback, so a forwarded or renamed request does not count as local. */
+function isLocal(req: IncomingMessage) {
+  const hostname = req.headers.host?.replace(/:\d+$/, '');
+  return (
+    ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(
+      req.socket.remoteAddress ?? '',
+    ) &&
+    hostname !== undefined &&
+    loopbackHosts.has(hostname) &&
+    forwardingHeaders.every((name) => req.headers[name] === undefined)
+  );
+}
+/** Settings hold commands the server runs, and credentials choose who it acts as. */
+function changesAccess(method: string | undefined, path: string) {
+  return (
+    (method === 'PUT' && path === '/api/v1/settings') ||
+    (method === 'POST' && path === '/api/v1/github/validate') ||
+    ((method === 'PUT' || method === 'DELETE') &&
+      path.startsWith('/api/v1/credentials/'))
+  );
+}
 export async function startService(options: ServiceOptions = {}) {
   const csrfToken = randomBytes(32).toString('hex');
   let ready = false,
@@ -253,6 +282,12 @@ export async function startService(options: ServiceOptions = {}) {
             401,
           );
         }
+        if (changesAccess(req.method, path) && !isLocal(req))
+          throw new ApiError(
+            'FORBIDDEN',
+            'Change settings and credentials on the server itself.',
+            403,
+          );
       }
       if (!ready || stopping || maintenance)
         throw (

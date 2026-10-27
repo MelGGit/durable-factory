@@ -31,7 +31,12 @@ function call(
         path,
         method: options.method ?? 'GET',
         headers: {
-          ...(payload ? { 'Content-Type': 'application/json' } : {}),
+          ...(payload
+            ? {
+                'Content-Type': 'application/json',
+                'Content-Length': String(Buffer.byteLength(payload)),
+              }
+            : {}),
           ...options.headers,
         },
       },
@@ -211,4 +216,101 @@ test('a server bound beyond loopback serves authenticated requests', async () =>
     );
     assert.equal((await call(service, '/api/v1/settings')).status, 401);
   });
+});
+
+test('settings and credentials can only be changed from the server itself', async () => {
+  await withService(
+    { authToken: token, allowedHosts: ['factory.example.com'] },
+    async (service) => {
+      const local = { Authorization: `Bearer ${token}` };
+      const current = JSON.parse(
+        (await call(service, '/api/v1/settings', { headers: local })).body,
+      );
+      const settings = {
+        expectedRevision: current.revision,
+        settings: current.settings,
+      };
+      const changes = [
+        { method: 'PUT', path: '/api/v1/settings', body: settings },
+        {
+          method: 'PUT',
+          path: '/api/v1/credentials/github',
+          body: { value: 'secret-fixture-github' },
+        },
+        { method: 'DELETE', path: '/api/v1/credentials/github', body: {} },
+        { method: 'POST', path: '/api/v1/github/validate', body: {} },
+      ];
+      // A proxy on this machine connects from loopback, as would a client
+      // that renames itself, so neither is treated as the server itself.
+      const remote: Record<string, string>[] = [
+        { ...local, Host: 'factory.example.com' },
+        { ...local, 'X-Forwarded-For': '203.0.113.9' },
+        { ...local, Forwarded: 'for=203.0.113.9' },
+        { ...local, 'X-Real-IP': '203.0.113.9' },
+      ];
+      for (const headers of remote)
+        for (const change of changes) {
+          const refused = await call(service, change.path, {
+            method: change.method,
+            headers,
+            body: change.body,
+          });
+          assert.equal(refused.status, 403, `${change.method} ${change.path}`);
+          assert.equal(JSON.parse(refused.body).error.code, 'FORBIDDEN');
+        }
+      assert.ok(
+        !JSON.stringify(
+          JSON.parse(
+            (await call(service, '/api/v1/settings', { headers: local })).body,
+          ).credentials,
+        ).includes('true'),
+        'no refused request changed a credential',
+      );
+      // Remote clients keep read access and can still run workflows.
+      for (const headers of remote)
+        for (const path of ['/api/v1/settings', '/api/v1/providers'])
+          assert.equal((await call(service, path, { headers })).status, 200);
+      // The same requests succeed from the server itself.
+      assert.equal(
+        (
+          await call(service, '/api/v1/credentials/github', {
+            method: 'PUT',
+            headers: local,
+            body: { value: 'secret-fixture-github' },
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await call(service, '/api/v1/settings', {
+            method: 'PUT',
+            headers: local,
+            body: settings,
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await call(service, '/api/v1/credentials/github', {
+            method: 'DELETE',
+            headers: local,
+            body: {},
+          })
+        ).status,
+        200,
+      );
+      // A missing token is still rejected before the local check.
+      assert.equal(
+        (
+          await call(service, '/api/v1/settings', {
+            method: 'PUT',
+            body: settings,
+          })
+        ).status,
+        401,
+      );
+    },
+  );
 });
