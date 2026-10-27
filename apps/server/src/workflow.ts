@@ -2187,7 +2187,8 @@ export class WorkflowService {
     }
     await runtime.commit(() => done, context);
   }
-  async stream(res: ServerResponse) {
+  /** `resume` is the revision a reconnecting client already holds. */
+  async stream(res: ServerResponse, resume?: string) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
@@ -2199,7 +2200,7 @@ export class WorkflowService {
     let sequence = 0,
       closed = false,
       busy = false,
-      last = -1;
+      last = resume !== undefined && /^\d+$/.test(resume) ? Number(resume) : -1;
     const close = () => {
       if (closed) return;
       closed = true;
@@ -2223,7 +2224,7 @@ export class WorkflowService {
         if (!closed && snapshot.revision !== last) {
           last = snapshot.revision;
           write(
-            `data: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot })}\n\n`,
+            `id: ${snapshot.revision}\ndata: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot })}\n\n`,
           );
         }
       } finally {

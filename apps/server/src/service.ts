@@ -21,6 +21,7 @@ import {
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { homedir } from 'node:os';
 import { redactResponse, type Redaction } from './redaction.js';
+import { lastEventId } from './sse.js';
 import { readFile, realpath, open } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import {
@@ -439,7 +440,7 @@ export async function startService(options: ServiceOptions = {}) {
         });
       }
       if (path === '/api/v1/runs/events' && req.method === 'GET')
-        return workflow.stream(res);
+        return workflow.stream(res, lastEventId(req));
       if (path === '/api/v1/runs') {
         if (req.method === 'GET')
           return send(res, 200, await workflow.snapshot());
@@ -483,7 +484,13 @@ export async function startService(options: ServiceOptions = {}) {
           path,
         );
       if (activityRoute && req.method === 'GET') {
-        if (activityRoute[2]) return activity!.stream(activityRoute[1], res);
+        if (activityRoute[2])
+          return activity!.stream(
+            activityRoute[1],
+            res,
+            undefined,
+            lastEventId(req),
+          );
         return send(
           res,
           200,
@@ -562,7 +569,7 @@ export async function startService(options: ServiceOptions = {}) {
         const [, id, action, item, operation] = chatRoute;
         const query = new URL(req.url!, 'http://localhost').searchParams;
         if (action === 'events' && req.method === 'GET')
-          return chat!.stream(id, res);
+          return chat!.stream(id, res, undefined, undefined, lastEventId(req));
         if (action === 'history' && req.method === 'GET')
           return send(
             res,

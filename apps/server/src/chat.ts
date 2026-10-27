@@ -1,6 +1,6 @@
 import { Deletions, deleting, assertNotDeleting } from './deletion-state.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { writeSse } from './sse.js';
+import { contentVersion, writeSse } from './sse.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -1006,6 +1006,8 @@ export class ChatService {
       | { payload: string; done?: boolean }
       | Promise<{ payload: string; done?: boolean }>,
     onStreamError?: () => string,
+    /** The id of the snapshot a reconnecting client already holds. */
+    resume?: string,
   ) {
     const conversation = await this.conversation(id);
     const watch = await conversation.watch(context);
@@ -1070,16 +1072,20 @@ export class ChatService {
       type: 'snapshot' | 'update',
     ) => {
       if (stopped) return;
+      const snapshot = await this.project(id, view);
+      const version = encode ? '' : contentVersion(JSON.stringify(snapshot));
+      // The client already holds this state, so its first frame is the next change.
+      if (!encode && sequence === 0 && version === resume) return;
       const frame: ChatFrame = {
         apiVersion: API_VERSION,
         streamId,
         sequence: ++sequence,
-        type,
-        snapshot: await this.project(id, view),
+        type: sequence === 1 ? 'snapshot' : type,
+        snapshot,
       };
       const encoded = encode
         ? await encode(frame)
-        : { payload: `data: ${JSON.stringify(frame)}\n\n` };
+        : { payload: `id: ${version}\ndata: ${JSON.stringify(frame)}\n\n` };
       const { payload } = encoded;
       if (stopped) return;
       let written: boolean;

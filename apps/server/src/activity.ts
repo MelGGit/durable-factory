@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { writeSse } from './sse.js';
+import { contentVersion, writeSse } from './sse.js';
 import type { ServerResponse } from 'node:http';
 import {
   API_VERSION,
@@ -290,6 +290,8 @@ export class RunActivityService {
     id: string,
     res: ServerResponse,
     encode?: (frame: RunActivityFrame) => string,
+    /** The id of the page a reconnecting client already holds. */
+    resume?: string,
   ) {
     const initial = await this.page(id);
     if (res.destroyed) return;
@@ -301,8 +303,9 @@ export class RunActivityService {
       'X-Content-Type-Options': 'nosniff',
     });
     const streamId = randomUUID();
+    const held = JSON.stringify(initial);
     let sequence = 0,
-      last = '',
+      last = !encode && resume === contentVersion(held) ? held : '',
       closed = false,
       busy = false;
     const close = () => {
@@ -335,7 +338,9 @@ export class RunActivityService {
       if (
         !(await writeSse(
           res,
-          encode ? encode(frame) : `data: ${JSON.stringify(frame)}\n\n`,
+          encode
+            ? encode(frame)
+            : `id: ${contentVersion(value)}\ndata: ${JSON.stringify(frame)}\n\n`,
         ))
       )
         close();

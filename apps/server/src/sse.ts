@@ -1,4 +1,17 @@
-import type { ServerResponse } from 'node:http';
+import { createHash } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
+/** The version a reconnecting client says it already holds, if it sent one. */
+export function lastEventId(req: IncomingMessage) {
+  const value = req.headers['last-event-id'];
+  return typeof value === 'string' && value && value.length <= 128
+    ? value
+    : undefined;
+}
+
+/** An opaque id for a snapshot that has no revision counter of its own. */
+export const contentVersion = (json: string) =>
+  createHash('sha256').update(json).digest('base64url').slice(0, 22);
 
 /** Bound socket writes without imposing a size limit on a transcript snapshot.
  * Callers must keep heartbeats outside this write, including its drain waits. */
