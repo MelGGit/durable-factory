@@ -88,6 +88,26 @@ export class ApiError extends Error {
     super(message);
   }
 }
+/** Builds the error for a failed response. A proxy in front of the service
+ * may answer with plain text or HTML rather than the service's JSON. */
+export async function responseError(response: Response, fallback: string) {
+  const body = await response.json().catch(() => undefined);
+  return new ApiError(
+    body?.error?.code ??
+      (response.status === 401 ? 'AUTHENTICATION' : 'INTERNAL'),
+    body?.error?.message ?? fallback,
+    response.status,
+  );
+}
+/** Sends a bearer token with every request, for a service that requires one.
+ * Pass the result as the client's `fetcher`. */
+export const withToken =
+  (token: string, fetcher: typeof fetch = fetch): typeof fetch =>
+  (input, init) => {
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Bearer ${token}`);
+    return fetcher(input, { ...init, headers });
+  };
 export class FactoryClient {
   private csrfToken?: string;
   constructor(
@@ -100,14 +120,18 @@ export class FactoryClient {
       `${this.baseUrl}/api/v1${path}`,
       init,
     );
-    const body = await response.json();
     if (!response.ok)
+      throw await responseError(
+        response,
+        'The service could not complete the request.',
+      );
+    return (await response.json().catch(() => {
       throw new ApiError(
-        body.error?.code ?? 'INTERNAL',
-        body.error?.message ?? 'The service could not complete the request.',
+        'INTERNAL',
+        'The service returned an unreadable response.',
         response.status,
       );
-    return body as T;
+    })) as T;
   }
   async connect() {
     const session = await this.request<SessionResponse>('/session');

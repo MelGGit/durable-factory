@@ -5,6 +5,7 @@ import {
   API_VERSION,
   ApiError,
   FactoryClient,
+  responseError,
   type Role,
   type RoleSettings,
 } from './core.js';
@@ -275,14 +276,8 @@ export class ChatClient extends FactoryClient {
             `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/${this.agUi ? 'ag-ui/' : ''}events`,
             { signal: active.signal },
           );
-          if (!response.ok) {
-            const body = await response.json();
-            throw new ApiError(
-              body.error?.code ?? 'INTERNAL',
-              body.error?.message ?? 'Could not connect.',
-              response.status,
-            );
-          }
+          if (!response.ok)
+            throw await responseError(response, 'Could not connect.');
           if (!response.body) throw new Error('Streaming is unavailable.');
           reader = response.body.getReader();
           const decoder = new TextDecoder();
@@ -328,9 +323,12 @@ export class ChatClient extends FactoryClient {
           if (error instanceof ApiError) {
             onError(error);
             if (
-              ['NOT_FOUND', 'UNSUPPORTED_VERSION', 'FORBIDDEN'].includes(
-                error.code,
-              )
+              [
+                'AUTHENTICATION',
+                'NOT_FOUND',
+                'UNSUPPORTED_VERSION',
+                'FORBIDDEN',
+              ].includes(error.code)
             )
               break;
           }

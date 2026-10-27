@@ -3,7 +3,13 @@ import type {
   CriterionAssessment,
   RegressionEvidence,
 } from './handoffs.js';
-import { API_VERSION, ApiError, FactoryClient, type Settings } from './core.js';
+import {
+  API_VERSION,
+  ApiError,
+  FactoryClient,
+  responseError,
+  type Settings,
+} from './core.js';
 import type { RepositoryRegistration, Ticket, IssueLink } from './planning.js';
 export type RunStage =
   | 'setup'
@@ -290,50 +296,114 @@ export class WorkflowClient extends FactoryClient {
       command,
     );
   }
+  /** Streams over fetch rather than EventSource, so it runs in Node and can
+   * send an Authorization header. A reconnect says which state it already
+   * holds, and the service then skips resending it. */
   watchRuns(
     onSnapshot: (snapshot: WorkflowSnapshot) => void,
     onConnection: (connected: boolean) => void,
+    onError: (error: Error) => void = () => {},
   ) {
     const reducer = new WorkflowReducer();
-    let stopped = false;
-    let retry: ReturnType<typeof setTimeout>;
-    let source: EventSource;
-    let watchdog: ReturnType<typeof setTimeout>;
-    const open = () => {
-      if (stopped) return;
-      source = new EventSource(`${this.baseUrl}/api/v1/runs/events`);
-      const touch = () => {
-        clearTimeout(watchdog);
-        watchdog = setTimeout(reconnect, 45000);
-      };
-      const reconnect = () => {
-        source.close();
-        clearTimeout(watchdog);
-        onConnection(false);
-        if (!stopped) retry = setTimeout(open, 1000);
-      };
-      source.onopen = () => {
-        onConnection(true);
-        touch();
-      };
-      source.addEventListener('heartbeat', touch);
-      source.onmessage = (event) => {
+    const lifetime = new AbortController();
+    let active: AbortController | undefined,
+      watchdog: ReturnType<typeof setTimeout> | undefined,
+      retry: ReturnType<typeof setTimeout> | undefined,
+      wake: (() => void) | undefined,
+      held: string | undefined;
+    void (async () => {
+      let retries = 0;
+      while (!lifetime.signal.aborted) {
+        active = new AbortController();
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        const touch = () => {
+          clearTimeout(watchdog);
+          watchdog = setTimeout(() => active?.abort(), 45000);
+        };
         try {
-          const frame = JSON.parse(event.data) as WorkflowFrame;
-          if (reducer.apply(frame)) onSnapshot(frame.snapshot);
           touch();
-        } catch {
-          reconnect();
+          const response = await this.fetcher.call(
+            globalThis,
+            `${this.baseUrl}/api/v1/runs/events`,
+            {
+              signal: active.signal,
+              headers:
+                held === undefined ? undefined : { 'Last-Event-ID': held },
+            },
+          );
+          if (!response.ok)
+            throw await responseError(response, 'Workflow stream unavailable.');
+          if (!response.body) throw new Error('Streaming is unavailable.');
+          reader = response.body.getReader();
+          retries = 0;
+          onConnection(true);
+          const decoder = new TextDecoder();
+          let buffer = '';
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) throw new Error('Workflow stream closed.');
+            touch();
+            buffer = (
+              buffer + decoder.decode(chunk.value, { stream: true })
+            ).replace(/\r\n/g, '\n');
+            if (buffer.length > 2 * 1024 * 1024)
+              throw new Error('Workflow frame is too large.');
+            let end: number;
+            while ((end = buffer.indexOf('\n\n')) >= 0) {
+              const event = buffer.slice(0, end);
+              buffer = buffer.slice(end + 2);
+              if (event.startsWith('event: heartbeat')) continue;
+              const lines = event.split('\n');
+              const data = lines
+                .filter((line) => line.startsWith('data:'))
+                .map((line) => line.slice(5).trimStart())
+                .join('\n');
+              if (!data) continue;
+              if (reducer.apply(JSON.parse(data) as WorkflowFrame)) {
+                held =
+                  lines
+                    .find((line) => line.startsWith('id:'))
+                    ?.slice(3)
+                    .trim() ?? held;
+                onSnapshot(reducer.snapshot!);
+              }
+            }
+          }
+        } catch (error) {
+          if (lifetime.signal.aborted) break;
+          onConnection(false);
+          if (error instanceof ApiError) {
+            onError(error);
+            if (
+              [
+                'AUTHENTICATION',
+                'NOT_FOUND',
+                'FORBIDDEN',
+                'UNSUPPORTED_VERSION',
+              ].includes(error.code)
+            )
+              break;
+          }
+        } finally {
+          clearTimeout(watchdog);
+          active.abort();
+          await reader?.cancel().catch(() => {});
         }
-      };
-      source.onerror = reconnect;
-    };
-    open();
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          retry = setTimeout(
+            resolve,
+            Math.min(30000, 1000 * 2 ** Math.min(retries++, 5)),
+          );
+        });
+      }
+    })();
     return () => {
-      stopped = true;
-      source?.close();
-      clearTimeout(retry);
+      lifetime.abort();
+      active?.abort();
       clearTimeout(watchdog);
+      clearTimeout(retry);
+      wake?.();
     };
   }
 }

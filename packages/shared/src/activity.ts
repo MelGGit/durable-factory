@@ -1,4 +1,10 @@
-import { API_VERSION, ApiError, FactoryClient, type Role } from './core.js';
+import {
+  API_VERSION,
+  ApiError,
+  FactoryClient,
+  responseError,
+  type Role,
+} from './core.js';
 import { AgUiViewReducer, type AgUiEvent } from './ag-ui.js';
 import type {
   ConversationSnapshot,
@@ -108,14 +114,8 @@ export class RunActivityClient extends FactoryClient {
             `${this.baseUrl}/api/v1/runs/${encodeURIComponent(id)}/activity/${this.agUi ? 'ag-ui/' : ''}events`,
             { signal: active.signal },
           );
-          if (!response.ok) {
-            const body = await response.json();
-            throw new ApiError(
-              body.error?.code ?? 'INTERNAL',
-              body.error?.message ?? 'Activity stream unavailable.',
-              response.status,
-            );
-          }
+          if (!response.ok)
+            throw await responseError(response, 'Activity stream unavailable.');
           reader = response.body!.getReader();
           let buffer = '',
             streamId = '',
@@ -172,9 +172,12 @@ export class RunActivityClient extends FactoryClient {
           if (error instanceof ApiError) {
             onError(error);
             if (
-              ['NOT_FOUND', 'FORBIDDEN', 'UNSUPPORTED_VERSION'].includes(
-                error.code,
-              )
+              [
+                'AUTHENTICATION',
+                'NOT_FOUND',
+                'FORBIDDEN',
+                'UNSUPPORTED_VERSION',
+              ].includes(error.code)
             )
               break;
           }
