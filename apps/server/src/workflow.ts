@@ -2192,6 +2192,7 @@ export class WorkflowService {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
       Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
       'X-Content-Type-Options': 'nosniff',
     });
     const streamId = randomUUID();

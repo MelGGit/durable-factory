@@ -18,7 +18,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile, realpath, open } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import {
@@ -76,7 +76,18 @@ export interface ServiceOptions {
   workflowMode?: 'simulation' | 'real' | 'disabled';
   /** Disposable local transport for offline real-workflow verification only. */
   workflowRemote?: string;
+  /** Address to listen on. Anything beyond loopback requires `authToken`. */
+  host?: string;
+  /** Extra Host header values to accept, such as a reverse proxy's public name. */
+  allowedHosts?: string[];
+  /** Extra origins to accept, written as `https://factory.example.com`. */
+  allowedOrigins?: string[];
+  /** Shared secret required as a bearer token on every `/api/v1` request. */
+  authToken?: string;
 }
+const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+const wildcardHosts = new Set(['0.0.0.0', '::']);
+const digest = (value: string) => createHash('sha256').update(value).digest();
 export async function startService(options: ServiceOptions = {}) {
   const csrfToken = randomBytes(32).toString('hex');
   let ready = false,
@@ -108,6 +119,13 @@ export async function startService(options: ServiceOptions = {}) {
     options.workflowMode ?? process.env.DURABLE_FACTORY_WORKFLOW_MODE ?? 'real';
   if (!['disabled', 'simulation', 'real'].includes(mode))
     throw new Error('Invalid workflow mode');
+  const host = options.host ?? '127.0.0.1';
+  const authToken = options.authToken;
+  if (authToken !== undefined && authToken.length < 32)
+    throw new Error('The API token must be at least 32 characters.');
+  if (!loopbackHosts.has(host) && authToken === undefined)
+    throw new Error('Listening beyond loopback requires an API token.');
+  const tokenDigest = authToken === undefined ? undefined : digest(authToken);
   let activeMutations = new Set<Promise<unknown>>();
   let labelTimer: ReturnType<typeof setInterval> | undefined;
   let labelPolling: Promise<void> | undefined;
@@ -170,10 +188,19 @@ export async function startService(options: ServiceOptions = {}) {
       `127.0.0.1:${port}`,
       `localhost:${port}`,
       ...(options.development ? ['127.0.0.1:5173', 'localhost:5173'] : []),
+      ...(loopbackHosts.has(host) || wildcardHosts.has(host)
+        ? []
+        : [`${host}:${port}`]),
+      ...(options.allowedHosts ?? []),
     ]);
     if (!req.headers.host || !hosts.has(req.headers.host))
       throw new ApiError('FORBIDDEN', 'Unrecognized local host.', 403);
-    const allowedOrigins = new Set([...hosts].map((host) => `http://${host}`));
+    const allowedOrigins = new Set([
+      ...[...hosts]
+        .filter((entry) => !options.allowedHosts?.includes(entry))
+        .map((entry) => `http://${entry}`),
+      ...(options.allowedOrigins ?? []),
+    ]);
     if (req.headers.origin && !allowedOrigins.has(req.headers.origin))
       throw new ApiError(
         'FORBIDDEN',
@@ -206,6 +233,27 @@ export async function startService(options: ServiceOptions = {}) {
         400,
       );
     if (path.startsWith('/api/v1/')) {
+      if (tokenDigest) {
+        const authorization = req.headers.authorization;
+        const presented =
+          (typeof authorization === 'string'
+            ? /^Bearer (.+)$/i.exec(authorization)?.[1]
+            : undefined) ??
+          (typeof req.headers['x-factory-token'] === 'string'
+            ? req.headers['x-factory-token']
+            : undefined);
+        if (
+          presented === undefined ||
+          !timingSafeEqual(digest(presented), tokenDigest)
+        ) {
+          res.setHeader('WWW-Authenticate', 'Bearer realm="durable-factory"');
+          throw new ApiError(
+            'AUTHENTICATION',
+            'A valid API token is required.',
+            401,
+          );
+        }
+      }
       if (!ready || stopping || maintenance)
         throw (
           startupError ??
@@ -215,7 +263,8 @@ export async function startService(options: ServiceOptions = {}) {
             503,
           )
         );
-      if (req.method !== 'GET') {
+      // A bearer token is not an ambient credential, so it needs no CSRF guard.
+      if (req.method !== 'GET' && !tokenDigest) {
         const header = req.headers['x-factory-csrf'];
         if (
           typeof header !== 'string' ||
@@ -611,9 +660,11 @@ export async function startService(options: ServiceOptions = {}) {
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
+  // Streams hold a socket each, so a socket cap also bounds open streams.
+  if (tokenDigest) server.maxConnections = 256;
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => {
+    server.listen(port, host, () => {
       server.removeListener('error', reject);
       port = (server.address() as { port: number }).port;
       resolve();
@@ -1335,7 +1386,7 @@ export async function startService(options: ServiceOptions = {}) {
     pollCompletedRuns,
     pollDeletions,
     port,
-    url: `http://127.0.0.1:${port}`,
+    url: `http://${wildcardHosts.has(host) ? '127.0.0.1' : host}:${port}`,
     async close() {
       if (stopping) return;
       stopping = true;
