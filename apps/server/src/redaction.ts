@@ -21,16 +21,24 @@ export function createRedactor(redactions: Redaction[]) {
   }
   const needles = [...labels.keys()].sort((a, b) => b.length - a.length);
   if (!needles.length) return undefined;
-  const pattern = new RegExp(needles.map(escapePattern).join('|'), 'g');
+  // A path ends at a separator, a quote or the end of the text. Without that
+  // check `/Users/mel` would also rewrite the start of `/Users/melody`.
+  const pattern = new RegExp(
+    `(?:${needles.map(escapePattern).join('|')})(?![A-Za-z0-9_-])`,
+    'g',
+  );
   const replace = (text: string) =>
     text.replace(pattern, (found) => labels.get(found)!);
   const longest = needles[0].length;
+  // A tail that is, or could grow into, a path is held until the next chunk
+  // shows what follows it. Every needle starts with `/`, which is not a name
+  // character, so the text before a held tail never affects a match.
   const held = (text: string) => {
-    for (let size = Math.min(longest - 1, text.length); size > 0; size--) {
+    for (let size = Math.min(longest, text.length); size > 0; size--) {
       const tail = text.slice(-size);
       if (
         needles.some(
-          (needle) => needle.length > size && needle.startsWith(tail),
+          (needle) => needle.length >= size && needle.startsWith(tail),
         )
       )
         return size;

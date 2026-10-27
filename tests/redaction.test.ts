@@ -86,6 +86,62 @@ test('ordinary frames are not delayed and an unfinished prefix is released at th
   assert.equal(redactor.flush().toString(), '/srv/fac');
 });
 
+test('only whole paths are replaced, not other names that start the same way', () => {
+  const home: Redaction[] = [['/Users/mel', '~']];
+  assert.equal(
+    run(['/Users/melody/x /Users/mel/x /Users/mel. "/Users/mel"'], home),
+    '/Users/melody/x ~/x ~. "~"',
+  );
+  assert.equal(
+    run(['/rootfs/a /root /root/b'], [['/root', '~']]),
+    '/rootfs/a ~ ~/b',
+  );
+  assert.equal(
+    run(['/Users/mel-2 /Users/mel_x /Users/mel9'], home),
+    '/Users/mel-2 /Users/mel_x /Users/mel9',
+  );
+  // The longer path still wins where it applies.
+  assert.equal(
+    run(
+      ['/Users/mel/app/src /Users/mel/appx'],
+      [
+        ['/Users/mel/app', '<repository>'],
+        ['/Users/mel', '~'],
+      ],
+    ),
+    '<repository>/src ~/appx',
+  );
+});
+
+test('a path that ends a chunk waits for the next chunk to show whether it ended', () => {
+  const rules: Redaction[] = [['/srv/factory/data', '<data>']];
+  const redactor = createRedactor(rules)!;
+  assert.equal(
+    redactor.push(Buffer.from('at /srv/factory/data')).toString(),
+    'at ',
+  );
+  assert.equal(
+    redactor.push(Buffer.from('x')).toString(),
+    '/srv/factory/datax',
+  );
+  assert.equal(redactor.push(Buffer.from('/srv/factory/data')).toString(), '');
+  assert.equal(redactor.push(Buffer.from('/f ')).toString(), '<data>/f ');
+  assert.equal(
+    run(['at /srv/factory/data'], rules),
+    'at <data>',
+    'end of text',
+  );
+  const text = 'a /srv/factory/datax b /srv/factory/data c /srv/factory/data/z';
+  const expected = 'a /srv/factory/datax b <data> c <data>/z';
+  assert.equal(run([text], rules), expected);
+  for (let cut = 1; cut < text.length; cut++)
+    assert.equal(
+      run([text.slice(0, cut), text.slice(cut)], rules),
+      expected,
+      `cut ${cut}`,
+    );
+});
+
 test('very short paths and no paths leave the response untouched', () => {
   assert.equal(createRedactor([]), undefined);
   assert.equal(createRedactor([['/', '~']]), undefined);
