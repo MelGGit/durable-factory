@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
+import { contentVersion } from './sse.js';
 import {
   defineDoc,
   defineTask,
@@ -2187,7 +2188,9 @@ export class WorkflowService {
     }
     await runtime.commit(() => done, context);
   }
-  /** `resume` is the revision a reconnecting client already holds. */
+  /** `resume` is the version a reconnecting client already holds. The stored
+   * revision does not cover what the adapter reports on each read, so the
+   * version also covers whether development is enabled and what it lacks. */
   async stream(res: ServerResponse, resume?: string) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -2203,7 +2206,7 @@ export class WorkflowService {
     let sequence = 0,
       closed = false,
       busy = false,
-      last = resume !== undefined && /^\d+$/.test(resume) ? Number(resume) : -1;
+      last = resume ?? '';
     const close = () => {
       if (closed) return;
       closed = true;
@@ -2224,10 +2227,17 @@ export class WorkflowService {
       busy = true;
       try {
         const snapshot = await this.snapshot();
-        if (!closed && snapshot.revision !== last) {
-          last = snapshot.revision;
+        const version = `${snapshot.revision}.${contentVersion(
+          JSON.stringify([
+            snapshot.enabled,
+            snapshot.mode,
+            snapshot.missingPrerequisites,
+          ]),
+        )}`;
+        if (!closed && version !== last) {
+          last = version;
           write(
-            `id: ${snapshot.revision}\ndata: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot })}\n\n`,
+            `id: ${version}\ndata: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot })}\n\n`,
           );
         }
       } finally {

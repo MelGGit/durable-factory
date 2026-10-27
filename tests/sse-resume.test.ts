@@ -3,6 +3,7 @@ import { request, type IncomingMessage } from 'node:http';
 import assert from 'node:assert/strict';
 import { workflowFixture } from './fixtures/workflow.js';
 import { lastEventId } from '../apps/server/src/sse.js';
+import { simulationAdapter } from '../apps/server/src/workflow.js';
 
 interface Message {
   id?: string;
@@ -113,6 +114,9 @@ test('the Last-Event-ID header is read as given, and ignored when empty or overs
   assert.equal(read('x'.repeat(129)), undefined);
 });
 
+/** A workflow id is the stored revision, then a fingerprint of the status. */
+const revisionOf = (message?: Message) => Number(message?.id?.split('.')[0]);
+
 test('the workflow stream labels frames with the revision and skips a snapshot the client already holds', async () => {
   const s = await workflowFixture();
   try {
@@ -121,7 +125,7 @@ test('the workflow stream labels frames with the revision and skips a snapshot t
     fresh.close();
     assert.equal(first?.data.type, 'snapshot');
     assert.equal(first?.data.sequence, 1);
-    assert.equal(first?.id, String(first?.data.snapshot.revision));
+    assert.equal(revisionOf(first), first?.data.snapshot.revision);
 
     const resumed = open(s.service.url, '/api/v1/runs/events', first!.id);
     assert.equal(await resumed.next(500), undefined, 'nothing has changed');
@@ -131,11 +135,11 @@ test('the workflow stream labels frames with the revision and skips a snapshot t
     resumed.close();
     assert.equal(change?.data.type, 'snapshot', 'the next frame stands alone');
     assert.equal(change?.data.sequence, 1);
-    assert.ok(Number(change?.id) > Number(first?.id));
-    assert.equal(change?.id, String(change?.data.snapshot.revision));
+    assert.ok(revisionOf(change) > revisionOf(first));
+    assert.equal(revisionOf(change), change?.data.snapshot.revision);
 
     // The simulated run keeps advancing, so the live revision is at least this.
-    const current = Number(change?.id);
+    const current = revisionOf(change);
     const ahead = String(current + 1000);
     for (const held of [String(current - 1), ahead, 'abc', '']) {
       const stale = open(s.service.url, '/api/v1/runs/events', held);
@@ -145,6 +149,42 @@ test('the workflow stream labels frames with the revision and skips a snapshot t
       assert.equal(frame?.data.sequence, 1, `resume from "${held}"`);
       assert.ok(frame?.data.snapshot.revision >= current, `from "${held}"`);
     }
+  } finally {
+    await s.close();
+  }
+});
+
+test('a workflow status change that leaves the stored revision alone still reaches live and resumed clients', async () => {
+  let missing = ['credentials'];
+  const s = await workflowFixture({
+    ...simulationAdapter(),
+    available: async () => missing,
+  });
+  try {
+    const live = open(s.service.url, '/api/v1/runs/events');
+    const first = await live.next(3000);
+    assert.equal(first?.data.snapshot.enabled, false);
+    assert.deepEqual(first?.data.snapshot.missingPrerequisites, [
+      'credentials',
+    ]);
+
+    missing = [];
+    const update = await live.next(3000);
+    live.close();
+    assert.equal(update?.data.snapshot.enabled, true);
+    assert.equal(revisionOf(update), revisionOf(first), 'no stored change');
+    assert.notEqual(update?.id, first?.id);
+
+    // A client that last saw the old status is sent the new one.
+    const stale = open(s.service.url, '/api/v1/runs/events', first!.id);
+    const resent = await stale.next(3000);
+    stale.close();
+    assert.equal(resent?.data.snapshot.enabled, true);
+    assert.equal(resent?.id, update?.id);
+    // A client that already holds the new status is not sent it again.
+    const current = open(s.service.url, '/api/v1/runs/events', update!.id);
+    assert.equal(await current.next(500), undefined);
+    current.close();
   } finally {
     await s.close();
   }
