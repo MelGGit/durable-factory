@@ -287,3 +287,85 @@ test('remote clients see labels instead of server paths, the server itself does 
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('a repository chosen after remote clients connected is hidden from them at once', async () => {
+  const directory = await realpath(
+    await mkdtemp(join(tmpdir(), 'factory-redact-')),
+  );
+  const [first, second] = [join(directory, 'one'), join(directory, 'two')];
+  for (const repo of [first, second]) {
+    await mkdir(repo);
+    execFileSync('git', ['init', '-q', repo]);
+  }
+  const service = await startService({
+    dataDir: join(directory, 'data'),
+    port: 0,
+    authToken: token,
+    allowedHosts: ['factory.example.com'],
+  });
+  const local = { Authorization: `Bearer ${token}` };
+  const remote = { ...local, Host: 'factory.example.com' };
+  const choose = async (repo: string) => {
+    const current = JSON.parse(
+      (await call(service.port, '/api/v1/settings', local)).body,
+    );
+    for (const role of ['planning', 'development', 'review'])
+      current.settings.roles[role] = {
+        provider: 'requesty',
+        model: 'offline',
+        reasoning: null,
+      };
+    current.settings.repository = {
+      path: repo,
+      github: 'example/project',
+      baseBranch: 'main',
+    };
+    current.settings.requiredChecks = ['fake test'];
+    const payload = JSON.stringify({
+      expectedRevision: current.revision,
+      settings: current.settings,
+    });
+    return new Promise<number>((resolve, reject) => {
+      request(
+        {
+          host: '127.0.0.1',
+          port: service.port,
+          path: '/api/v1/settings',
+          method: 'PUT',
+          headers: {
+            ...local,
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(payload)),
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode!));
+        },
+      )
+        .on('error', reject)
+        .end(payload);
+    });
+  };
+  try {
+    assert.equal(await choose(first), 200);
+    // Several remote requests settle into a reused list of paths to hide.
+    for (let i = 0; i < 3; i++) {
+      const body = (await call(service.port, '/api/v1/settings', remote)).body;
+      assert.ok(!body.includes(directory), 'first repository is hidden');
+    }
+    assert.equal(await choose(second), 200);
+    const after = await call(service.port, '/api/v1/settings', remote);
+    assert.ok(
+      !after.body.includes(directory),
+      'the new repository is hidden, not just the one chosen first',
+    );
+    assert.equal(
+      JSON.parse(after.body).settings.repository.path,
+      '<repository>',
+    );
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

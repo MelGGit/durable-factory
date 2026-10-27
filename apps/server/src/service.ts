@@ -183,9 +183,13 @@ export async function startService(options: ServiceOptions = {}) {
       providers: await providerStatuses(credentials, metadata),
     };
   }
+  /** Built once the settings can be read, and again after they are saved, so
+   * a request that will be refused does not cost a read and path lookups. */
+  let cachedRedactions: Redaction[] | undefined;
   /** Directories a remote client has no use for. Longer paths win, so the
    * repository is named before the home directory that contains it. */
-  async function redactions(withRepository: boolean) {
+  async function redactions() {
+    if (cachedRedactions) return cachedRedactions;
     const found: Redaction[] = [];
     const add = async (path: string | undefined, label: string) => {
       if (!path) return;
@@ -193,15 +197,11 @@ export async function startService(options: ServiceOptions = {}) {
       const real = await realpath(path).catch(() => path);
       if (real !== path) found.push([real, label]);
     };
-    await add(
-      withRepository
-        ? (await configuration?.read().catch(() => undefined))?.settings
-            .repository.path
-        : undefined,
-      '<repository>',
-    );
+    const saved = await configuration?.read().catch(() => undefined);
+    await add(saved?.settings.repository.path, '<repository>');
     await add(ownership?.dataDir, '<data>');
     await add(homedir(), '~');
+    if (saved) cachedRedactions = found;
     return found;
   }
   async function body(
@@ -268,8 +268,7 @@ export async function startService(options: ServiceOptions = {}) {
       );
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
-    if (tokenDigest && !isLocal(req))
-      redactResponse(res, await redactions(path.startsWith('/api/')));
+    if (tokenDigest && !isLocal(req)) redactResponse(res, await redactions());
     if (path === '/health' && req.method === 'GET')
       return send(res, 200, { status: 'healthy' });
     if (path === '/ready' && req.method === 'GET')
@@ -622,6 +621,7 @@ export async function startService(options: ServiceOptions = {}) {
           credentials,
         );
         await configuration!.save(update.expectedRevision, settings);
+        cachedRedactions = undefined;
         return send(res, 200, await snapshot());
       }
       const match =
