@@ -50,63 +50,6 @@ export function LegacyRunsRedirect() {
   );
 }
 
-export function StartIssue({ onRun }: { onRun: (run: WorkflowRun) => void }) {
-  const [number, setNumber] = useState(''),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  const operation = useRef('');
-  return (
-    <form
-      className="start-issue"
-      onSubmit={(event) => {
-        event.preventDefault();
-        setBusy(true);
-        setError('');
-        const key = `factory.startIssue.${number}`;
-        try {
-          operation.current = localStorage.getItem(key) ?? crypto.randomUUID();
-          localStorage.setItem(key, operation.current);
-        } catch {
-          operation.current ||= crypto.randomUUID();
-        }
-        void workflow
-          .startIssue(Number(number), operation.current)
-          .then((run) => {
-            try {
-              localStorage.removeItem(key);
-            } catch {
-              /* The admitted run is authoritative. */
-            }
-            operation.current = '';
-            onRun(run);
-          })
-          .catch((e) => setError(e.message))
-          .finally(() => setBusy(false));
-      }}
-    >
-      <label>
-        GitHub issue number
-        <input
-          aria-label="GitHub issue number"
-          required
-          type="number"
-          min="1"
-          step="1"
-          value={number}
-          onChange={(event) => {
-            setNumber(event.target.value);
-            operation.current = '';
-          }}
-        />
-      </label>
-      <button className="secondary" disabled={busy}>
-        {busy ? 'Starting…' : 'Start implementation'}
-      </button>
-      {error && <p role="alert">{error}</p>}
-    </form>
-  );
-}
-
 export function ImplementationTranscript({
   run,
   onChange,

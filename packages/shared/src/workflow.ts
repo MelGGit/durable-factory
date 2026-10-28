@@ -116,6 +116,7 @@ export interface RunInspection {
   }[];
 }
 export interface WorkflowRun {
+  projectId: string;
   activity?: {
     id: string;
     at: number;
@@ -202,6 +203,10 @@ export interface WorkflowSnapshot {
   mode: 'simulation' | 'real' | 'disabled';
   missingPrerequisites?: string[];
   revision: number;
+  /** How many runs may work at once. */
+  runners: number;
+  /** Runs holding a runner. `slot` is the oldest of them. */
+  slots: string[];
   slot?: string;
   runs: WorkflowRun[];
 }
@@ -324,7 +329,7 @@ export class WorkflowClient extends FactoryClient {
           touch();
           const response = await this.fetcher.call(
             globalThis,
-            `${this.baseUrl}/api/v1/runs/events`,
+            `${this.baseUrl}/api/v1${this.scoped('/runs/events')}`,
             {
               signal: active.signal,
               headers:

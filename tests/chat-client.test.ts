@@ -13,6 +13,7 @@ const flush = async () => {
 const snapshot: ConversationSnapshot = {
   conversation: {
     id: '1',
+    projectId: 'default',
     title: 'Test',
     role: 'planning',
     repository: { path: '', github: '' },

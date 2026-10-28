@@ -22,6 +22,7 @@ import {
 import type { JsonRepresentation } from '@earendil-works/chord';
 import {
   API_VERSION,
+  DEFAULT_PROJECT_ID,
   validateTicketContract,
   parseIssueTicket,
   currentImplementation,
@@ -41,7 +42,7 @@ import {
   type Settings,
   type Ticket,
 } from '../../../packages/shared/src/index.js';
-import { context, Configuration } from './storage.js';
+import { context, Configuration, projectOf } from './storage.js';
 import { Planning } from './planning.js';
 import { createRunConversation, Requests, Catalog } from './chat.js';
 
@@ -53,7 +54,7 @@ export const Workflow = defineDoc({
     schemaVersion: 1,
     revision: 0,
     nextOrder: 0,
-    slot: '' as string,
+    slots: [] as string[],
     runs: {} as Record<string, JsonRepresentation<WorkflowRun>>,
     receipts: {} as Record<string, { payload: string; runId: string }>,
   }),
@@ -63,10 +64,16 @@ type State = {
   schemaVersion: number;
   revision: number;
   nextOrder: number;
-  slot: string;
+  /** Runs holding a runner. Older data held a single `slot` instead. */
+  slots: string[];
+  slot?: string;
   runs: Record<string, WorkflowRun>;
   receipts: Record<string, { payload: string; runId: string }>;
 };
+/** The runs holding a runner, reading the single `slot` of older data. */
+export const occupiedSlots = (
+  state: { slots?: readonly string[]; slot?: string } | undefined,
+): string[] => [...(state?.slots ?? (state?.slot ? [state.slot] : []))];
 export interface WorkflowClock {
   now(): number;
   timer(callback: () => void, milliseconds: number): () => void;
@@ -95,7 +102,7 @@ export interface StageResult {
 
 export interface WorkflowAdapter {
   mode: 'simulation' | 'real';
-  available?(): Promise<string[]>;
+  available?(projectId?: string): Promise<string[]>;
   baseRevision?(settings: Settings, signal?: AbortSignal): Promise<string>;
   issue?(
     repository: string,
@@ -268,6 +275,10 @@ export class WorkflowService {
       if (state.schemaVersion !== 1)
         throw new ApiError('NOT_READY', 'Unsupported workflow schema.', 503);
       const value = state as unknown as State;
+      if (!value.slots) {
+        value.slots = occupiedSlots(value);
+        delete value.slot;
+      }
       for (const run of Object.values(value.runs)) {
         const before = JSON.stringify(run.inputs);
         await this.pendingInputs(tx, run);
@@ -276,19 +287,47 @@ export class WorkflowService {
       return change(value, tx);
     }, context);
   }
-  async snapshot(): Promise<WorkflowSnapshot> {
+  /** Runs of one project, or of every project when none is named. */
+  async snapshot(projectId?: string): Promise<WorkflowSnapshot> {
     const state = await this.harness.snapshot(Workflow, context);
-    const missingPrerequisites = (await this.adapter?.available?.()) ?? [];
+    const missingPrerequisites =
+      (await this.adapter?.available?.(projectId)) ?? [];
     return {
       enabled: Boolean(this.adapter) && !missingPrerequisites.length,
       mode: this.adapter?.mode ?? 'disabled',
       missingPrerequisites,
       revision: state?.revision ?? 0,
-      ...(state?.slot ? { slot: state.slot } : {}),
+      runners: await this.runners(),
+      slots: occupiedSlots(state),
+      ...(occupiedSlots(state)[0] ? { slot: occupiedSlots(state)[0] } : {}),
       runs: Object.values(state?.runs ?? {})
-        .map((r) => clone(r) as WorkflowRun)
+        .map((r) => ({
+          ...(clone(r) as WorkflowRun),
+          projectId: r.projectId ?? DEFAULT_PROJECT_ID,
+        }))
+        .filter((r) => !projectId || r.projectId === projectId)
         .sort((a, b) => a.queueOrder - b.queueOrder),
     };
+  }
+  async prerequisites(projectId: string) {
+    return (await this.adapter?.available?.(projectId)) ?? [];
+  }
+  /** How many runs may work at once. */
+  async runners() {
+    return Math.max(
+      1,
+      (await this.harness.snapshot(Configuration, context))?.runners ?? 1,
+    );
+  }
+  /** Starts waiting runs after the number of runners has grown. */
+  async reschedule() {
+    await this.transaction(async (state, tx) => this.schedule(state, tx));
+  }
+  private hold(state: State, id: string) {
+    if (!state.slots.includes(id)) state.slots.push(id);
+  }
+  private release(state: State, id: string) {
+    state.slots = state.slots.filter((slot) => slot !== id);
   }
   async get(id: string) {
     const run = (await this.snapshot()).runs.find((r) => r.id === id);
@@ -403,30 +442,41 @@ export class WorkflowService {
   private async schedule(state: State, tx: Tx) {
     const deletions = await tx.doc(Deletions);
     if (this.closing || this.recovering || !this.adapter) return;
-    // Unconfirmed processes exclude all new work, including legacy runs whose
-    // execution slot was released before recovery discovered the blocker.
-    const blocker = Object.values(state.runs).find(
-      (run) => run.status === 'termination_blocker',
-    );
-    if (blocker) {
-      state.slot ||= blocker.id;
-      return;
-    }
-    if (!state.slot) {
+    const runners = Math.max(1, (await tx.doc(Configuration)).runners ?? 1);
+    // Unconfirmed processes keep their runner and exclude new work in the
+    // same repository, including legacy runs whose slot was released before
+    // recovery discovered the blocker.
+    const blocked = new Set<string>();
+    for (const blocker of Object.values(state.runs))
+      if (blocker.status === 'termination_blocker') {
+        this.hold(state, blocker.id);
+        blocked.add(blocker.repository.id);
+      }
+    // The oldest queued runs go first, whichever project they belong to.
+    while (state.slots.length < runners) {
       const next = Object.values(state.runs)
         .filter(
           (r) =>
             r.status === 'queued' &&
             this.compatible(r) &&
+            !blocked.has(r.repository.id) &&
             !deleting(deletions, undefined, r.id),
         )
         .sort((a, b) => a.queueOrder - b.queueOrder)[0];
-      if (!next) return;
-      state.slot = next.id;
+      if (!next) break;
+      this.hold(state, next.id);
       next.status = 'running';
       this.changed(state, next);
     }
-    const run = state.runs[state.slot];
+    for (const id of [...state.slots]) {
+      const run = state.runs[id];
+      if (!run) this.release(state, id);
+      else if (run.status === 'running' && state.slots.includes(id))
+        await this.advance(state, tx, run);
+    }
+  }
+  private async advance(state: State, tx: Tx, run: WorkflowRun) {
+    const deletions = await tx.doc(Deletions);
     if (
       deleting(deletions, undefined, run.id) ||
       !this.compatible(run) ||
@@ -440,7 +490,7 @@ export class WorkflowService {
       } catch (error) {
         run.status = 'needs_input';
         run.quiescent = true;
-        state.slot = '';
+        this.release(state, run.id);
         if (
           !run.interventions.some(
             (i) =>
@@ -468,7 +518,7 @@ export class WorkflowService {
         );
         run.status = 'needs_input';
         run.quiescent = true;
-        state.slot = '';
+        this.release(state, run.id);
         this.changed(state, run);
         await this.schedule(state, tx);
         return;
@@ -496,6 +546,7 @@ export class WorkflowService {
         ? await createRunConversation(
             tx,
             run.id,
+            run.projectId ?? DEFAULT_PROJECT_ID,
             'review',
             run.configuration.repository,
             run.configuration.roles.review,
@@ -572,6 +623,7 @@ export class WorkflowService {
       newRun?: boolean;
       issueNumber?: number;
       sourceRunId?: string;
+      projectId?: string;
     };
     if (
       !body ||
@@ -606,7 +658,24 @@ export class WorkflowService {
         body.conversationId = prior.planningConversationId;
       else body.issueNumber = prior.issue.number;
     }
-    const saved = await this.harness.snapshot(Configuration, context);
+    // A conversation or earlier run decides its project; only a bare issue
+    // number needs it named.
+    const projectId = prior
+      ? (prior.projectId ?? DEFAULT_PROJECT_ID)
+      : body.conversationId
+        ? ((
+            (await this.harness.snapshot(Catalog, context))?.items[
+              body.conversationId
+            ] as { projectId?: string } | undefined
+          )?.projectId ?? DEFAULT_PROJECT_ID)
+        : (body.projectId ?? DEFAULT_PROJECT_ID);
+    if (body.projectId !== undefined && body.projectId !== projectId)
+      invalid('The conversation or run belongs to another project.');
+    const configuration = (await this.harness.snapshot(
+      Configuration,
+      context,
+    ))!;
+    const saved = projectOf(configuration, projectId);
     const checkConfiguration = (revision: number) => {
       if (
         expectedConfigurationRevision !== undefined &&
@@ -616,8 +685,8 @@ export class WorkflowService {
           'Settings changed since label discovery. Poll the current repository again.',
         );
     };
-    checkConfiguration(saved!.revision);
-    const capturedSettings = clone(saved!.settings) as unknown as Settings;
+    checkConfiguration(saved.revision);
+    const capturedSettings = clone(saved.settings) as unknown as Settings;
     if (capturedSettings.repository.path)
       capturedSettings.repository.path = await realpath(
         capturedSettings.repository.path,
@@ -663,14 +732,16 @@ export class WorkflowService {
           'Finish or cancel the existing run before explicitly starting another.',
         );
       await this.transaction(async (state, tx) => {
-        checkConfiguration((await tx.doc(Configuration)).revision);
+        checkConfiguration(
+          projectOf(await tx.doc(Configuration), projectId).revision,
+        );
         await assertNotDeleting(tx, undefined, existing.id);
         state.receipts[body.operationId] = { payload, runId: existing.id };
       });
       return this.get(existing.id);
     }
     if (this.adapter.mode === 'real') {
-      const missing = (await this.adapter.available?.()) ?? [];
+      const missing = (await this.adapter.available?.(projectId)) ?? [];
       if (missing.length)
         throw new ApiError(
           'NOT_READY',
@@ -694,7 +765,9 @@ export class WorkflowService {
         ? await this.adapter.baseRevision?.(capturedSettings, signal)
         : undefined;
     const id = await this.transaction(async (state, tx) => {
-      checkConfiguration((await tx.doc(Configuration)).revision);
+      checkConfiguration(
+        projectOf(await tx.doc(Configuration), projectId).revision,
+      );
       signal?.throwIfAborted();
       if (this.closing)
         throw new ApiError(
@@ -774,7 +847,7 @@ export class WorkflowService {
         state.receipts[body.operationId] = { payload, runId: existing.id };
         return existing.id;
       }
-      const config = await tx.doc(Configuration);
+      const config = projectOf(await tx.doc(Configuration), projectId);
       const settings = clone(config.settings) as unknown as Settings;
       settings.repository.path = await realpath(settings.repository.path);
       if (
@@ -785,7 +858,7 @@ export class WorkflowService {
           'Current repository settings differ from this issue’s captured repository.',
         );
       if (this.adapter!.mode === 'real') {
-        if (config.revision !== saved!.revision)
+        if (config.revision !== saved.revision)
           conflict(
             'Settings changed while resolving admission. Retry the same operation.',
           );
@@ -797,12 +870,14 @@ export class WorkflowService {
       const developerConversationId = await createRunConversation(
         tx,
         id,
+        projectId,
         'development',
         settings.repository,
         settings.roles.development,
       );
       const run: WorkflowRun = {
         id,
+        projectId,
         revision: 0,
         mode: this.adapter!.mode,
         ...(this.adapter!.mode === 'real'
@@ -1359,7 +1434,7 @@ export class WorkflowService {
             this.invalidate(current);
           } else current.stage = next[attempt.stage];
         }
-        if (current.status !== 'running') state.slot = '';
+        if (current.status !== 'running') this.release(state, current.id);
       }
       this.changed(state, current);
       await this.schedule(state, tx);
@@ -1446,7 +1521,7 @@ export class WorkflowService {
           'Cancellation could not confirm termination. Execution slot is retained; reconcile after inspection.',
         );
       else {
-        if (state.slot === id) state.slot = '';
+        this.release(state, id);
         for (const intervention of run.interventions.filter(
           (i) =>
             ['termination', 'adapter'].includes(i.reason) &&
@@ -1555,7 +1630,7 @@ export class WorkflowService {
   async stopForDeletion(id: string) {
     await this.requestStop(id, 'cancelled');
     const run = await this.get(id);
-    if (!terminal(run) || (await this.snapshot()).slot === id)
+    if (!terminal(run) || (await this.snapshot()).slots.includes(id))
       throw new ApiError(
         'CONFLICT',
         'Agent termination could not be confirmed. Retry deletion after resolving the termination blocker.',
@@ -1606,7 +1681,8 @@ export class WorkflowService {
       body.action === 'adopt_configuration' &&
       this.adapter?.mode === 'real'
     ) {
-      const missing = (await this.adapter.available?.()) ?? [];
+      const missing =
+        (await this.adapter.available?.((await this.get(id)).projectId)) ?? [];
       if (missing.length)
         invalid(
           `Complete configuration before adoption: ${missing.join(', ')}`,
@@ -1702,7 +1778,10 @@ export class WorkflowService {
         if (!['paused', 'needs_input', 'queued'].includes(run.status))
           conflict('Pause the run before adopting changes.');
         if (body.action === 'adopt_configuration') {
-          const saved = await tx.doc(Configuration);
+          const saved = projectOf(
+            await tx.doc(Configuration),
+            run.projectId ?? DEFAULT_PROJECT_ID,
+          );
           const settings = clone(saved.settings) as unknown as Settings;
           settings.repository.path = await realpath(settings.repository.path);
           if (
@@ -2015,7 +2094,7 @@ export class WorkflowService {
           }
         }
         if (!this.adapter || !this.compatible(run)) {
-          if (state.slot === run.id) {
+          if (state.slots.includes(run.id)) {
             run.status = 'termination_blocker';
             run.stopTarget ??= 'needs_input';
             this.question(
@@ -2091,7 +2170,7 @@ export class WorkflowService {
         await this.transaction(async (state) => {
           const current = state.runs[run.id];
           current.status = 'termination_blocker';
-          state.slot ||= current.id;
+          this.hold(state, current.id);
           current.stopTarget ??= 'needs_input';
           this.question(
             current,
@@ -2191,7 +2270,7 @@ export class WorkflowService {
   /** `resume` is the version a reconnecting client already holds. The stored
    * revision does not cover what the adapter reports on each read, so the
    * version also covers whether development is enabled and what it lacks. */
-  async stream(res: ServerResponse, resume?: string) {
+  async stream(res: ServerResponse, resume?: string, projectId?: string) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
@@ -2226,7 +2305,7 @@ export class WorkflowService {
       if (closed || busy) return;
       busy = true;
       try {
-        const snapshot = await this.snapshot();
+        const snapshot = await this.snapshot(projectId);
         const version = `${snapshot.revision}.${contentVersion(
           JSON.stringify([
             snapshot.enabled,

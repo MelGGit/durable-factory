@@ -6,13 +6,20 @@ import {
   ROLES,
   type Settings,
   type SettingsResponse,
+  type ProjectSummary,
   type CredentialId,
   type ProviderId,
 } from '../../../packages/shared/src/index.js';
 import './style.css';
 import { LegacyRunsRedirect } from './run-chat.js';
 import { ChatApp } from './chat.js';
-const client = new FactoryClient();
+// /settings?project=<id> edits one project; without it, the default project.
+const projectParam = new URLSearchParams(window.location.search).get('project');
+const client = new FactoryClient(
+  undefined,
+  undefined,
+  projectParam ?? undefined,
+);
 const names: Record<string, string> = {
   requesty: 'Requesty',
   openai: 'OpenAI',
@@ -43,6 +50,10 @@ function SettingsApp() {
     null,
   );
   const [tab, setTab] = useState('repository');
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [renaming, setRenaming] = useState<string>();
+  const [runners, setRunners] = useState<number>();
+  const [runnersDraft, setRunnersDraft] = useState('');
   const dirty = Boolean(
     saved && draft && JSON.stringify(saved.settings) !== JSON.stringify(draft),
   );
@@ -54,6 +65,10 @@ function SettingsApp() {
       const response = await client.settings();
       setSaved(response);
       setDraft(response.settings);
+      setProjects((await client.projects()).projects);
+      const shared = await client.runners();
+      setRunners(shared.runners);
+      setRunnersDraft(String(shared.runners));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the service.');
     } finally {
@@ -163,13 +178,117 @@ function SettingsApp() {
             factory<span className="brand-dot">.</span>
           </span>
         </a>
-        <div className="sidebar-label">YOUR WORKSPACE</div>
+        <div className="sidebar-label">PROJECT</div>
         <div className="workspace">
           <span className="workspace-icon">⌘</span>
           <div>
-            Personal workspace<small>Local · single repository</small>
+            {saved?.name ?? 'Loading…'}
+            <small>
+              {saved?.settings.repository.github || 'No repository yet'}
+            </small>
           </div>
         </div>
+        {projects.length > 1 && (
+          <>
+            <label className="sr-only" htmlFor="settings-project">
+              Switch project
+            </label>
+            <select
+              id="settings-project"
+              value={saved?.projectId}
+              onChange={(e) =>
+                window.location.assign(
+                  `/settings?project=${encodeURIComponent(e.target.value)}`,
+                )
+              }
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {saved && (
+          <div className="project-actions">
+            {renaming === undefined ? (
+              <>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setRenaming(saved.name)}
+                >
+                  Rename
+                </button>
+                {projects.length > 1 && (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `Delete project “${saved.name}”? This only works once it has no conversations or runs.`,
+                        )
+                      )
+                        return;
+                      void client
+                        .deleteProject(saved.projectId)
+                        .then(() => window.location.assign('/settings'))
+                        .catch((e) =>
+                          setError(
+                            e instanceof Error
+                              ? e.message
+                              : 'Could not delete the project.',
+                          ),
+                        );
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </>
+            ) : (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void client
+                    .renameProject(saved.projectId, renaming)
+                    .then(() => {
+                      setRenaming(undefined);
+                      return load();
+                    })
+                    .catch((e) =>
+                      setError(
+                        e instanceof Error
+                          ? e.message
+                          : 'Could not rename the project.',
+                      ),
+                    );
+                }}
+              >
+                <label className="sr-only" htmlFor="rename-project">
+                  Project name
+                </label>
+                <input
+                  id="rename-project"
+                  autoFocus
+                  maxLength={80}
+                  value={renaming}
+                  onChange={(e) => setRenaming(e.target.value)}
+                />
+                <button className="secondary">Save name</button>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setRenaming(undefined)}
+                >
+                  Cancel
+                </button>
+              </form>
+            )}
+          </div>
+        )}
         <div className="sidebar-label nav-heading">FOUNDATION</div>
         <nav aria-label="Settings sections">
           {links.map(([id, number, label]) => (
@@ -196,6 +315,11 @@ function SettingsApp() {
         <header className="topbar">
           <span>
             <a href="/">Planning chat</a> <span className="slash">/</span>{' '}
+            {saved && (
+              <>
+                {saved.name} <span className="slash">/</span>{' '}
+              </>
+            )}
             <strong>Settings</strong>
           </span>
           <span className="local-badge">
@@ -226,6 +350,59 @@ function SettingsApp() {
             </p>
             <span className="note-tag">Setup only</span>
           </div>
+          {runners !== undefined && (
+            <form
+              className="runners-block panel"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void client
+                  .saveRunners(Number(runnersDraft))
+                  .then((result) => {
+                    setRunners(result.runners);
+                    setRunnersDraft(String(result.runners));
+                    setNotice(
+                      `Up to ${result.runners} run${result.runners === 1 ? '' : 's'} will work at once.`,
+                    );
+                  })
+                  .catch((e) =>
+                    setError(
+                      e instanceof Error
+                        ? e.message
+                        : 'Could not save parallel runs.',
+                    ),
+                  );
+              }}
+            >
+              <div>
+                <h3>All projects</h3>
+                <p>
+                  Runs start oldest first across every project, and credentials
+                  are shared.
+                </p>
+              </div>
+              <label>
+                Parallel runs
+                <input
+                  type="number"
+                  min="1"
+                  max="16"
+                  step="1"
+                  value={runnersDraft}
+                  onChange={(e) => setRunnersDraft(e.target.value)}
+                />
+                <small>
+                  How many runs may work at once, from 1 to 16. Lowering it
+                  never stops work in progress.
+                </small>
+              </label>
+              <button
+                className="secondary"
+                disabled={String(runners) === runnersDraft}
+              >
+                Save
+              </button>
+            </form>
+          )}
           {error && (
             <div className="alert error" role="alert">
               <span>{error}</span>
@@ -571,8 +748,8 @@ function SettingsApp() {
                   <div>
                     <h2>Your connections</h2>
                     <p>
-                      Credentials stay on this computer, outside your
-                      repository.
+                      Shared by every project. Credentials stay on this
+                      computer, outside your repository.
                     </p>
                   </div>
                 </div>

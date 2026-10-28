@@ -46,8 +46,23 @@ export interface ProviderStatus {
   models: { id: string; name: string; reasoning: string[] }[];
   message?: string;
 }
+/** Records written before projects existed belong to this project. */
+export const DEFAULT_PROJECT_ID = 'default';
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  repository: Settings['repository'];
+  /** What the workflow still needs before this project can start a run. */
+  missingPrerequisites?: string[];
+}
+export interface ProjectsResponse {
+  apiVersion: typeof API_VERSION;
+  projects: ProjectSummary[];
+}
 export interface SettingsResponse {
   apiVersion: typeof API_VERSION;
+  projectId: string;
+  name: string;
   revision: number;
   settings: Settings;
   credentials: Record<CredentialId, boolean>;
@@ -108,16 +123,32 @@ export const withToken =
     headers.set('Authorization', `Bearer ${token}`);
     return fetcher(input, { ...init, headers });
   };
+/** Paths that belong to one project. Others address a record by its own ID. */
+const projectPaths = new Set([
+  '/settings',
+  '/conversations',
+  '/runs',
+  '/runs/events',
+  '/github/validate',
+]);
 export class FactoryClient {
   private csrfToken?: string;
   constructor(
     protected baseUrl = '',
     protected fetcher: typeof fetch = fetch,
+    /** Without a project, the service answers for the default project. */
+    public projectId?: string,
   ) {}
+  protected scoped(path: string) {
+    const bare = path.split('?')[0];
+    return this.projectId && projectPaths.has(bare)
+      ? `/projects/${encodeURIComponent(this.projectId)}${path}`
+      : path;
+  }
   protected async request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await this.fetcher.call(
       globalThis,
-      `${this.baseUrl}/api/v1${path}`,
+      `${this.baseUrl}/api/v1${this.scoped(path)}`,
       init,
     );
     if (!response.ok)
@@ -151,6 +182,32 @@ export class FactoryClient {
   }
   providers() {
     return this.request<{ providers: ProviderStatus[] }>('/providers');
+  }
+  runners() {
+    return this.request<{ runners: number }>('/runners');
+  }
+  saveRunners(runners: number) {
+    return this.mutation<{ runners: number }>('/runners', 'PUT', { runners });
+  }
+  projects() {
+    return this.request<ProjectsResponse>('/projects');
+  }
+  createProject(name: string) {
+    return this.mutation<ProjectSummary>('/projects', 'POST', { name });
+  }
+  renameProject(id: string, name: string) {
+    return this.mutation<ProjectSummary>(
+      `/projects/${encodeURIComponent(id)}`,
+      'PATCH',
+      { name },
+    );
+  }
+  deleteProject(id: string) {
+    return this.mutation<{ deleted: true }>(
+      `/projects/${encodeURIComponent(id)}`,
+      'DELETE',
+      {},
+    );
   }
   protected async mutation<T>(path: string, method: string, body: unknown) {
     if (!this.csrfToken) await this.connect();

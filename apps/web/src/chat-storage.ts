@@ -8,7 +8,7 @@ export type ChatLocalState = {
   selected: string;
   drafts: Record<string, string>;
   pending: PendingSend[];
-  creation?: { title: string; requestId: string };
+  creation?: { title: string; requestId: string; projectId?: string };
 };
 const draftPrefix = `${chatStorageKey}.draft.`;
 const pendingPrefix = `${chatStorageKey}.pending.`;
@@ -77,7 +77,13 @@ export function restoreChatState(): ChatLocalState {
       typeof creation.title === 'string' &&
       typeof creation.requestId === 'string'
     )
-      result.creation = creation;
+      result.creation = {
+        title: creation.title,
+        requestId: creation.requestId,
+        ...(typeof creation.projectId === 'string'
+          ? { projectId: creation.projectId }
+          : {}),
+      };
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)!;
       if (key.startsWith(draftPrefix))

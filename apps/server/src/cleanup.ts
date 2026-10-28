@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import type { Harness } from '@earendil-works/pi-durable';
 import type { WorkflowRun } from '../../../packages/shared/src/index.js';
 import { Deletions, issueDeletionKey } from './deletion-state.js';
-import { Workflow } from './workflow.js';
+import { Workflow, occupiedSlots } from './workflow.js';
 import { Catalog } from './chat.js';
 import { Processes } from './processes.js';
 import { AgentOperations } from './real-workflow.js';
@@ -44,7 +44,7 @@ export async function cleanupSnapshot(
   );
   for (const [id, operation] of Object.entries(operations.items))
     if (run && operation.runId === run.id) delete operations.items[id];
-  if (run && workflow.slot === run.id)
+  if (run && occupiedSlots(workflow).includes(run.id))
     throw new Error('Run still owns execution.');
   const conversations = new Set([
     ...(options.conversationId ? [options.conversationId] : []),

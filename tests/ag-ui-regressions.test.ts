@@ -243,6 +243,7 @@ test('live text streams once and its committed replacement preserves earlier mes
   const snapshot: ConversationSnapshot = {
     conversation: {
       id: '1',
+      projectId: 'default',
       title: 'Streaming',
       role: 'planning',
       repository: { path: '', github: '' },

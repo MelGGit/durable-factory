@@ -29,6 +29,7 @@ import {
   type BoundImplementation,
   type ImplementationReport,
   type CriterionAssessment,
+  DEFAULT_PROJECT_ID,
   type Settings,
   type WorkflowRun,
   type StageAttempt,
@@ -86,7 +87,7 @@ export interface RealWorkflowDependencies {
   github: GitHubAdapter;
   workspaces: Workspaces;
   processes: ProcessSupervisor;
-  settings: () => Promise<Settings>;
+  settings: (projectId: string) => Promise<Settings>;
   credentialStatus: () => Promise<Record<string, boolean>>;
   registerRequesty: (model: string) => void;
   history: (conversationId: string, query: string) => Promise<unknown>;
@@ -562,8 +563,8 @@ export class RealWorkflow {
         this.providerOwners.delete(key);
       }
   }
-  async available() {
-    const settings = await this.deps.settings(),
+  async available(projectId = DEFAULT_PROJECT_ID) {
+    const settings = await this.deps.settings(projectId),
       credentials = await this.deps.credentialStatus();
     const missing: string[] = [];
     if (!['darwin', 'linux'].includes(process.platform))

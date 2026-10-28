@@ -33,6 +33,7 @@ import {
   type ConversationSummary,
   type HistoryPage,
   type Role,
+  DEFAULT_PROJECT_ID,
   type Settings,
   type TranscriptEntry,
   type ToolView,
@@ -299,7 +300,7 @@ export class ChatService {
   constructor(
     private harness: Harness,
     private dataDir: string,
-    private settings: () => Promise<{ settings: Settings }>,
+    private settings: (projectId: string) => Promise<{ settings: Settings }>,
     private deps: ChatDependencies,
   ) {}
   private serial<T>(key: string, work: () => Promise<T>): Promise<T> {
@@ -314,11 +315,16 @@ export class ChatService {
       .catch(() => {});
     return pending;
   }
-  async list() {
+  /** Conversations of one project, or of every project when none is named. */
+  async list(projectId?: string) {
     return Object.values(
       (await this.harness.snapshot(Catalog, context))?.items ?? {},
     )
-      .map(({ requestId: _, ...item }) => item)
+      .map(({ requestId: _, ...item }) => ({
+        ...item,
+        projectId: item.projectId ?? DEFAULT_PROJECT_ID,
+      }))
+      .filter((item) => !projectId || item.projectId === projectId)
       .reverse();
   }
   async summary(id: string) {
@@ -327,7 +333,7 @@ export class ChatService {
     const item = (await this.harness.snapshot(Catalog, context))?.items[id];
     if (!item) throw new ApiError('NOT_FOUND', 'Conversation not found.', 404);
     const { requestId: _, ...summary } = item;
-    return summary;
+    return { ...summary, projectId: summary.projectId ?? DEFAULT_PROJECT_ID };
   }
   private async conversation(id: string) {
     await this.summary(id);
@@ -336,7 +342,11 @@ export class ChatService {
       context,
     ))!;
   }
-  async create(input: unknown, role: Role = 'planning') {
+  async create(
+    input: unknown,
+    role: Role = 'planning',
+    projectId = DEFAULT_PROJECT_ID,
+  ) {
     const body = input as { title?: unknown; requestId?: unknown };
     if (
       !body ||
@@ -361,7 +371,7 @@ export class ChatService {
           );
         return this.summary(existing.id);
       }
-      const { settings } = await this.settings();
+      const { settings } = await this.settings(projectId);
       const model = settings.roles[role];
       if (!model.provider || !model.model)
         invalid('Select a planning provider and model in settings first.');
@@ -389,6 +399,7 @@ export class ChatService {
             const catalog = await tx.doc(Catalog);
             catalog.items[String(id)] = {
               id: String(id),
+              projectId,
               title,
               role,
               requestId,
@@ -1187,6 +1198,7 @@ export class ChatService {
 export async function createRunConversation(
   tx: Tx,
   runId: string,
+  projectId: string,
   role: 'development' | 'review',
   repository: Settings['repository'],
   model: Settings['roles']['development'],
@@ -1209,6 +1221,7 @@ export async function createRunConversation(
   catalog.items[String(record.id)] = {
     id: String(record.id),
     runId,
+    projectId,
     title: `${role} · ${runId.slice(0, 8)}`,
     role,
     repository,

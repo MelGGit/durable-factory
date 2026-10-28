@@ -21,6 +21,7 @@ export type SubmissionState =
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 export interface ConversationSummary {
   runId?: string;
+  projectId: string;
   id: string;
   title: string;
   role: Role;

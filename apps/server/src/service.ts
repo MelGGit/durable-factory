@@ -26,6 +26,7 @@ import { readFile, realpath, open } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import {
   API_VERSION,
+  DEFAULT_PROJECT_ID,
   ApiError,
   type CredentialId,
   type SettingsResponse,
@@ -120,6 +121,8 @@ function changesAccess(method: string | undefined, path: string) {
   return (
     (method === 'PUT' && path === '/api/v1/settings') ||
     (method === 'POST' && path === '/api/v1/github/validate') ||
+    (method !== 'GET' && path.startsWith('/api/v1/projects')) ||
+    (method === 'PUT' && path === '/api/v1/runners') ||
     ((method === 'PUT' || method === 'DELETE') &&
       path.startsWith('/api/v1/credentials/'))
   );
@@ -176,8 +179,8 @@ export async function startService(options: ServiceOptions = {}) {
     });
     res.end(JSON.stringify(body));
   };
-  async function snapshot(): Promise<SettingsResponse> {
-    const saved = await configuration!.read();
+  async function snapshot(projectId: string): Promise<SettingsResponse> {
+    const saved = await configuration!.read(projectId);
     const metadata = await credentials.inspect();
     return {
       apiVersion: API_VERSION,
@@ -201,11 +204,12 @@ export async function startService(options: ServiceOptions = {}) {
       const real = await realpath(path).catch(() => path);
       if (real !== path) found.push([real, label]);
     };
-    const saved = await configuration?.read().catch(() => undefined);
-    await add(saved?.settings.repository.path, '<repository>');
+    const projects = await configuration?.projects().catch(() => undefined);
+    for (const project of projects ?? [])
+      await add(project.repository.path, '<repository>');
     await add(ownership?.dataDir, '<data>');
     await add(homedir(), '~');
-    if (saved) cachedRedactions = found;
+    if (projects) cachedRedactions = found;
     return found;
   }
   async function body(
@@ -269,7 +273,15 @@ export async function startService(options: ServiceOptions = {}) {
         403,
       );
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const path = url.pathname;
+    // /projects/:id/<resource> addresses a resource of one project. Handlers
+    // see the plain path, and the project the request is for.
+    const scopedPath =
+      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|github\/validate))$/.exec(
+        url.pathname,
+      );
+    const scopedProject = scopedPath?.[1];
+    const projectId = scopedProject ?? DEFAULT_PROJECT_ID;
+    const path = scopedPath ? `/api/v1${scopedPath[2]}` : url.pathname;
     if (tokenDigest && !isLocal(req)) redactResponse(res, await redactions());
     if (path === '/health' && req.method === 'GET')
       return send(res, 200, { status: 'healthy' });
@@ -325,6 +337,7 @@ export async function startService(options: ServiceOptions = {}) {
             503,
           )
         );
+      if (scopedProject) await configuration!.read(scopedProject);
       // A bearer token is not an ambient credential, so it needs no CSRF guard.
       if (req.method !== 'GET' && !tokenDigest) {
         const header = req.headers['x-factory-csrf'];
@@ -366,6 +379,59 @@ export async function startService(options: ServiceOptions = {}) {
           202,
           await requestDeletion(deleteTarget[1] === 'runs', deleteTarget[2]),
         );
+      }
+      if (path === '/api/v1/runners' && req.method === 'GET')
+        return send(res, 200, { runners: await configuration!.runners() });
+      if (path === '/api/v1/runners' && req.method === 'PUT') {
+        const { runners } = (await body(req)) as { runners?: unknown };
+        await configuration!.setRunners(runners);
+        await workflow.reschedule();
+        return send(res, 200, { runners: await configuration!.runners() });
+      }
+      if (path === '/api/v1/projects' && req.method === 'GET')
+        return send(res, 200, {
+          apiVersion: API_VERSION,
+          projects: await Promise.all(
+            (await configuration!.projects()).map(async (project) => ({
+              ...project,
+              missingPrerequisites: await workflow.prerequisites(project.id),
+            })),
+          ),
+        });
+      if (path === '/api/v1/projects' && req.method === 'POST') {
+        const { name } = (await body(req)) as { name?: unknown };
+        const source = (await configuration!.projects())[0]?.id;
+        const created = await configuration!.create(name as string, source);
+        cachedRedactions = undefined;
+        return send(res, 201, created);
+      }
+      const projectRoute = /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)$/.exec(path);
+      if (projectRoute && req.method === 'PATCH') {
+        const { name } = (await body(req)) as { name?: unknown };
+        return send(
+          res,
+          200,
+          await configuration!.rename(projectRoute[1], name as string),
+        );
+      }
+      if (projectRoute && req.method === 'DELETE') {
+        await body(req);
+        const target = projectRoute[1];
+        await configuration!.read(target);
+        // Deleting runs and conversations goes through their own cleanup, so
+        // a project is removed only once it holds none.
+        if (
+          (await chat!.list(target)).length ||
+          (await workflow.snapshot(target)).runs.length
+        )
+          throw new ApiError(
+            'CONFLICT',
+            'Delete this project’s conversations and runs first.',
+            409,
+          );
+        await configuration!.remove(target);
+        cachedRedactions = undefined;
+        return send(res, 200, { deleted: true });
       }
       if (path === '/api/v1/session' && req.method === 'GET')
         return send(res, 200, { apiVersion: API_VERSION, csrfToken });
@@ -441,12 +507,30 @@ export async function startService(options: ServiceOptions = {}) {
         });
       }
       if (path === '/api/v1/runs/events' && req.method === 'GET')
-        return workflow.stream(res, lastEventId(req));
+        return workflow.stream(
+          res,
+          lastEventId(req),
+          scopedProject && projectId,
+        );
       if (path === '/api/v1/runs') {
         if (req.method === 'GET')
-          return send(res, 200, await workflow.snapshot());
-        if (req.method === 'POST')
-          return send(res, 202, await workflow.admit(await body(req)));
+          return send(
+            res,
+            200,
+            await workflow.snapshot(scopedProject && projectId),
+          );
+        if (req.method === 'POST') {
+          const input = await body(req);
+          return send(
+            res,
+            202,
+            await workflow.admit(
+              scopedProject && input && typeof input === 'object'
+                ? { ...input, projectId }
+                : input,
+            ),
+          );
+        }
       }
       const commandArtifact =
         /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/artifacts\/([A-Za-z0-9_-]+)$/.exec(
@@ -544,7 +628,7 @@ export async function startService(options: ServiceOptions = {}) {
           res,
           200,
           await github.validate(
-            (await configuration!.read()).settings.repository.github,
+            (await configuration!.read(projectId)).settings.repository.github,
           ),
         );
       }
@@ -558,9 +642,15 @@ export async function startService(options: ServiceOptions = {}) {
       }
       if (path === '/api/v1/conversations') {
         if (req.method === 'GET')
-          return send(res, 200, { conversations: await chat!.list() });
+          return send(res, 200, {
+            conversations: await chat!.list(scopedProject),
+          });
         if (req.method === 'POST')
-          return send(res, 201, await chat!.create(await body(req)));
+          return send(
+            res,
+            201,
+            await chat!.create(await body(req), 'planning', projectId),
+          );
       }
       const chatRoute =
         /^\/api\/v1\/conversations\/([A-Za-z0-9_-]+)\/(history|events|submissions|interrupt|artifacts)(?:\/([A-Za-z0-9_-]+)(?:\/(withdraw))?)?$/.exec(
@@ -610,7 +700,7 @@ export async function startService(options: ServiceOptions = {}) {
           );
       }
       if (path === '/api/v1/settings' && req.method === 'GET')
-        return send(res, 200, await snapshot());
+        return send(res, 200, await snapshot(projectId));
       if (path === '/api/v1/providers' && req.method === 'GET')
         return send(res, 200, {
           providers: await providerStatuses(credentials),
@@ -622,9 +712,23 @@ export async function startService(options: ServiceOptions = {}) {
           ownership!.dataDir,
           credentials,
         );
-        await configuration!.save(update.expectedRevision, settings);
+        for (const other of await configuration!.projects()) {
+          if (
+            other.id !== projectId &&
+            settings.repository.github &&
+            other.repository.github.toLowerCase() ===
+              settings.repository.github.toLowerCase() &&
+            other.repository.path === settings.repository.path
+          )
+            throw new ApiError(
+              'CONFLICT',
+              `The project “${other.name}” already uses this repository.`,
+              409,
+            );
+        }
+        await configuration!.save(update.expectedRevision, settings, projectId);
         cachedRedactions = undefined;
-        return send(res, 200, await snapshot());
+        return send(res, 200, await snapshot(projectId));
       }
       const match =
         /^\/api\/v1\/credentials\/(requesty|github|openai|anthropic)$/.exec(
@@ -793,7 +897,7 @@ export async function startService(options: ServiceOptions = {}) {
         github,
         processes,
         workspaces,
-        settings: async () => (await configuration!.read()).settings,
+        settings: async (id) => (await configuration!.read(id)).settings,
         credentialStatus: async () => (await credentials.inspect()).configured,
         registerRequesty,
         history: (id, query) => chat!.searchHistory(id, query),
@@ -818,7 +922,7 @@ export async function startService(options: ServiceOptions = {}) {
       chat = new ChatService(
         configuration.harness,
         ownership!.dataDir,
-        () => configuration!.read(),
+        (id) => configuration!.read(id),
         {
           ...options.chat,
           models,
@@ -914,6 +1018,47 @@ export async function startService(options: ServiceOptions = {}) {
     await credentials.init();
     github = options.github ?? createGitHub(credentials);
     await initializeRuntime();
+    const pollProjectLabels = async (projectId: string) => {
+      const capability = await workflow.snapshot(projectId);
+      if (!capability.enabled) return;
+      const saved = await configuration!.read(projectId);
+      const repository = {
+        ...saved.settings.repository,
+        path: await realpath(saved.settings.repository.path),
+      };
+      for (let page = 1; page <= 100; page++) {
+        const batch = await github.readyIssues!(
+          saved.settings.repository.github,
+          page,
+          labelAbort.signal,
+        );
+        for (const issue of batch.issues) {
+          if (stopping) return;
+          const deletions = await configuration!.harness.snapshot(
+            Deletions,
+            context,
+          );
+          if (
+            deletions?.suppressedIssues?.[
+              issueDeletionKey(repository, issue.number)
+            ]
+          )
+            continue;
+          await workflow.admit(
+            {
+              issueNumber: issue.number,
+              projectId,
+              operationId: `label-${projectId}-${saved.revision}-${issue.number}-${issue.updatedAt.replace(/[^A-Za-z0-9_-]/g, '')}`,
+            },
+            labelAbort.signal,
+            saved.revision,
+            'label',
+          );
+        }
+        if (!batch.hasNext) return;
+      }
+      throw new Error('Label inspection limit exceeded.');
+    };
     const pollLabels = () => {
       if (
         labelPolling ||
@@ -928,44 +1073,18 @@ export async function startService(options: ServiceOptions = {}) {
       )
         return;
       labelPolling = (async () => {
-        const capability = await workflow.snapshot();
-        if (!capability.enabled) return;
-        const saved = await configuration!.read();
-        const repository = {
-          ...saved.settings.repository,
-          path: await realpath(saved.settings.repository.path),
-        };
-        for (let page = 1; page <= 100; page++) {
-          const batch = await github.readyIssues!(
-            saved.settings.repository.github,
-            page,
-            labelAbort.signal,
-          );
-          for (const issue of batch.issues) {
+        // One project failing (a revoked repository, say) must not starve the
+        // others, so errors are collected and the first is raised at the end.
+        let failure: unknown;
+        for (const { id } of await configuration!.projects()) {
+          try {
+            await pollProjectLabels(id);
+          } catch (error) {
             if (stopping) return;
-            const deletions = await configuration!.harness.snapshot(
-              Deletions,
-              context,
-            );
-            if (
-              deletions?.suppressedIssues?.[
-                issueDeletionKey(repository, issue.number)
-              ]
-            )
-              continue;
-            await workflow.admit(
-              {
-                issueNumber: issue.number,
-                operationId: `label-${saved.revision}-${issue.number}-${issue.updatedAt.replace(/[^A-Za-z0-9_-]/g, '')}`,
-              },
-              labelAbort.signal,
-              saved.revision,
-              'label',
-            );
+            failure ??= error;
           }
-          if (!batch.hasNext) return;
         }
-        throw new Error('Label inspection limit exceeded.');
+        if (failure) throw failure;
       })()
         .catch((error) => {
           nextLabelPoll =
@@ -1149,7 +1268,7 @@ export async function startService(options: ServiceOptions = {}) {
           return (
             !inspection.tasks.length &&
             !inspection.submissions.length &&
-            !state.slot &&
+            !state.slots.length &&
             !state.runs.some((run) =>
               [
                 'running',
@@ -1338,7 +1457,7 @@ export async function startService(options: ServiceOptions = {}) {
             stopping ||
             inspection.tasks.length ||
             inspection.submissions.length ||
-            state.slot ||
+            state.slots.length ||
             state.runs.some((r) =>
               [
                 'running',
@@ -1434,12 +1553,12 @@ export async function startService(options: ServiceOptions = {}) {
     return cleanupPolling;
   }
   async function validateRepositoryFromStorage() {
-    const saved = await configuration!.read();
     const { validateRepositoryLocation } = await import('./runtime.js');
-    await validateRepositoryLocation(
-      saved.settings.repository.path,
-      ownership!.dataDir,
-    );
+    for (const project of await configuration!.projects())
+      await validateRepositoryLocation(
+        project.repository.path,
+        ownership!.dataDir,
+      );
   }
   return {
     server,

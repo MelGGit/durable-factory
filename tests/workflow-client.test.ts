@@ -11,7 +11,14 @@ test('workflow stream reducer deduplicates updates, rejects gaps/version mismatc
     streamId: 'stream-a',
     sequence: 1,
     type: 'snapshot',
-    snapshot: { mode: 'simulation', enabled: true, revision: 1, runs: [] },
+    snapshot: {
+      mode: 'simulation',
+      enabled: true,
+      revision: 1,
+      runners: 1,
+      slots: [],
+      runs: [],
+    },
   };
   assert.equal(reducer.apply(frame), true);
   assert.equal(reducer.apply(frame), false);

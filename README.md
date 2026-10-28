@@ -93,7 +93,7 @@ For manually prepared issues, use the explicit sections and regression format do
 
 ### 2. Start implementation
 
-Choose **Start implementation** on the linked issue, enter an issue number under Implementation, explicitly ask the planner to start its linked issue, or label an open issue **`agent:ready`**. Label polling runs at startup and every 30 seconds. Adding that label authorizes implementation and PR publication; closed issues cannot start.
+Choose **Start implementation** on the linked issue, explicitly ask the planner to start its linked issue, or label an open issue **`agent:ready`**. Label polling runs at startup and every 30 seconds. Adding that label authorizes implementation and PR publication; closed issues cannot start.
 
 Each run captures the issue, base commit, settings, models, commands, deadlines, and commit identity. Settings saves affect future runs. Adopting newer configuration or specification is an explicit recorded action that invalidates affected evidence.
 

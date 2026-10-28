@@ -1,8 +1,4 @@
-import {
-  ImplementationTranscript,
-  RunSidebar,
-  StartIssue,
-} from './run-chat.js';
+import { ImplementationTranscript, RunSidebar } from './run-chat.js';
 import {
   conversationItems,
   agentLabel,
@@ -11,6 +7,7 @@ import {
 import { markdown } from './markdown.js';
 import { Overlay, useMedia } from './panels.js';
 import { StartRun } from './runs.js';
+import { AddProject, ProjectTree } from './sidebar.js';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ApiError,
@@ -22,6 +19,8 @@ import {
   type WorkflowRun,
   mergeEntries,
   runUpdatedAt,
+  DEFAULT_PROJECT_ID,
+  type ProjectSummary,
   type ConnectionState,
   type ConversationSnapshot,
   type ConversationSummary,
@@ -260,6 +259,9 @@ export function ChatApp() {
         : state;
   });
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [search, setSearch] = useState('');
+  const [newProject, setNewProject] = useState<string>();
   const [workflowSnapshot, setWorkflowSnapshot] = useState<WorkflowSnapshot>();
   const [activityConnected, setActivityConnected] = useState(false);
   const [activityVersion, setActivityVersion] = useState(0);
@@ -333,6 +335,34 @@ export function ChatApp() {
   useEffect(() => {
     void refresh().catch((e) => setError(e.message));
   }, []);
+  useEffect(() => {
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      try {
+        const result = await client.projects();
+        if (active) setProjects(result.projects);
+      } catch {
+        // Keep the last list; the default project still works without it.
+      } finally {
+        if (active) timer = setTimeout(load, 5000);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, []);
+  const visibleProjects: ProjectSummary[] = projects.length
+    ? projects
+    : [
+        {
+          id: DEFAULT_PROJECT_ID,
+          name: 'Default project',
+          repository: { path: '', github: '', baseBranch: 'main' },
+        },
+      ];
   useEffect(() => {
     const sync = (event: StorageEvent) => {
       if (
@@ -715,19 +745,33 @@ export function ChatApp() {
     observer.observe(element);
     return () => observer.disconnect();
   }, [selected]);
+  // Queued runs start oldest first, whichever project they belong to.
+  const queuePosition = new Map(
+    (workflowSnapshot?.runs ?? [])
+      .filter((run) => run.status === 'queued')
+      .sort((a, b) => a.queueOrder - b.queueOrder)
+      .map((run, index) => [run.id, index + 1] as const),
+  );
+  const targetProject =
+    newProject ??
+    conversations.find((item) => item.id === selected)?.projectId ??
+    selectedRun?.projectId ??
+    visibleProjects[0].id;
   const create = async (savedCreation = current.current.creation) => {
     const creation = savedCreation ?? {
       title: title.trim() || 'New planning conversation',
       requestId: crypto.randomUUID(),
+      projectId: targetProject,
     };
     persist((previous) => ({ ...previous, creation }));
     setBusy(true);
     setError('');
     try {
-      const conversation = await client.createConversation(
-        creation.title,
-        creation.requestId,
-      );
+      const conversation = await new AgUiChatClient(
+        '',
+        undefined,
+        creation.projectId,
+      ).createConversation(creation.title, creation.requestId);
       persist((previous) => ({
         ...previous,
         selected: conversation.id,
@@ -838,7 +882,6 @@ export function ChatApp() {
       <a className="chat-brand" href="/">
         df<span>↗</span> <strong>durable factory</strong>
       </a>
-      <div className="eyebrow">PLANNING</div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -856,6 +899,24 @@ export function ChatApp() {
           maxLength={120}
           onChange={(e) => setTitle(e.target.value)}
         />
+        {visibleProjects.length > 1 && (
+          <>
+            <label className="sr-only" htmlFor="conversation-project">
+              Project
+            </label>
+            <select
+              id="conversation-project"
+              value={targetProject}
+              onChange={(e) => setNewProject(e.target.value)}
+            >
+              {visibleProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
         <button className="primary" disabled={busy} type="submit">
           {local.creation ? 'Retry creating conversation' : 'New conversation'}{' '}
           <span>＋</span>
@@ -872,61 +933,72 @@ export function ChatApp() {
           </button>
         )}
       </form>
-      <nav aria-label="Saved conversations">
-        {conversations
-          .filter((item) => item.role === 'planning' && !item.runId)
-          .map((item) => (
-            <div key={item.id} className="chat-navigation-row">
-              <button
-                type="button"
-                aria-current={item.id === selected ? 'page' : undefined}
-                className={item.id === selected ? 'selected' : ''}
-                onClick={() => {
-                  selectConversation(item.id);
-                }}
-              >
-                <strong>{item.title}</strong>
-                <small>{item.model.model}</small>
-              </button>
-              {deletionControl(item.id, item.title, false)}
-            </div>
-          ))}
-      </nav>
-      <div className="eyebrow">IMPLEMENTATION</div>
-      <nav aria-label="Implementation conversations">
-        {[...(workflowSnapshot?.runs ?? [])]
-          .sort((a, b) => runUpdatedAt(b) - runUpdatedAt(a))
-          .map((run) => (
-            <div key={run.id} className="chat-navigation-row">
-              <button
-                type="button"
-                className={selectedRun?.id === run.id ? 'selected' : ''}
-                aria-current={selectedRun?.id === run.id ? 'page' : undefined}
-                onClick={() => selectConversation(run.developerConversationId)}
-              >
-                <strong>
-                  #{run.issue.number} · {run.specification.title}
-                </strong>
-                <small>
-                  {run.mode === 'simulation' ? 'Simulation · ' : ''}
-                  {run.status.replaceAll('_', ' ')}
-                </small>
-              </button>
-              {deletionControl(run.id, run.specification.title, true)}
-            </div>
-          ))}
-      </nav>
-      {workflowSnapshot?.enabled && workflowSnapshot.mode === 'real' && (
-        <StartIssue onRun={updateRun} />
-      )}
-      {workflowSnapshot && !workflowSnapshot.enabled && (
-        <p className="navigation-hint">
-          {workflowSnapshot.missingPrerequisites?.length
-            ? `Complete settings: ${workflowSnapshot.missingPrerequisites.join(', ')}`
-            : 'Implementation starts are unavailable.'}
-        </p>
-      )}
-      <a className="settings-link" href="/settings">
+      <input
+        type="search"
+        className="sidebar-search"
+        aria-label="Search conversations"
+        placeholder="Search"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      <ProjectTree
+        projects={visibleProjects}
+        conversations={conversations}
+        runs={workflowSnapshot?.runs ?? []}
+        search={search}
+        workflowDisabled={workflowSnapshot?.mode === 'disabled'}
+        renderConversation={(item) => (
+          <div key={item.id} className="chat-navigation-row">
+            <button
+              type="button"
+              aria-current={item.id === selected ? 'page' : undefined}
+              className={item.id === selected ? 'selected' : ''}
+              onClick={() => {
+                selectConversation(item.id);
+              }}
+            >
+              <strong>{item.title}</strong>
+              <small>{item.model.model}</small>
+            </button>
+            {deletionControl(item.id, item.title, false)}
+          </div>
+        )}
+        renderRun={(run) => (
+          <div key={run.id} className="chat-navigation-row">
+            <button
+              type="button"
+              className={selectedRun?.id === run.id ? 'selected' : ''}
+              aria-current={selectedRun?.id === run.id ? 'page' : undefined}
+              onClick={() => selectConversation(run.developerConversationId)}
+            >
+              <strong>
+                #{run.issue.number} · {run.specification.title}
+              </strong>
+              <small>
+                {run.mode === 'simulation' ? 'Simulation · ' : ''}
+                {run.status.replaceAll('_', ' ')}
+                {run.status === 'queued' && queuePosition.has(run.id)
+                  ? ` · position ${queuePosition.get(run.id)}`
+                  : ''}
+              </small>
+            </button>
+            {deletionControl(run.id, run.specification.title, true)}
+          </div>
+        )}
+        onNew={(projectId) => {
+          setNewProject(projectId);
+          document.getElementById('conversation-title')?.focus();
+        }}
+      />
+      <AddProject client={client} />
+      <a
+        className="settings-link"
+        href={
+          visibleProjects.length > 1
+            ? `/settings?project=${encodeURIComponent(targetProject)}`
+            : '/settings'
+        }
+      >
         Settings <span>↗</span>
       </a>
     </div>

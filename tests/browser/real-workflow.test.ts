@@ -40,11 +40,8 @@ test(
       page.setDefaultTimeout(15000);
       const errors: string[] = [];
       page.on('pageerror', (e) => errors.push(e.message));
+      await fixture.client.startIssue(7, crypto.randomUUID());
       await page.goto(`${fixture.service.url}/runs`);
-      await page.getByLabel('GitHub issue number').fill('7');
-      await page
-        .getByRole('button', { name: 'Start implementation', exact: true })
-        .click();
       const run = await until(
         async () => {
           const state = await fixture.client.workflow();
@@ -193,14 +190,10 @@ test(
         viewport: { width: 390, height: 844 },
       });
       page.setDefaultTimeout(15000);
-      await page.goto(`${f.service.url}/runs`);
-      await page
-        .getByRole('button', { name: 'Conversations', exact: true })
-        .click();
-      await page.getByLabel('GitHub issue number').fill('7');
-      await page
-        .getByRole('button', { name: 'Start implementation', exact: true })
-        .click();
+      const started = await f.client.startIssue(7, crypto.randomUUID());
+      await page.goto(
+        `${f.service.url}/?conversation=${started.developerConversationId}`,
+      );
       await openDetails(page, 'Run');
       await page
         .getByRole('heading', { name: 'specification_contract', exact: true })
