@@ -8,6 +8,8 @@ import { markdown } from './markdown.js';
 import { Overlay, useMedia } from './panels.js';
 import { StartRun } from './runs.js';
 import { AddProject, ProjectTree } from './sidebar.js';
+import { Home } from './home.js';
+import { Icon } from './icons.js';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ApiError,
@@ -878,8 +880,26 @@ export function ChatApp() {
   const sidebar = (
     <div className="chat-sidebar">
       <a className="chat-brand" href="/">
-        df<span>↗</span> <strong>durable factory</strong>
+        <span className="brand-mark" aria-hidden="true">
+          df
+        </span>
+        <strong>durable factory</strong>
       </a>
+      <a
+        className={`home-link ${selected ? '' : 'selected'}`}
+        href="/"
+        aria-current={selected ? undefined : 'page'}
+        onClick={(event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+          event.preventDefault();
+          selectConversation('');
+          setNavigationOpen(false);
+        }}
+      >
+        <Icon name="home" />
+        Home
+      </a>
+      <div className="sidebar-heading">Projects</div>
       <ProjectTree
         projects={visibleProjects}
         conversations={conversations}
@@ -938,7 +958,8 @@ export function ChatApp() {
             : '/settings'
         }
       >
-        Settings <span>↗</span>
+        <Icon name="settings" />
+        Settings
       </a>
     </div>
   );
@@ -1016,12 +1037,14 @@ export function ChatApp() {
             <div className="eyebrow">
               {selectedRun
                 ? `IMPLEMENTATION · ISSUE #${selectedRun.issue.number}`
-                : 'PLAN BEFORE YOU BUILD'}
+                : selected
+                  ? 'Planning conversation'
+                  : 'Overview'}
             </div>
             <h1>
               {selectedRun?.specification.title ??
                 snapshot?.conversation.title ??
-                'Make room for good ideas.'}
+                'Home'}
             </h1>
           </div>
           <div className="chat-status">
@@ -1066,19 +1089,13 @@ export function ChatApp() {
           </p>
         )}
         {!selected ? (
-          <div className="chat-empty">
-            <span>↳</span>
-            <h2>Start with a conversation.</h2>
-            <p>
-              Choose a planning model in <a href="/settings">settings</a>, then
-              create a conversation. Messages and replies stay here when you
-              return.
-            </p>
-            <p>
-              Inspect your repository, agree a ticket, then ask the agent to
-              create a GitHub issue.
-            </p>
-          </div>
+          <Home
+            projects={visibleProjects}
+            conversations={conversations}
+            runs={workflowSnapshot?.runs ?? []}
+            onNew={(projectId) => void create(projectId)}
+            onOpen={selectConversation}
+          />
         ) : (
           <>
             <div
@@ -1346,7 +1363,7 @@ export function ChatApp() {
                               pending.length > 0
                             }
                           >
-                            Send <span>↗</span>
+                            Send <Icon name="send" size={14} />
                           </button>
                         </div>
                       </div>

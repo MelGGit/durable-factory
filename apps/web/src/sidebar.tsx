@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Icon } from './icons.js';
 import {
   FactoryClient,
   projectLabel,
@@ -82,7 +83,12 @@ export function ProjectTree({
                 aria-expanded={open}
                 onClick={() => toggle(project.id)}
               >
-                <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+                <span
+                  className={`chevron ${open ? 'open' : ''}`}
+                  aria-hidden="true"
+                >
+                  <Icon name="chevron" size={14} />
+                </span>
                 <strong>{name}</strong>
                 <small>
                   {project.repository.github || 'No repository yet'}
@@ -95,7 +101,7 @@ export function ProjectTree({
                 title="New conversation"
                 onClick={() => onNew(project.id)}
               >
-                ＋
+                <Icon name="plus" />
               </button>
               <a
                 className="project-settings"
@@ -103,7 +109,7 @@ export function ProjectTree({
                 aria-label={`Settings for ${name}`}
                 title="Project settings"
               >
-                ⚙
+                <Icon name="settings" />
               </a>
             </div>
             {open && (
@@ -143,7 +149,8 @@ export function AddProject({ client }: { client: FactoryClient }) {
         className="text-button add-project"
         onClick={() => setOpen(true)}
       >
-        Add project ＋
+        <Icon name="plus" size={14} />
+        Add project
       </button>
     );
   return (
