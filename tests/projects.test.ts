@@ -14,6 +14,7 @@ import {
   ApiError,
   ChatClient,
   DEFAULT_PROJECT_ID,
+  projectLabel,
 } from '../packages/shared/src/index.js';
 import { configure } from './fixtures/chat.js';
 import { planningFixture } from './fixtures/planning.js';
@@ -90,9 +91,10 @@ test('projects keep their own settings and conversations', async () => {
   try {
     await configure(f.client);
     const created = await f.client.createProject('Second');
+    // The first project has no name of its own, so the UI shows its folder.
     assert.deepEqual(
       (await f.client.projects()).projects.map((p) => p.name),
-      ['Default project', 'Second'],
+      ['', 'Second'],
     );
     const second = new ChatClient(f.service.url, undefined, created.id);
     // A new project inherits the agent models but not the repository.
@@ -202,6 +204,57 @@ test('the last project cannot be removed', async () => {
     );
   } finally {
     await storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a project is called by its name, else by its folder', () => {
+  const at = (path: string) => ({ path });
+  assert.equal(
+    projectLabel({ name: 'Billing', repository: at('/a/b') }),
+    'Billing',
+  );
+  assert.equal(
+    projectLabel({ name: '', repository: at('/work/my-app/') }),
+    'my-app',
+  );
+  assert.equal(
+    projectLabel({ name: '  ', repository: at('C:\\code\\site') }),
+    'site',
+  );
+  assert.equal(
+    projectLabel({ name: '', repository: at('') }),
+    'Untitled project',
+  );
+  // Older data stored this placeholder; it never was a name the user chose.
+  assert.equal(
+    projectLabel({ name: 'Default project', repository: at('/work/api') }),
+    'api',
+  );
+});
+
+test('the placeholder name from earlier versions is cleared on upgrade, and renaming to nothing resets it', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-names-'));
+  try {
+    const first = await openConfiguration(directory);
+    await first.harness.commit(async (tx) => {
+      const doc = await tx.doc(Configuration);
+      (doc.projects as Record<string, { name: string }>)[
+        DEFAULT_PROJECT_ID
+      ].name = 'Default project';
+    }, context);
+    await first.close();
+    const storage = await openConfiguration(directory);
+    try {
+      assert.equal((await storage.read()).name, '');
+      await storage.rename(DEFAULT_PROJECT_ID, 'Billing');
+      assert.equal((await storage.read()).name, 'Billing');
+      await storage.rename(DEFAULT_PROJECT_ID, '  ');
+      assert.equal((await storage.read()).name, '');
+    } finally {
+      await storage.close();
+    }
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });

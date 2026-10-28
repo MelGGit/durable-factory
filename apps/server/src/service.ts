@@ -27,6 +27,7 @@ import { extname, resolve } from 'node:path';
 import {
   API_VERSION,
   DEFAULT_PROJECT_ID,
+  projectLabel,
   ApiError,
   type CredentialId,
   type SettingsResponse,
@@ -722,7 +723,7 @@ export async function startService(options: ServiceOptions = {}) {
           )
             throw new ApiError(
               'CONFLICT',
-              `The project “${other.name}” already uses this repository.`,
+              `The project “${projectLabel(other)}” already uses this repository.`,
               409,
             );
         }

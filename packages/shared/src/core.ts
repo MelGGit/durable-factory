@@ -55,6 +55,16 @@ export interface ProjectSummary {
   /** What the workflow still needs before this project can start a run. */
   missingPrerequisites?: string[];
 }
+/** What to call a project: the name given to it, else its folder's name. */
+export function projectLabel(project: {
+  name: string;
+  repository: Pick<Settings['repository'], 'path'>;
+}) {
+  const given = project.name.trim();
+  if (given && given !== 'Default project') return given;
+  const folder = project.repository.path.split(/[\\/]/).filter(Boolean).pop();
+  return folder || 'Untitled project';
+}
 export interface ProjectsResponse {
   apiVersion: typeof API_VERSION;
   projects: ProjectSummary[];

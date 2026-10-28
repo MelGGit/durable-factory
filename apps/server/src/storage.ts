@@ -37,7 +37,7 @@ export const Configuration = defineDoc({
   initial: () => ({
     schemaVersion: 1,
     projects: {
-      [DEFAULT_PROJECT_ID]: newProject(DEFAULT_PROJECT_ID, 'Default project'),
+      [DEFAULT_PROJECT_ID]: newProject(DEFAULT_PROJECT_ID, ''),
     } as JsonObject,
     order: [DEFAULT_PROJECT_ID] as string[],
     /** How many runs may work at once, across all projects. */
@@ -67,9 +67,9 @@ const unsupported = () =>
     'Unsupported application schema. Upgrade the application before writing settings.',
     503,
   );
-const cleanName = (name: unknown) => {
+const cleanName = (name: unknown, allowEmpty = false) => {
   const value = typeof name === 'string' ? name.trim() : '';
-  if (!value || value.length > 80)
+  if ((!value && !allowEmpty) || value.length > 80)
     throw new ApiError(
       'INVALID_INPUT',
       'Enter a project name of 80 characters or fewer.',
@@ -102,7 +102,7 @@ export async function openConfiguration(
         config.projects = {
           [DEFAULT_PROJECT_ID]: {
             id: DEFAULT_PROJECT_ID,
-            name: 'Default project',
+            name: '',
             revision: legacy.revision ?? 0,
             settings: legacy.settings ?? defaultSettings(),
           },
@@ -114,8 +114,11 @@ export async function openConfiguration(
       config.runners ??= 1;
       for (const project of Object.values(
         config.projects as unknown as Record<string, ProjectRecord>,
-      ))
+      )) {
         project.settings.commitIdentity ??= { name: '', email: '' };
+        // Projects are named for their folder until the user names them.
+        if (project.name === 'Default project') project.name = '';
+      }
     }, context);
   } catch {
     await harness.close(context);
@@ -215,12 +218,14 @@ export async function openConfiguration(
       }, context);
     },
     async rename(projectId: string, name: string) {
-      const clean = cleanName(name);
+      // An empty name goes back to the folder's name.
+      const clean = cleanName(name, true);
       return harness.commit(async (tx) => {
         const doc = await tx.doc(Configuration);
         if (doc.schemaVersion !== 1) throw unsupported();
         const project = projectOf(doc, projectId);
         if (
+          clean &&
           Object.values(
             doc.projects as unknown as Record<string, ProjectRecord>,
           ).some((p) => p.id !== projectId && p.name === clean)
