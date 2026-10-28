@@ -7,7 +7,7 @@ import {
 import { markdown } from './markdown.js';
 import { Overlay, useMedia } from './panels.js';
 import { StartRun } from './runs.js';
-import { AddProject, ProjectTree } from './sidebar.js';
+import { ProjectTree } from './sidebar.js';
 import { Home } from './home.js';
 import { Icon } from './icons.js';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -899,7 +899,21 @@ export function ChatApp() {
         <Icon name="home" />
         Home
       </a>
-      <div className="sidebar-heading">Projects</div>
+      <a className="add-project" href="/projects/new">
+        <Icon name="plus" />
+        Add project
+      </a>
+      <div className="sidebar-heading">
+        Projects
+        <a
+          className="sidebar-add"
+          href="/projects/new"
+          aria-label="New project"
+          title="Add project"
+        >
+          <Icon name="plus" />
+        </a>
+      </div>
       <ProjectTree
         projects={visibleProjects}
         conversations={conversations}
@@ -949,7 +963,6 @@ export function ChatApp() {
         )}
         onNew={(projectId) => void create(projectId)}
       />
-      <AddProject client={client} />
       <a
         className="settings-link"
         href={

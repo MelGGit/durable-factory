@@ -14,6 +14,7 @@ import {
 import './style.css';
 import { LegacyRunsRedirect } from './run-chat.js';
 import { ChatApp } from './chat.js';
+import { AddProjectPage } from './add-project.js';
 // /settings?project=<id> edits one project; without it, the default project.
 const projectParam = new URLSearchParams(window.location.search).get('project');
 const client = new FactoryClient(
@@ -941,6 +942,8 @@ function SettingsApp() {
 createRoot(document.getElementById('root')!).render(
   window.location.pathname === '/settings' ? (
     <SettingsApp />
+  ) : window.location.pathname === '/projects/new' ? (
+    <AddProjectPage />
   ) : window.location.pathname === '/runs' ? (
     <LegacyRunsRedirect />
   ) : (

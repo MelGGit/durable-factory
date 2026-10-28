@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Icon } from './icons.js';
 import {
-  FactoryClient,
   projectLabel,
   runUpdatedAt,
   type ConversationSummary,
@@ -133,68 +132,5 @@ export function ProjectTree({
         );
       })}
     </div>
-  );
-}
-
-/** Creates a project, then opens its settings to point it at a repository. */
-export function AddProject({ client }: { client: FactoryClient }) {
-  const [open, setOpen] = useState(false),
-    [name, setName] = useState(''),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  if (!open)
-    return (
-      <button
-        type="button"
-        className="text-button add-project"
-        onClick={() => setOpen(true)}
-      >
-        <Icon name="plus" size={14} />
-        Add project
-      </button>
-    );
-  return (
-    <form
-      className="add-project-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        setBusy(true);
-        setError('');
-        void client
-          .createProject(name)
-          .then((project) =>
-            window.location.assign(
-              `/settings?project=${encodeURIComponent(project.id)}`,
-            ),
-          )
-          .catch((e) => {
-            setError(e instanceof Error ? e.message : 'Could not add project.');
-            setBusy(false);
-          });
-      }}
-    >
-      <label className="sr-only" htmlFor="project-name">
-        Project name
-      </label>
-      <input
-        id="project-name"
-        autoFocus
-        placeholder="Project name"
-        maxLength={80}
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-      <button className="secondary" disabled={busy || !name.trim()}>
-        {busy ? 'Adding…' : 'Create project'}
-      </button>
-      <button
-        type="button"
-        className="text-button"
-        onClick={() => setOpen(false)}
-      >
-        Cancel
-      </button>
-      {error && <p role="alert">{error}</p>}
-    </form>
   );
 }

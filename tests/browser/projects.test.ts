@@ -120,6 +120,46 @@ test('the sidebar groups conversations by project and has no issue starter', asy
   }
 });
 
+test('projects are added from their own page, not from settings', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-add-project-'));
+  const service = await startService({
+    port: 0,
+    dataDir: join(directory, 'data'),
+    chat: planningFixture(),
+  });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
+  try {
+    const client = new ChatClient(service.url);
+    await configure(client);
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(10000);
+    await page.goto(service.url);
+    assert.equal(await page.getByLabel('Project name').count(), 0);
+    await page.getByRole('link', { name: 'New project' }).click();
+    await page.waitForURL('**/projects/new');
+    await page.goto(service.url);
+    await page.getByRole('link', { name: 'Add project', exact: true }).click();
+    await page.waitForURL('**/projects/new');
+    await page.getByLabel('Project name').fill('Brand new');
+    await page.getByLabel('GitHub repository').fill('example/brand-new');
+    await page.getByLabel('Provider').first().waitFor();
+    await page.getByRole('button', { name: 'Create project' }).click();
+    await page.waitForURL(`${service.url}/`);
+    await page.getByRole('region', { name: 'Brand new' }).waitFor();
+  } finally {
+    await browser.close();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('the number of parallel runs is saved from the settings page', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'factory-runners-ui-'));
   const service = await startService({
