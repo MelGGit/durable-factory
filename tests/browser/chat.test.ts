@@ -31,10 +31,12 @@ test(
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto(service.url);
-      await page.getByLabel('Conversation title').fill('Planning persistence');
-      await page.getByRole('button', { name: 'New conversation' }).click();
+      await page.getByRole('button', { name: /^Start a chat in/ }).click();
       await page
-        .getByRole('heading', { name: 'Planning persistence', exact: true })
+        .getByRole('heading', {
+          name: 'New planning conversation',
+          exact: true,
+        })
         .waitFor();
       const conversation = (await client.conversations()).conversations[0];
       await page

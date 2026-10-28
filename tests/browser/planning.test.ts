@@ -54,8 +54,7 @@ test(
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto(service.url);
-      await page.getByLabel('Conversation title').fill('Plan an issue');
-      await page.getByRole('button', { name: 'New conversation' }).click();
+      await page.getByRole('button', { name: /^Start a chat in/ }).click();
       await page.getByLabel('Message', { exact: true }).fill('plan');
       await page.getByRole('button', { name: /^Send/ }).click();
       await page
@@ -142,8 +141,8 @@ test(
         .click();
       await page
         .getByRole('dialog', { name: 'Conversations' })
-        .getByLabel('Conversation title')
-        .fill('Mobile draft');
+        .getByRole('button', { name: /^Start a chat in/ })
+        .waitFor();
       await page.keyboard.press('Escape');
       await page
         .getByRole('button', { name: /^Send/ })

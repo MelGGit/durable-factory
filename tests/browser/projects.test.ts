@@ -41,6 +41,20 @@ test('the sidebar groups conversations by project and has no issue starter', asy
       expectedRevision: saved.revision,
       settings: saved.settings,
     });
+    // Unnamed, the first project is called after its folder.
+    const first = join(directory, 'alpha');
+    await mkdir(first);
+    execFileSync('git', ['init', '-q', first]);
+    const firstSaved = await client.settings();
+    firstSaved.settings.repository = {
+      path: first,
+      github: 'example/first',
+      baseBranch: 'main',
+    };
+    await client.saveSettings({
+      expectedRevision: firstSaved.revision,
+      settings: firstSaved.settings,
+    });
     await client.createConversation('Default chat', 'one');
     await scoped.createConversation('Second chat', 'two');
 
@@ -73,8 +87,32 @@ test('the sidebar groups conversations by project and has no issue starter', asy
       'collapsed state survives a reload',
     );
 
-    await page.getByLabel('Search conversations').fill('default');
-    assert.equal(await groups.count(), 1);
+    await page.getByRole('region', { name: 'alpha' }).waitFor();
+    assert.equal(await page.getByText('Default project').count(), 0);
+    assert.equal(await page.getByLabel('Search conversations').count(), 0);
+    assert.equal(
+      await page
+        .getByRole('button', { name: 'New conversation', exact: true })
+        .count(),
+      0,
+    );
+    assert.equal(await page.getByText('PLANNING', { exact: true }).count(), 0);
+    assert.equal(
+      await page.getByText('IMPLEMENTATION', { exact: true }).count(),
+      0,
+    );
+    // Chats carry a label instead of sitting under a heading.
+    const alpha = page.getByRole('region', { name: 'alpha' });
+    await alpha.locator('.session-label', { hasText: 'Planning' }).waitFor();
+    // Settings is the last thing in the sidebar, at its bottom edge.
+    const sidebar = await page.locator('.chat-sidebar').boundingBox();
+    const settings = await page.locator('.settings-link').boundingBox();
+    assert.ok(
+      sidebar &&
+        settings &&
+        sidebar.y + sidebar.height - (settings.y + settings.height) < 40,
+      'Settings is pinned to the bottom',
+    );
   } finally {
     await browser.close();
     await service.close();

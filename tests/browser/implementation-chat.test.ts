@@ -129,8 +129,8 @@ test(
         .getByLabel('Message', { exact: true })
         .fill('Draft implementation guidance');
       await page
-        .getByRole('navigation', { name: 'Saved conversations' })
-        .getByRole('button', { name: /^Workflow plan/ })
+        .getByRole('navigation', { name: /sessions$/ })
+        .getByRole('button', { name: /^Planning Workflow plan/ })
         .click();
       await page.waitForURL(`**/?conversation=${planning}`);
       assert.equal(await page.locator('.implementation-events').count(), 0);

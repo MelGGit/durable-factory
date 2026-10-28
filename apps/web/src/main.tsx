@@ -7,6 +7,7 @@ import {
   type Settings,
   type SettingsResponse,
   type ProjectSummary,
+  projectLabel,
   type CredentialId,
   type ProviderId,
 } from '../../../packages/shared/src/index.js';
@@ -159,6 +160,12 @@ function SettingsApp() {
       setCredentialBusy(null);
     }
   };
+  const projectName = saved
+    ? projectLabel({
+        name: saved.name,
+        repository: draft?.repository ?? saved.settings.repository,
+      })
+    : 'Loading…';
   const links = [
     ['repository', '01', 'Repository'],
     ['models', '02', 'Agent models'],
@@ -182,7 +189,7 @@ function SettingsApp() {
         <div className="workspace">
           <span className="workspace-icon">⌘</span>
           <div>
-            {saved?.name ?? 'Loading…'}
+            {projectName}
             <small>
               {saved?.settings.repository.github || 'No repository yet'}
             </small>
@@ -204,7 +211,7 @@ function SettingsApp() {
             >
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
-                  {project.name}
+                  {projectLabel(project)}
                 </option>
               ))}
             </select>
@@ -228,7 +235,7 @@ function SettingsApp() {
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `Delete project “${saved.name}”? This only works once it has no conversations or runs.`,
+                          `Delete project “${projectName}”? This only works once it has no conversations or runs.`,
                         )
                       )
                         return;
@@ -274,6 +281,8 @@ function SettingsApp() {
                   id="rename-project"
                   autoFocus
                   maxLength={80}
+                  placeholder="Folder name"
+                  title="Leave empty to use the name of the project folder"
                   value={renaming}
                   onChange={(e) => setRenaming(e.target.value)}
                 />
@@ -317,7 +326,7 @@ function SettingsApp() {
             <a href="/">Planning chat</a> <span className="slash">/</span>{' '}
             {saved && (
               <>
-                {saved.name} <span className="slash">/</span>{' '}
+                {projectName} <span className="slash">/</span>{' '}
               </>
             )}
             <strong>Settings</strong>

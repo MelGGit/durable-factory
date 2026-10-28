@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import {
   FactoryClient,
+  projectLabel,
+  runUpdatedAt,
   type ConversationSummary,
   type ProjectSummary,
   type WorkflowRun,
@@ -18,12 +20,11 @@ const readCollapsed = (): string[] => {
   }
 };
 
-/** Projects as collapsible groups, each holding its planning chats and runs. */
+/** Projects as collapsible groups, each one list of its planning chats and runs. */
 export function ProjectTree({
   projects,
   conversations,
   runs,
-  search,
   workflowDisabled,
   renderConversation,
   renderRun,
@@ -32,7 +33,6 @@ export function ProjectTree({
   projects: ProjectSummary[];
   conversations: ConversationSummary[];
   runs: WorkflowRun[];
-  search: string;
   workflowDisabled: boolean;
   renderConversation: (item: ConversationSummary) => React.ReactNode;
   renderRun: (run: WorkflowRun) => React.ReactNode;
@@ -50,43 +50,31 @@ export function ProjectTree({
       /* The tree still works for this page view. */
     }
   };
-  const query = search.trim().toLowerCase();
-  const matches = (...text: string[]) =>
-    !query || text.some((value) => value.toLowerCase().includes(query));
-  const several = projects.length > 1;
   return (
     <div className="project-tree">
       {projects.map((project) => {
-        const chats = conversations.filter(
-          (item) =>
-            item.projectId === project.id &&
-            item.role === 'planning' &&
-            !item.runId &&
-            matches(item.title),
-        );
-        const projectRuns = runs
-          .filter(
-            (run) =>
-              run.projectId === project.id &&
-              matches(
-                run.specification.title,
-                `#${run.issue.number}`,
-                run.status,
-              ),
-          )
-          .sort((a, b) => b.createdAt - a.createdAt);
-        // While searching, only groups with a match are worth showing.
-        if (query && !chats.length && !projectRuns.length) return null;
-        const open = Boolean(query) || !collapsed.includes(project.id);
+        // Chats and runs share one list, newest first; a label tells them apart.
+        const sessions = [
+          ...conversations
+            .filter(
+              (item) =>
+                item.projectId === project.id &&
+                item.role === 'planning' &&
+                !item.runId,
+            )
+            .map((item) => ({
+              at: Date.parse(item.createdAt) || 0,
+              node: renderConversation(item),
+            })),
+          ...runs
+            .filter((run) => run.projectId === project.id)
+            .map((run) => ({ at: runUpdatedAt(run), node: renderRun(run) })),
+        ].sort((a, b) => b.at - a.at);
+        const open = !collapsed.includes(project.id);
         const missing = project.missingPrerequisites ?? [];
-        const label = (name: string) =>
-          several ? `${project.name} · ${name}` : name;
+        const name = projectLabel(project);
         return (
-          <section
-            key={project.id}
-            className="project-group"
-            aria-label={project.name}
-          >
+          <section key={project.id} className="project-group" aria-label={name}>
             <div className="project-header">
               <button
                 type="button"
@@ -95,7 +83,7 @@ export function ProjectTree({
                 onClick={() => toggle(project.id)}
               >
                 <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-                <strong>{project.name}</strong>
+                <strong>{name}</strong>
                 <small>
                   {project.repository.github || 'No repository yet'}
                 </small>
@@ -103,7 +91,7 @@ export function ProjectTree({
               <button
                 type="button"
                 className="project-new"
-                aria-label={`Start a chat in ${project.name}`}
+                aria-label={`Start a chat in ${name}`}
                 title="New conversation"
                 onClick={() => onNew(project.id)}
               >
@@ -112,7 +100,7 @@ export function ProjectTree({
               <a
                 className="project-settings"
                 href={`/settings?project=${encodeURIComponent(project.id)}`}
-                aria-label={`Settings for ${project.name}`}
+                aria-label={`Settings for ${name}`}
                 title="Project settings"
               >
                 ⚙
@@ -120,13 +108,8 @@ export function ProjectTree({
             </div>
             {open && (
               <div className="project-body">
-                <div className="eyebrow">PLANNING</div>
-                <nav aria-label={label('Saved conversations')}>
-                  {chats.map(renderConversation)}
-                </nav>
-                <div className="eyebrow">IMPLEMENTATION</div>
-                <nav aria-label={label('Implementation conversations')}>
-                  {projectRuns.map(renderRun)}
+                <nav aria-label={`${name} sessions`}>
+                  {sessions.map((session) => session.node)}
                 </nav>
                 {!workflowDisabled && missing.length > 0 && (
                   <p className="navigation-hint">

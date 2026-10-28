@@ -260,8 +260,6 @@ export function ChatApp() {
   });
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [search, setSearch] = useState('');
-  const [newProject, setNewProject] = useState<string>();
   const [workflowSnapshot, setWorkflowSnapshot] = useState<WorkflowSnapshot>();
   const [activityConnected, setActivityConnected] = useState(false);
   const [activityVersion, setActivityVersion] = useState(0);
@@ -283,7 +281,6 @@ export function ChatApp() {
   }>();
   const [deletingBusy, setDeletingBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-  const [title, setTitle] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -359,7 +356,7 @@ export function ChatApp() {
     : [
         {
           id: DEFAULT_PROJECT_ID,
-          name: 'Default project',
+          name: '',
           repository: { path: '', github: '', baseBranch: 'main' },
         },
       ];
@@ -753,15 +750,17 @@ export function ChatApp() {
       .map((run, index) => [run.id, index + 1] as const),
   );
   const targetProject =
-    newProject ??
     conversations.find((item) => item.id === selected)?.projectId ??
     selectedRun?.projectId ??
     visibleProjects[0].id;
-  const create = async (savedCreation = current.current.creation) => {
+  const create = async (
+    projectId: string,
+    savedCreation = current.current.creation,
+  ) => {
     const creation = savedCreation ?? {
-      title: title.trim() || 'New planning conversation',
+      title: 'New planning conversation',
       requestId: crypto.randomUUID(),
-      projectId: targetProject,
+      projectId,
     };
     persist((previous) => ({ ...previous, creation }));
     setBusy(true);
@@ -777,7 +776,6 @@ export function ChatApp() {
         selected: conversation.id,
         creation: undefined,
       }));
-      setTitle('');
       setNavigationOpen(false);
       await refresh();
     } catch (e) {
@@ -882,70 +880,10 @@ export function ChatApp() {
       <a className="chat-brand" href="/">
         df<span>↗</span> <strong>durable factory</strong>
       </a>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void create();
-        }}
-        className="new-conversation"
-      >
-        <label className="sr-only" htmlFor="conversation-title">
-          Conversation title
-        </label>
-        <input
-          id="conversation-title"
-          placeholder="What are you planning?"
-          value={title}
-          maxLength={120}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        {visibleProjects.length > 1 && (
-          <>
-            <label className="sr-only" htmlFor="conversation-project">
-              Project
-            </label>
-            <select
-              id="conversation-project"
-              value={targetProject}
-              onChange={(e) => setNewProject(e.target.value)}
-            >
-              {visibleProjects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        <button className="primary" disabled={busy} type="submit">
-          {local.creation ? 'Retry creating conversation' : 'New conversation'}{' '}
-          <span>＋</span>
-        </button>
-        {local.creation && (
-          <button
-            type="button"
-            className="text-button"
-            onClick={() =>
-              persist((previous) => ({ ...previous, creation: undefined }))
-            }
-          >
-            Discard pending creation
-          </button>
-        )}
-      </form>
-      <input
-        type="search"
-        className="sidebar-search"
-        aria-label="Search conversations"
-        placeholder="Search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
       <ProjectTree
         projects={visibleProjects}
         conversations={conversations}
         runs={workflowSnapshot?.runs ?? []}
-        search={search}
         workflowDisabled={workflowSnapshot?.mode === 'disabled'}
         renderConversation={(item) => (
           <div key={item.id} className="chat-navigation-row">
@@ -957,6 +895,7 @@ export function ChatApp() {
                 selectConversation(item.id);
               }}
             >
+              <span className="session-label">Planning</span>
               <strong>{item.title}</strong>
               <small>{item.model.model}</small>
             </button>
@@ -971,6 +910,9 @@ export function ChatApp() {
               aria-current={selectedRun?.id === run.id ? 'page' : undefined}
               onClick={() => selectConversation(run.developerConversationId)}
             >
+              <span className="session-label implementation">
+                Implementation
+              </span>
               <strong>
                 #{run.issue.number} · {run.specification.title}
               </strong>
@@ -985,10 +927,7 @@ export function ChatApp() {
             {deletionControl(run.id, run.specification.title, true)}
           </div>
         )}
-        onNew={(projectId) => {
-          setNewProject(projectId);
-          document.getElementById('conversation-title')?.focus();
-        }}
+        onNew={(projectId) => void create(projectId)}
       />
       <AddProject client={client} />
       <a

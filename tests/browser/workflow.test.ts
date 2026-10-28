@@ -57,9 +57,7 @@ test(
       await page.getByRole('button', { name: 'Start simulated run' }).click();
       await page.getByRole('tab', { name: 'Run', exact: true }).waitFor();
       assert.match(page.url(), /\/\?conversation=/);
-      await page
-        .getByRole('navigation', { name: 'Implementation conversations' })
-        .waitFor();
+      await page.getByRole('navigation', { name: /sessions$/ }).waitFor();
       await page
         .locator('.run-question')
         .getByText('Which search behavior should be used?', { exact: true })

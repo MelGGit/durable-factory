@@ -958,24 +958,6 @@ h3 {
   font-size: 10px;
   letter-spacing: 1px;
 }
-.new-conversation {
-  display: grid;
-  gap: 10px;
-}
-.new-conversation input {
-  width: 100%;
-  margin: 0;
-  padding: 10px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-.new-conversation .primary {
-  justify-content: space-between;
-  width: 100%;
-  padding: 11px 10px;
-  font-size: 12px;
-}
 .chat-sidebar nav {
   display: flex;
   flex-direction: column;
@@ -1009,6 +991,8 @@ h3 {
   color: #657465;
 }
 .settings-link {
+  margin-top: auto;
+  flex-shrink: 0;
   display: flex;
   justify-content: space-between;
   color: var(--green);
@@ -1552,9 +1536,6 @@ h3 {
   .tool-card summary {
     flex-wrap: wrap;
   }
-  .chat-overlay .new-conversation .primary {
-    min-height: 44px;
-  }
 }
 
 .github-validation {
@@ -1689,9 +1670,6 @@ h3 {
 /* Planning and implementation share navigation, while retaining independent transcripts. */
 .chat-sidebar nav {
   flex: 0 0 auto;
-}
-.chat-sidebar {
-  overflow-y: auto;
 }
 .navigation-hint {
   font-size: 12px;
@@ -1935,13 +1913,13 @@ h3 {
 }
 
 /* Sidebar: projects as collapsible groups of conversations and runs. */
-.sidebar-search {
-  width: 100%;
-  min-width: 0;
-}
 .project-tree {
   display: grid;
+  align-content: start;
   gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .project-group {
   border-top: 1px solid var(--line, rgba(0, 0, 0, 0.1));
@@ -2017,4 +1995,24 @@ h3 {
 }
 .runners-block input {
   width: 96px;
+}
+.add-project,
+.add-project-form {
+  flex-shrink: 0;
+}
+.session-label {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #dde6d1;
+  color: #4d6a43;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.session-label.implementation {
+  background: #e3e1f0;
+  color: #50467d;
 }
