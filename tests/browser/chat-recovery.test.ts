@@ -49,7 +49,7 @@ test(
       const context = await browser.newContext();
       const page1 = await context.newPage();
       page1.setDefaultTimeout(10000);
-      await page1.goto(`${service.url}/settings`);
+      await page1.goto(`${service.url}/health`);
       await page1.evaluate(
         ({ id }) =>
           localStorage.setItem(

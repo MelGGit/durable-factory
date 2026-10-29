@@ -30,7 +30,7 @@ test(
         if (response.url().includes('/api/'))
           void response.text().then((value) => responseBodies.push(value));
       });
-      await page.goto(`${service.url}/settings`);
+      await page.goto(`${service.url}/projects/default/settings`);
       await page.getByRole('heading', { name: 'The repository' }).waitFor();
       assert.equal(
         await page.getByRole('button', { name: 'Save settings' }).isDisabled(),
@@ -67,7 +67,7 @@ test(
         'bun run check\nbun run test',
       );
       const stale = await context.newPage();
-      await stale.goto(`${service.url}/settings`);
+      await stale.goto(`${service.url}/projects/default/settings`);
       await stale.getByLabel('Base branch').waitFor();
       await page.getByLabel('Base branch').fill('develop');
       await page.getByRole('button', { name: 'Save settings' }).click();
@@ -85,24 +85,10 @@ test(
         await stale.getByLabel('Base branch').inputValue(),
         'feature/stale',
       );
-      // Saving a credential must not silently refresh a stale settings revision.
-      await stale.getByLabel('GitHub token').fill('browser-github-fixture');
-      await stale
-        .locator('.connection-row')
-        .filter({
-          has: stale.getByRole('heading', { name: 'GitHub', exact: true }),
-        })
-        .getByRole('button', { name: 'Store token' })
-        .click();
-      await stale
-        .getByRole('status')
-        .filter({ hasText: 'GitHub token saved privately' })
-        .waitFor();
-      await stale.getByRole('button', { name: 'Save settings' }).click();
-      await stale
-        .getByRole('alert')
-        .filter({ hasText: 'another window' })
-        .waitFor();
+      // Connections are shared and live on the general settings page.
+      await page.goto(`${service.url}/settings`);
+      await page.getByRole('heading', { name: 'Your connections' }).waitFor();
+      assert.equal(await page.getByLabel('Base branch').count(), 0);
       await page.getByLabel('Requesty token').fill('browser-secret-fixture');
       await page
         .locator('.connection-row')
@@ -121,12 +107,14 @@ test(
       await service.close();
       service = await startService({ dataDir, port });
       await page.reload();
+      await page.getByLabel('Requesty token').waitFor();
+      assert.equal(await page.getByLabel('Requesty token').inputValue(), '');
+      await page.goto(`${service.url}/projects/default/settings`);
       await page.getByLabel('Base branch').waitFor();
       assert.equal(
         await page.getByLabel('Base branch').inputValue(),
         'develop',
       );
-      assert.equal(await page.getByLabel('Requesty token').inputValue(), '');
       await mkdir(resolve('test-results'), { recursive: true });
       await page.screenshot({
         path: resolve('test-results/settings-desktop.png'),
@@ -179,7 +167,7 @@ test(
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto(`${service.url}/settings`);
-      await page.getByRole('heading', { name: 'The repository' }).waitFor();
+      await page.getByRole('heading', { name: 'Your connections' }).waitFor();
       const openai = page.locator('.connection-row').filter({
         has: page.getByRole('heading', { name: 'OpenAI', exact: true }),
       });
@@ -192,12 +180,14 @@ test(
           .then((text) => text.includes('broken-secret-fixture')),
         false,
       );
+      await page.goto(`${service.url}/projects/default/settings`);
       await page.getByLabel('GitHub repository').fill('still/editable');
       await page.getByRole('button', { name: 'Save settings' }).click();
       await page
         .getByRole('status')
         .filter({ hasText: 'Settings saved' })
         .waitFor();
+      await page.goto(`${service.url}/settings`);
       await page.getByLabel('Requesty token').fill('repaired-requesty-fixture');
       const requesty = page.locator('.connection-row').filter({
         has: page.getByRole('heading', { name: 'Requesty', exact: true }),

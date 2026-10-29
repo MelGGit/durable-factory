@@ -1,5 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
+  discardUnsavedChanges,
+  useUnsavedChanges,
+} from './hooks/use-unsaved-changes.js';
+import {
   FactoryClient,
   ROLES,
   type ProviderId,
@@ -21,12 +25,22 @@ const providerNames: Record<string, string> = {
 const lines = (value: string) => (value === '' ? [] : value.split('\n'));
 
 /** Creates a project with its repository, models and checks in one step. */
-export function AddProjectPage() {
+export function AddProject({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: () => void;
+  onCancel: () => void;
+}) {
   const [name, setName] = useState(''),
     [defaults, setDefaults] = useState<SettingsResponse>(),
     [draft, setDraft] = useState<Settings>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  useUnsavedChanges(
+    Boolean(name.trim()) ||
+      JSON.stringify(draft) !== JSON.stringify(defaults?.settings),
+  );
   useEffect(() => {
     // Providers and their models are shared; a new project starts from the defaults.
     client
@@ -67,23 +81,16 @@ export function AddProjectPage() {
           requiredChecks: draft.requiredChecks.filter((line) => line.trim()),
         },
       });
-      window.location.assign('/');
+      discardUnsavedChanges();
+      onCreated();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not add the project.');
       setBusy(false);
     }
   };
   return (
-    <main className="add-project-page">
+    <div className="view add-project-view">
       <form className="add-project-card" onSubmit={submit}>
-        <a className="text-button" href="/">
-          ← Back to Home
-        </a>
-        <h1>Add project</h1>
-        <p>
-          A project is one repository with its own conversations and runs. You
-          can change everything later in its settings.
-        </p>
         <fieldset disabled={busy || !draft}>
           <h2>Project</h2>
           <label htmlFor="project-name">Project name</label>
@@ -274,11 +281,11 @@ export function AddProjectPage() {
           <button className="primary" disabled={busy || !draft}>
             {busy ? 'Adding…' : 'Create project'}
           </button>
-          <a className="secondary" href="/">
+          <button type="button" className="secondary" onClick={onCancel}>
             Cancel
-          </a>
+          </button>
         </div>
       </form>
-    </main>
+    </div>
   );
 }

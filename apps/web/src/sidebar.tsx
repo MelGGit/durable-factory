@@ -21,6 +21,24 @@ const readCollapsed = (): string[] => {
 };
 
 /** Projects as collapsible groups, each one list of its planning chats and runs. */
+/** Lets a plain left-click navigate inside the app; other clicks keep browser behaviour. */
+export function followLink(event: React.MouseEvent, go: () => void) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  )
+    return;
+  event.preventDefault();
+  go();
+}
+
+const settingsPath = (id: string) =>
+  `/projects/${encodeURIComponent(id)}/settings`;
+
 export function ProjectTree({
   projects,
   conversations,
@@ -29,6 +47,8 @@ export function ProjectTree({
   renderConversation,
   renderRun,
   onNew,
+  navigate,
+  activeSettings,
 }: {
   projects: ProjectSummary[];
   conversations: ConversationSummary[];
@@ -37,6 +57,8 @@ export function ProjectTree({
   renderConversation: (item: ConversationSummary) => React.ReactNode;
   renderRun: (run: WorkflowRun) => React.ReactNode;
   onNew: (projectId: string) => void;
+  navigate: (path: string) => void;
+  activeSettings?: string;
 }) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const toggle = (id: string) => {
@@ -104,7 +126,13 @@ export function ProjectTree({
               </button>
               <a
                 className="project-settings"
-                href={`/settings?project=${encodeURIComponent(project.id)}`}
+                href={settingsPath(project.id)}
+                aria-current={
+                  activeSettings === project.id ? 'page' : undefined
+                }
+                onClick={(event) =>
+                  followLink(event, () => navigate(settingsPath(project.id)))
+                }
                 aria-label={`Settings for ${name}`}
                 title="Project settings"
               >

@@ -41,7 +41,7 @@ test(
       const errors: string[] = [];
       page.on('pageerror', (e) => errors.push(e.message));
       await fixture.client.startIssue(7, crypto.randomUUID());
-      await page.goto(`${fixture.service.url}/runs`);
+      await page.goto(fixture.service.url);
       const run = await until(
         async () => {
           const state = await fixture.client.workflow();
@@ -51,6 +51,9 @@ test(
         30000,
       );
       assert.equal(run.status, 'pr_ready');
+      await page.goto(
+        `${fixture.service.url}/?conversation=${run.developerConversationId}`,
+      );
       await openDetails(page);
       await page
         .getByRole('heading', { name: 'Run timeline', exact: true })

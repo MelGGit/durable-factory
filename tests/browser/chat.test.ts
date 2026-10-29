@@ -51,7 +51,9 @@ test(
       const long = 'Explore durable behavior. '.repeat(30);
       await page.getByLabel('Message', { exact: true }).fill(long);
       await page.getByRole('button', { name: /^Send/ }).click();
-      await page.getByText('Agent: running', { exact: true }).waitFor();
+      await page
+        .locator('.chat-conversation[data-execution="running"]')
+        .waitFor();
       await page
         .getByLabel('Message', { exact: true })
         .fill('Withdraw this follow-up');
@@ -61,7 +63,7 @@ test(
       await page
         .getByRole('button', { name: 'Interrupt conversation', exact: true })
         .click();
-      await page.getByText('Agent: idle', { exact: true }).waitFor();
+      await page.locator('.chat-conversation[data-execution="idle"]').waitFor();
       // Lose the acknowledgement after admission. Retrying must reuse the saved ID.
       let dropped = false;
       await page.route(
@@ -83,7 +85,9 @@ test(
         .filter({ hasText: 'Failed to fetch' })
         .waitFor();
       await page.reload();
-      await page.getByText('Browser: connected', { exact: true }).waitFor();
+      await page
+        .locator('.chat-conversation[data-connection="connected"]')
+        .waitFor();
       await until(
         async () => (await client.history(conversation.id)).entries,
         (entries) =>
@@ -115,9 +119,13 @@ test(
       await result.getByText(/Running controlled fixture/).waitFor();
       const port = service.port;
       await service.close();
-      await page.getByText('Browser: disconnected', { exact: true }).waitFor();
+      await page
+        .locator('.chat-conversation[data-connection="disconnected"]')
+        .waitFor();
       service = await startService({ dataDir, port, chat: fixture() });
-      await page.getByText('Browser: connected', { exact: true }).waitFor();
+      await page
+        .locator('.chat-conversation[data-connection="connected"]')
+        .waitFor();
       // Accepted work continues after the browser page closes.
       await page
         .getByLabel('Message', { exact: true })

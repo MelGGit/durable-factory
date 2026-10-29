@@ -77,7 +77,9 @@ test(
       page.setDefaultTimeout(10000);
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
-      await page.goto(`${fixture.service.url}/runs#${run.id}`);
+      await page.goto(
+        `${fixture.service.url}/?conversation=${run.developerConversationId}`,
+      );
       await page.waitForURL(`**/?conversation=${run.developerConversationId}`);
       const command = page
         .locator('.run-event')
@@ -246,7 +248,9 @@ test(
         await page.goto(
           `${fixture.service.url}/?conversation=${run.developerConversationId}`,
         );
-        await page.getByText(/activity connected/).waitFor();
+        await page
+          .locator('.chat-conversation[data-activity="connected"]')
+          .waitFor();
       }
       const result = await first.evaluate(async () => {
         const response = await fetch('/health', {

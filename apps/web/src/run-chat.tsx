@@ -16,40 +16,6 @@ import { Tool } from './chat.js';
 const activity = new AgUiRunActivityClient();
 const workflow = new WorkflowClient();
 
-export function LegacyRunsRedirect() {
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let active = true;
-    void workflow
-      .workflow()
-      .then((snapshot) => {
-        if (!active) return;
-        const id = window.location.hash.slice(1);
-        const latest = [...snapshot.runs].sort(
-          (a, b) => runUpdatedAt(b) - runUpdatedAt(a),
-        )[0];
-        const run = id ? snapshot.runs.find((r) => r.id === id) : latest;
-        window.location.replace(
-          run ? `/?conversation=${run.developerConversationId}` : '/?empty=1',
-        );
-      })
-      .catch((e) => {
-        if (active) setError(e.message);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  return (
-    <main className="redirect-message">
-      <p role={error ? 'alert' : 'status'}>
-        {error || 'Opening implementation conversation…'}
-      </p>
-      <a href="/">Open conversations</a>
-    </main>
-  );
-}
-
 export function ImplementationTranscript({
   run,
   onChange,

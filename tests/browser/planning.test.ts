@@ -171,8 +171,7 @@ test(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       );
-      await page.goto(`${service.url}/settings`);
-      await page.getByRole('link', { name: /Connections/ }).click();
+      await page.goto(`${service.url}/projects/default/settings`);
       await page
         .getByRole('button', {
           name: 'Validate GitHub repository',

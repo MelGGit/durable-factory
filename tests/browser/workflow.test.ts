@@ -64,9 +64,13 @@ test(
         .waitFor();
       const run = (await s.client.workflow()).runs[0];
       await s.service.close();
-      await page.getByText(/Browser: disconnected/).waitFor();
+      await page
+        .locator('.chat-conversation[data-connection="disconnected"]')
+        .waitFor();
       await s.restart(true, true);
-      await page.getByText(/Browser: connected/).waitFor();
+      await page
+        .locator('.chat-conversation[data-connection="connected"]')
+        .waitFor();
       await page.reload();
       await page
         .locator('.run-question')
@@ -147,7 +151,9 @@ test(
       );
       const page = await browser.newPage();
       page.setDefaultTimeout(10000);
-      await page.goto(`${s.service.url}/runs#${run.id}`);
+      await page.goto(
+        `${s.service.url}/?conversation=${run.developerConversationId}`,
+      );
       await page
         .getByLabel('Message', { exact: true })
         .fill('Keep the accepted scope.');
@@ -213,7 +219,9 @@ test(
       );
       const page = await browser.newPage();
       page.setDefaultTimeout(10000);
-      await page.goto(`${s.service.url}/runs#${run.id}`);
+      await page.goto(
+        `${s.service.url}/?conversation=${run.developerConversationId}`,
+      );
       await page
         .getByRole('button', { name: 'Pause run', exact: true })
         .click();
@@ -265,7 +273,9 @@ test(
       );
       const page = await browser.newPage();
       page.setDefaultTimeout(15000);
-      await page.goto(`${fixture.service.url}/runs#${original.id}`);
+      await page.goto(
+        `${fixture.service.url}/?conversation=${original.developerConversationId}`,
+      );
       let operationId = '';
       await page.route('**/api/v1/runs', async (route) => {
         if (route.request().method() !== 'POST') return route.continue();

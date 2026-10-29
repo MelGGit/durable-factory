@@ -160,6 +160,171 @@ test('projects are added from their own page, not from settings', async () => {
   }
 });
 
+test('settings and project settings open inside the app', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-views-'));
+  const service = await startService({
+    port: 0,
+    dataDir: join(directory, 'data'),
+    chat: planningFixture(),
+  });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
+  try {
+    const client = new ChatClient(service.url);
+    await configure(client);
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(10000);
+    await page.goto(service.url);
+    await page.evaluate(() => {
+      (window as unknown as { marker: string }).marker = 'same page';
+    });
+    await page.locator('.settings-link').click();
+    await page.waitForURL(`${service.url}/settings`);
+    await page.getByRole('heading', { name: 'Your connections' }).waitFor();
+    assert.equal(await page.getByLabel('Base branch').count(), 0);
+    await page.getByLabel('Parallel runs').waitFor();
+    await page
+      .getByRole('link', { name: /^Settings for/ })
+      .first()
+      .click();
+    await page.waitForURL('**/projects/*/settings');
+    await page.getByLabel('Base branch').waitFor();
+    assert.equal(await page.getByLabel('Requesty token').count(), 0);
+    await page.goBack();
+    await page.getByRole('heading', { name: 'Your connections' }).waitFor();
+    await page.getByRole('link', { name: 'Home' }).click();
+    await page.waitForURL(`${service.url}/`);
+    assert.equal(
+      await page.evaluate(
+        () => (window as unknown as { marker: string }).marker,
+      ),
+      'same page',
+      'views switch without a page load',
+    );
+    assert.equal(await page.locator('.chat-sidebar').count(), 1);
+  } finally {
+    await browser.close();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('every view shows its page title and chats show their mode', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-titles-'));
+  const service = await startService({
+    port: 0,
+    dataDir: join(directory, 'data'),
+    chat: planningFixture(),
+  });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
+  try {
+    const client = new ChatClient(service.url);
+    await configure(client);
+    const chat = await client.createConversation('Title check', 'title-1');
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(10000);
+    const title = (name: string) =>
+      page.locator('.chat-header').getByRole('heading', { name, exact: true });
+    await page.goto(service.url);
+    await title('Home').waitFor();
+    await page.locator('.settings-link').click();
+    await title('Settings').waitFor();
+    await page.getByRole('link', { name: 'Add project', exact: true }).click();
+    await title('Add project').waitFor();
+    await page.goto(`${service.url}/?conversation=${chat.id}`);
+    await title('Title check').waitFor();
+    await page
+      .locator('.chat-header .mode-tag', { hasText: 'Planning' })
+      .waitFor();
+    assert.equal(await page.getByText(/Browser: |Agent: /).count(), 0);
+    assert.equal(await page.locator('.chat-header .eyebrow').count(), 0);
+  } finally {
+    await browser.close();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('history, unsaved edits and finished forms keep views consistent', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-leave-'));
+  const service = await startService({
+    port: 0,
+    dataDir: join(directory, 'data'),
+    chat: planningFixture(),
+  });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
+  try {
+    const client = new ChatClient(service.url);
+    await configure(client);
+    const chat = await client.createConversation('Leave check', 'leave-1');
+    const page = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    page.setDefaultTimeout(10000);
+    const title = (name: string) =>
+      page.locator('.chat-header').getByRole('heading', { name, exact: true });
+    await page.goto(`${service.url}/?conversation=${chat.id}`);
+    await title('Leave check').waitFor();
+
+    // Back and Forward move between views without being bounced to chat.
+    await page.locator('.settings-link').click();
+    await title('Settings').waitFor();
+    await page.goBack();
+    await title('Leave check').waitFor();
+    await page.goForward();
+    await title('Settings').waitFor();
+    assert.equal(new URL(page.url()).pathname, '/settings');
+
+    // Unsaved edits ask before an in-app navigation discards them.
+    await page.goto(`${service.url}/projects/default/settings`);
+    await page.getByLabel('Base branch').fill('edited');
+    const prompts: string[] = [];
+    let accept = false;
+    page.on('dialog', (dialog) => {
+      prompts.push(dialog.message());
+      void (accept ? dialog.accept() : dialog.dismiss());
+    });
+    await page.getByRole('link', { name: 'Home', exact: true }).click();
+    assert.equal(prompts.length, 1);
+    assert.equal(await page.getByLabel('Base branch').inputValue(), 'edited');
+    accept = true;
+    await page.getByRole('link', { name: 'Home', exact: true }).click();
+    await title('Home').waitFor();
+
+    // Creating a project lands on Home, not on the previously open chat.
+    await page.goto(`${service.url}/?conversation=${chat.id}`);
+    await title('Leave check').waitFor();
+    await page.getByRole('link', { name: 'Add project', exact: true }).click();
+    await page.getByLabel('Project name').fill('Fresh');
+    await page.getByRole('button', { name: 'Create project' }).click();
+    await title('Home').waitFor();
+    assert.equal(new URL(page.url()).search, '');
+    assert.equal(prompts.length, 2, 'a finished form does not prompt');
+  } finally {
+    await browser.close();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('the number of parallel runs is saved from the settings page', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'factory-runners-ui-'));
   const service = await startService({
