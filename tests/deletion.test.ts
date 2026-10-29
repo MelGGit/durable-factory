@@ -402,7 +402,7 @@ test(
   async () => {
     const { mkdtemp, rm } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
-    const { startService } = await import('../apps/server/src/service.js');
+    const { startService } = await import('./helpers/credentials.js');
     const { fixture, configure } = await import('./fixtures/chat.js');
     const directory = await mkdtemp(join(tmpdir(), 'factory-delete-planning-'));
     const service = await startService({

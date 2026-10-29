@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import {
   ChatClient,
   ApiError,

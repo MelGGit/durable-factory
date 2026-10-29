@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PrivateCredentials } from '../apps/server/src/credentials.js';
+import { PrivateCredentials } from './helpers/credentials.js';
 import { createGitHub, GitHubFailure } from '../apps/server/src/github.js';
 
 test('GitHub adapter validates access without claiming write capability and uses private token on each request', async () => {

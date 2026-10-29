@@ -5,6 +5,27 @@ export type Role = (typeof ROLES)[number];
 export const PROVIDERS = ['requesty', 'openai', 'anthropic'] as const;
 export type ProviderId = (typeof PROVIDERS)[number];
 export type CredentialId = ProviderId | 'github';
+export type OAuthProvider = 'openai' | 'anthropic';
+export interface CredentialStorageStatus {
+  backend: string;
+  status: 'ready' | 'error';
+}
+export interface OAuthPrompt {
+  id: string;
+  type: 'select' | 'manual_code' | 'text' | 'secret';
+  message: string;
+  options?: { id: string; label: string }[];
+}
+export interface OAuthSession {
+  id: string;
+  provider: OAuthProvider;
+  state: 'pending' | 'completed' | 'cancelled' | 'expired' | 'failed';
+  expiresAt: number;
+  prompt?: OAuthPrompt;
+  authUrl?: string;
+  deviceCode?: { userCode: string; verificationUri: string };
+  error?: { category: string; message: string };
+}
 export type ErrorCode =
   | 'INVALID_INPUT'
   | 'CONFLICT'
@@ -81,6 +102,7 @@ export interface SettingsResponse {
   settings: Settings;
   credentials: Record<CredentialId, boolean>;
   credentialErrors: Partial<Record<CredentialId, string>>;
+  credentialStorage: CredentialStorageStatus;
   providers: ProviderStatus[];
 }
 export interface SessionResponse {
@@ -201,6 +223,44 @@ export class FactoryClient {
   }
   providers() {
     return this.request<{ providers: ProviderStatus[] }>('/providers');
+  }
+  startLogin(provider: OAuthProvider) {
+    return this.mutation<{ session: OAuthSession }>(
+      `/auth/${provider}/login`,
+      'POST',
+      {},
+    );
+  }
+  loginStatus(provider: OAuthProvider) {
+    return this.request<{ session: OAuthSession | null }>(
+      `/auth/${provider}/login`,
+    );
+  }
+  answerLogin(
+    provider: OAuthProvider,
+    id: string,
+    promptId: string,
+    answer: string,
+  ) {
+    return this.mutation<{ session: OAuthSession }>(
+      `/auth/${provider}/login/${encodeURIComponent(id)}/answer`,
+      'POST',
+      { promptId, answer },
+    );
+  }
+  cancelLogin(provider: OAuthProvider, id: string) {
+    return this.mutation<{ session: OAuthSession }>(
+      `/auth/${provider}/login/${encodeURIComponent(id)}`,
+      'DELETE',
+      {},
+    );
+  }
+  retryCredentialStorage() {
+    return this.mutation<{ storage: CredentialStorageStatus }>(
+      '/credentials/retry-storage',
+      'POST',
+      {},
+    );
   }
   runners() {
     return this.request<{ runners: number }>('/runners');

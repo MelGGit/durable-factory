@@ -10,7 +10,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import {
   ApiError,
   FactoryClient,

@@ -1,6 +1,6 @@
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from '../tests/helpers/credentials.js';
 import { configure, until } from '../apps/server/src/chat-fixtures.js';
 import { planningFixture } from '../tests/fixtures/planning.js';
 import { ChatClient } from '../packages/shared/src/index.js';

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runDiagnostic } from '../apps/server/src/diagnostics.js';
-import { PrivateCredentials } from '../apps/server/src/credentials.js';
+import { runDiagnostic } from './helpers/credentials.js';
+import { PrivateCredentials } from './helpers/credentials.js';
 import { ApiError } from '../packages/shared/src/index.js';
 
 test('diagnostic usage lists only status and subscription sign-in', async (t) => {

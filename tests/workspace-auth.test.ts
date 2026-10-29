@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Workspaces } from '../apps/server/src/workspace.js';
 import { ProcessSupervisor } from '../apps/server/src/processes.js';
-import { PrivateCredentials } from '../apps/server/src/credentials.js';
+import { PrivateCredentials } from './helpers/credentials.js';
 import { openConfiguration } from '../apps/server/src/storage.js';
 import type { WorkflowRun } from '../packages/shared/src/index.js';
 test('private Git helper returns only repository-scoped credentials without exposing the token in its environment or file', async () => {

@@ -17,7 +17,7 @@ import {
 import { Processes } from '../apps/server/src/processes.js';
 import { Workspaces } from '../apps/server/src/workspace.js';
 import { ProcessSupervisor } from '../apps/server/src/processes.js';
-import { PrivateCredentials } from '../apps/server/src/credentials.js';
+import { PrivateCredentials, credentialFile } from './helpers/credentials.js';
 
 async function completed(f: Awaited<ReturnType<typeof realFixture>>) {
   const start = await f.client.startIssue(7, crypto.randomUUID());
@@ -72,7 +72,7 @@ test(
       await writeFile(staleIndex, 'stale candidate index');
       const settings = await f.client.settings();
       const credentials = await readFile(
-        join(f.dataDir, 'credentials', 'github.json'),
+        credentialFile(f.dataDir, 'github'),
         'utf8',
       );
       const inspection = await f.client.inspection(run.id);
@@ -81,7 +81,7 @@ test(
       await clean(f);
       assert.equal((await f.client.settings()).revision, settings.revision);
       assert.equal(
-        await readFile(join(f.dataDir, 'credentials', 'github.json'), 'utf8'),
+        await readFile(credentialFile(f.dataDir, 'github'), 'utf8'),
         credentials,
       );
       assert.ok(

@@ -464,7 +464,7 @@ test('shutdown closes admission before draining an in-flight issue lookup', asyn
 });
 
 test('label discovery cannot admit an old repository issue after settings change', async () => {
-  const { startService } = await import('../apps/server/src/service.js');
+  const { startService } = await import('./helpers/credentials.js');
   const { fixture } = await import('./fixtures/chat.js');
   const { WorkflowClient } = await import('../packages/shared/src/index.js');
   const f = await realFixture();

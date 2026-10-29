@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 
 test(
   'shutdown closes a speculative connection after draining accepted actions',

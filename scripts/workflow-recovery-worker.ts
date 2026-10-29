@@ -3,7 +3,7 @@ type Harness = Awaited<
 >['harness'];
 import { context } from '../apps/server/src/storage.js';
 import { readFile, writeFile } from 'node:fs/promises';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from '../tests/helpers/credentials.js';
 import {
   simulationAdapter,
   type StageResult,

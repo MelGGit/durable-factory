@@ -1,5 +1,12 @@
 # Third-party notices
 
+The server uses `@napi-rs/keyring` 2.1.2, Copyright (c) 2020 N-API for Rust,
+under the MIT License. Its license is distributed with the dependency. Native
+platform packages also contain their Rust dependency notices in
+`LICENSE.third-party.md`; these must accompany redistributed binaries. Linux
+prebuilt binaries include vendored libdbus under `AFL-2.1 OR GPL-2.0-or-later`.
+See [the pinned dependency and notices](https://github.com/Brooooooklyn/keyring-node/tree/v2.1.2).
+
 The conversation presentation and cached Markdown rendering adapt patterns from
 [durable-pi](https://github.com/disler/durable-pi), commit
 37165c619573dbaf425463038bbffecfe576beec.

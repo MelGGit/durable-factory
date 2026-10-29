@@ -7,7 +7,7 @@ import { request } from 'node:http';
 import { HttpAgent, type BaseEvent } from '@ag-ui/client';
 import { EventSchema } from '@ag-ui/core/schemas';
 import { setTimeout as delay } from 'node:timers/promises';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import {
   ChatClient,
   type ConversationSnapshot,

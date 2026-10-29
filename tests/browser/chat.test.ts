@@ -4,7 +4,7 @@ import { chromium } from '@playwright/test';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { startService } from '../../apps/server/src/service.js';
+import { startService } from '../helpers/credentials.js';
 import { ChatClient } from '../../packages/shared/src/index.js';
 import { fixture, configure, until } from '../fixtures/chat.js';
 

@@ -1,36 +1,53 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
-import { ApiError } from '../../../packages/shared/src/index.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import {
+  ApiError,
+  type OAuthPrompt,
+  type OAuthProvider,
+} from '../../../packages/shared/src/index.js';
 import { acquireOwnership, defaultDataDir } from './runtime.js';
-import { PrivateCredentials } from './credentials.js';
-import { createFactoryModels, providerStatuses } from './providers.js';
+import { PrivateCredentials, type CredentialVault } from './credentials.js';
+import { providerStatuses } from './providers.js';
+import { OAuthSessions, type OAuthLogin } from './oauth.js';
 
-export async function runDiagnostic(args: string[]) {
+export function selectionAnswer(prompt: OAuthPrompt, answer: string) {
+  if (!prompt.options?.length) return answer.trim();
+  const value = answer.trim();
+  if (!value) return prompt.options[0].id;
+  const exact = prompt.options.find((option) => option.id === value);
+  if (exact) return exact.id;
+  if (/^[1-9]\d*$/.test(value)) return prompt.options[Number(value) - 1]?.id;
+  return undefined;
+}
+
+export async function runDiagnostic(
+  args: string[],
+  dependencies: {
+    credentialVault?: CredentialVault;
+    oauthLogin?: OAuthLogin;
+  } = {},
+) {
   process.umask(0o077);
   const [command, provider] = args;
   if (!command) {
     console.log(
-      'Usage:\n  bun run diagnose status\n  bun run diagnose login openai|anthropic\n\nStop the local service before signing in or viewing connection status.',
+      'Usage:\n  bun run diagnose status\n  bun run diagnose login openai|anthropic\n\nConnect in Settings while the app runs, or stop the service before using these terminal diagnostics.',
     );
     return;
   }
-  if (command !== 'status' && command !== 'login') {
+  if (command !== 'status' && command !== 'login')
     throw new ApiError(
       'INVALID_INPUT',
       'Unknown diagnostic command. Use status or login.',
       400,
     );
-  }
-  if (command === 'status' && args.length !== 1) {
+  if (command === 'status' && args.length !== 1)
     throw new ApiError('INVALID_INPUT', 'Usage: bun run diagnose status', 400);
-  }
   if (
     command === 'login' &&
     (args.length !== 2 || !['openai', 'anthropic'].includes(provider))
-  ) {
+  )
     throw new ApiError(
       'INVALID_INPUT',
       provider === 'requesty'
@@ -38,9 +55,12 @@ export async function runDiagnostic(args: string[]) {
         : 'Usage: bun run diagnose login openai|anthropic',
       400,
     );
-  }
   const owner = await acquireOwnership(defaultDataDir());
-  const credentials = new PrivateCredentials(owner.dataDir);
+  const credentials = new PrivateCredentials(
+    owner.dataDir,
+    dependencies.credentialVault,
+  );
+  let sessions: OAuthSessions | undefined;
   try {
     await credentials.init();
     if (command === 'status') {
@@ -55,18 +75,12 @@ export async function runDiagnostic(args: string[]) {
       );
       return;
     }
-    const models = createFactoryModels(credentials);
-    let deviceId: string;
-    try {
-      deviceId = await readFile(join(owner.dataDir, 'device-id'), 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      deviceId = randomUUID();
-      await writeFile(join(owner.dataDir, 'device-id'), deviceId, {
-        mode: 0o600,
-        flag: 'wx',
-      });
-    }
+    sessions = new OAuthSessions(
+      credentials,
+      owner.dataDir,
+      dependencies.oauthLogin,
+    );
+    const selected = provider as OAuthProvider;
     let hidden = false;
     const output = new Writable({
       write(chunk, _encoding, callback) {
@@ -77,55 +91,101 @@ export async function runDiagnostic(args: string[]) {
     const terminal = createInterface({
       input: process.stdin,
       output,
-      terminal: Boolean(process.stdout.isTTY),
+      terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     });
     const abort = new AbortController();
     const interrupt = () => abort.abort();
+    terminal.once('close', interrupt);
     process.once('SIGINT', interrupt);
+    let question:
+      | { id: string; abort: AbortController; done: Promise<void> }
+      | undefined;
+    let shownUrl: string | undefined;
     try {
-      await models.login(
-        provider,
-        'oauth',
-        {
-          signal: abort.signal,
-          async prompt(prompt) {
-            if (prompt.type === 'select')
-              for (const option of prompt.options)
-                console.log(`  ${option.id}: ${option.label}`);
-            process.stdout.write(`${prompt.message}: `);
-            hidden = prompt.type === 'secret';
+      await sessions.start(selected);
+      while (!abort.signal.aborted) {
+        const session = sessions.status(selected);
+        if (!session) throw new Error('Login expired');
+        if (session.state !== 'pending') {
+          if (session.state === 'completed') {
+            console.log(
+              `${provider}: sign-in completed and credentials stored securely.`,
+            );
+            return;
+          }
+          throw new ApiError(
+            'PROVIDER_UNAVAILABLE',
+            session.error?.message ??
+              'Sign-in cancelled or expired. Start a new sign-in.',
+            503,
+          );
+        }
+        if (session.authUrl && session.authUrl !== shownUrl) {
+          shownUrl = session.authUrl;
+          hidden = false;
+          console.log(`Open this sign-in link:\n${session.authUrl}`);
+          hidden = Boolean(question);
+        }
+        if (question && session.prompt?.id !== question.id) {
+          question.abort.abort();
+          await question.done;
+          question = undefined;
+        }
+        if (session.prompt && !question) {
+          const prompt = session.prompt;
+          const cancellation = new AbortController();
+          const signal = AbortSignal.any([cancellation.signal, abort.signal]);
+          const done = (async () => {
             try {
-              return await terminal.question('', {
-                signal: prompt.signal ?? abort.signal,
-              });
+              if (prompt.options)
+                for (const [index, option] of prompt.options.entries())
+                  console.log(
+                    `  ${index + 1}. ${option.label} (${option.id})${index === 0 ? ' [default]' : ''}`,
+                  );
+              while (!signal.aborted) {
+                process.stdout.write(`${prompt.message}: `);
+                hidden =
+                  prompt.type === 'secret' || prompt.type === 'manual_code';
+                const raw = await terminal.question('', { signal });
+                if (hidden) {
+                  hidden = false;
+                  console.log();
+                }
+                const answer = selectionAnswer(prompt, raw);
+                if (!answer) {
+                  console.log(
+                    prompt.options
+                      ? 'Choose an option number or ID, or press Enter for the default.'
+                      : 'Enter the authorization code or full redirect URL, or press Ctrl+C to cancel.',
+                  );
+                  continue;
+                }
+                sessions!.answer(selected, session.id, {
+                  promptId: prompt.id,
+                  answer,
+                });
+                return;
+              }
+            } catch {
+              if (!signal.aborted) abort.abort();
             } finally {
-              if (hidden) console.log();
               hidden = false;
             }
-          },
-          notify(event) {
-            if (event.type === 'auth_url')
-              console.log(
-                `Open this sign-in link:\n${event.url}\n${event.instructions ?? ''}`,
-              );
-            else if (event.type === 'device_code')
-              console.log(
-                `Open ${event.verificationUri}; enter ${event.userCode}`,
-              );
-            else {
-              console.log(event.message);
-              if (event.type === 'info')
-                for (const link of event.links ?? []) console.log(link.url);
-            }
-          },
-        },
-        { getDeviceId: () => deviceId, agentName: 'Durable Factory' },
-      );
-      console.log(
-        `${provider}: sign-in completed and credentials stored privately.`,
+          })();
+          question = { id: prompt.id, abort: cancellation, done };
+        }
+        await delay(50);
+      }
+      throw new ApiError(
+        'PROVIDER_UNAVAILABLE',
+        'Sign-in cancelled. Start a new sign-in when ready.',
+        503,
       );
     } finally {
+      question?.abort.abort();
+      await question?.done;
       process.removeListener('SIGINT', interrupt);
+      terminal.removeListener('close', interrupt);
       terminal.close();
     }
   } catch (error) {
@@ -133,10 +193,12 @@ export async function runDiagnostic(args: string[]) {
       ? error
       : new ApiError(
           'PROVIDER_UNAVAILABLE',
-          'Connection operation failed. Check connectivity, subscription access, and credential storage permissions.',
+          'Connection operation failed. Unlock your credential vault, check connectivity, and retry.',
           503,
         );
   } finally {
+    await sessions?.close();
+    await credentials.drain();
     await owner.release();
   }
 }

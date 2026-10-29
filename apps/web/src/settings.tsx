@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ModelSelection } from './model-selection.js';
-import { CopyCommand } from './copy-command.js';
+import { OAuthConnection } from './oauth-connection.js';
 import { useTheme, type ThemePreference } from './hooks/use-theme.js';
 import {
   discardUnsavedChanges,
@@ -165,6 +165,20 @@ export function Settings({
       setBusy(false);
     }
   };
+  const refreshCredentials = async () => {
+    const response = await client.settings();
+    setSaved((previous) =>
+      previous
+        ? {
+            ...previous,
+            credentials: response.credentials,
+            credentialErrors: response.credentialErrors,
+            credentialStorage: response.credentialStorage,
+            providers: response.providers,
+          }
+        : response,
+    );
+  };
   const credential = async (id: CredentialId, remove = false) => {
     setCredentialBusy(id);
     setError('');
@@ -185,6 +199,7 @@ export function Settings({
               ...previous,
               credentials: response.credentials,
               credentialErrors: response.credentialErrors,
+              credentialStorage: response.credentialStorage,
               providers: response.providers,
             }
           : response,
@@ -930,7 +945,12 @@ export function Settings({
                               </button>
                             </form>
                           ) : (
-                            <CopyCommand provider={id} />
+                            <OAuthConnection
+                              client={client}
+                              provider={id}
+                              configured={saved.credentials[id]}
+                              changed={refreshCredentials}
+                            />
                           )}
                           {(saved.credentials[id] ||
                             saved.credentialErrors[id]) && (
@@ -950,9 +970,36 @@ export function Settings({
                     ),
                   )}
                   <div className="connection-help">
-                    Subscription sign-in uses an interactive terminal command.
-                    Stop the local service first, sign in, then restart it.
-                    Storing a token does not test it or make a model call.
+                    <p>
+                      Credentials use {saved.credentialStorage.backend}.{' '}
+                      {saved.credentialStorage.status === 'ready'
+                        ? 'Secure storage is ready.'
+                        : 'Secure storage needs attention. Unlock your system vault and retry.'}{' '}
+                      Storing credentials does not test model access or make a
+                      model call.
+                    </p>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={credentialBusy !== null}
+                      onClick={() => {
+                        setCredentialBusy('openai');
+                        setError('');
+                        void client
+                          .retryCredentialStorage()
+                          .then(refreshCredentials)
+                          .catch((error) =>
+                            setError(
+                              error instanceof Error
+                                ? error.message
+                                : 'Could not retry secure storage.',
+                            ),
+                          )
+                          .finally(() => setCredentialBusy(null));
+                      }}
+                    >
+                      Retry secure storage
+                    </button>
                   </div>
                 </div>
               </section>

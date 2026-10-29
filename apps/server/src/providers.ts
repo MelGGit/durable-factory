@@ -9,7 +9,8 @@ import {
   stream,
   streamSimple,
 } from '@earendil-works/pi-ai/api/openai-completions';
-import type { Model } from '@earendil-works/pi-ai';
+import type { Model, CredentialStore, Provider } from '@earendil-works/pi-ai';
+import { safeAuthFailure, validateCallbackHost } from './auth-errors.js';
 import type {
   PrivateCredentials,
   CredentialInspection,
@@ -34,7 +35,7 @@ export function requestyModel(id: string): Model<'openai-completions'> {
   };
 }
 export function createFactoryModels(
-  credentials: PrivateCredentials,
+  credentials: CredentialStore,
   requestyIds: string[] = [],
 ) {
   // No ambient credentials: subscription selection must never turn into an API-key call.
@@ -42,8 +43,8 @@ export function createFactoryModels(
     credentials,
     authContext: { env: async () => undefined, fileExists: async () => false },
   });
-  models.setProvider(openaiProvider());
-  models.setProvider(anthropicProvider());
+  models.setProvider(protectOAuth(openaiProvider()));
+  models.setProvider(protectOAuth(anthropicProvider()));
   models.setProvider(
     createProvider({
       id: 'requesty',
@@ -66,6 +67,38 @@ export function createFactoryModels(
     }),
   );
   return models;
+}
+
+// Sanitize before Pi can persist an error in a durable task or transcript.
+function protectOAuth(provider: Provider): Provider {
+  const oauth = provider.auth.oauth;
+  if (!oauth) return provider;
+  provider.auth.oauth = {
+    ...oauth,
+    async login(interaction, options) {
+      try {
+        validateCallbackHost();
+        return await oauth.login(interaction, options);
+      } catch (error) {
+        throw safeAuthFailure(error);
+      }
+    },
+    async refresh(credential, signal) {
+      try {
+        return await oauth.refresh(credential, signal);
+      } catch (error) {
+        throw safeAuthFailure(error);
+      }
+    },
+    async toAuth(credential) {
+      try {
+        return await oauth.toAuth(credential);
+      } catch (error) {
+        throw safeAuthFailure(error);
+      }
+    },
+  };
+  return provider;
 }
 export async function providerStatuses(
   credentials: PrivateCredentials,

@@ -10,7 +10,7 @@ import {
 } from '../apps/server/src/cleanup.js';
 import { Workspaces } from '../apps/server/src/workspace.js';
 import { ProcessSupervisor } from '../apps/server/src/processes.js';
-import { PrivateCredentials } from '../apps/server/src/credentials.js';
+import { PrivateCredentials } from '../tests/helpers/credentials.js';
 
 const fixture = await realFixture();
 const started = await fixture.client.startIssue(7, 'cleanup-crash');

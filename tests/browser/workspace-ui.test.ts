@@ -4,7 +4,7 @@ import { chromium } from '@playwright/test';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startService } from '../../apps/server/src/service.js';
+import { startService } from '../helpers/credentials.js';
 import { ChatClient } from '../../packages/shared/src/index.js';
 import { fixture, configure, until } from '../fixtures/chat.js';
 import { fauxAssistantMessage } from '../../apps/server/src/chat-fixtures.js';
@@ -199,7 +199,7 @@ test(
 );
 
 test(
-  'general settings save an optional title model, warn on unsaved edits, copy commands, and update titles live',
+  'general settings save an optional title model, warn on unsaved edits, show subscription controls, and update titles live',
   { timeout: 30000 },
   async () => {
     const dataDir = await mkdtemp(
@@ -241,30 +241,15 @@ test(
         await page.getByLabel('Title model', { exact: true }).inputValue(),
         'offline',
       );
-      await page.evaluate(() =>
-        Object.defineProperty(navigator, 'clipboard', {
-          configurable: true,
-          value: {
-            async writeText(value: string) {
-              (window as unknown as { copiedCommand: string }).copiedCommand =
-                value;
-            },
-          },
-        }),
+      assert.equal(
+        await page
+          .getByRole('button', { name: 'Connect ChatGPT', exact: true })
+          .isEnabled(),
+        true,
       );
       await page
-        .getByRole('button', {
-          name: 'Copy OpenAI sign-in command',
-          exact: true,
-        })
-        .click();
-      await page.getByRole('status').filter({ hasText: 'Copied.' }).waitFor();
-      assert.equal(
-        await page.evaluate(
-          () => (window as unknown as { copiedCommand: string }).copiedCommand,
-        ),
-        'bun run diagnose login openai',
-      );
+        .getByText('Secure storage is ready.', { exact: false })
+        .waitFor();
       await page.setViewportSize({ width: 390, height: 844 });
       assert.equal(
         await page.evaluate(

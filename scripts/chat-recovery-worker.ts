@@ -1,6 +1,6 @@
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from '../tests/helpers/credentials.js';
 import { fixture, configure, until } from '../apps/server/src/chat-fixtures.js';
 import { ChatClient } from '../packages/shared/src/index.js';
 const [dataDir, scenario, mode] = process.argv.slice(2);

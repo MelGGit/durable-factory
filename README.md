@@ -60,7 +60,11 @@ For a Bun project, setup might be `bun install --frozen-lockfile`, with required
 
 General **Settings → Title generator** lets you choose an optional provider/model shared by every project. New planning chats get a short title from their first message, then an AI-written title when a model is selected. Generation runs separately from planning; unavailable models or failed requests keep the first-message title. Existing chats and custom titles stay unchanged. No model is selected automatically.
 
-Requesty and GitHub tokens are entered in Settings and stored privately by the service. For subscription sign-in, stop the service first and run the relevant interactive diagnostic:
+In **Settings → Your connections**, use **Connect ChatGPT** or **Connect Claude**, choose the sign-in method, and open the provider’s sign-in page. Finish authorization there; if necessary, paste the temporary authorization code or final redirect URL into the dialog. Never paste an access or refresh token. Closing the dialog cancels sign-in; navigating away lets it continue for up to ten minutes, and returning to Settings resumes its status. Reconnect preserves the old connection if authorization fails.
+
+All four connections use the operating system’s credential vault: **macOS Keychain** or **Linux Secret Service** (for example an unlocked GNOME Keyring or compatible KWallet). On Linux, run the service in the desktop/session D-Bus environment that owns the unlocked vault. Headless machines without Secret Service need a vault configured before connections can be saved. There is no plaintext or temporary kernel-keyring fallback. Unlock the vault and use **Retry secure storage** after an access failure. Requesty and GitHub tokens are still entered in Settings; they cannot be retrieved through the API.
+
+Terminal diagnostics remain available as a fallback. Stop the service before running them:
 
 ```sh
 bun run diagnose status
@@ -153,7 +157,13 @@ Changed worktree content, new or modified ignored files, substituted proof paths
 
 Data defaults to `~/Library/Application Support/Durable Factory` on macOS, and `$XDG_DATA_HOME/durable-factory` or `~/.local/share/durable-factory` on Linux. Workflow state and configuration live in `factory.sqlite`. There is no separate application queue database.
 
-Credentials live in private files under `credentials/`, outside Git and agent environments. Directory/file permissions protect them; they are **not encrypted at rest**. API responses expose credential status, not tokens. Stored credentials and provider catalogs are not proof of account access.
+Credentials live in the OS vault, scoped to the canonical data directory and provider. Moving the data directory requires reconnecting the accounts. The `credentials/` directory retains the write lock, not new token files. API responses expose credential status, not tokens. Stored credentials and provider catalogs are not proof of account access.
+
+On upgrade, the app privately migrates old credential JSON files: read locally, save to the vault, verify the complete value, then remove the old file. Failed migration preserves the file and blocks use of that connection until retry or replacement succeeds. It never falls back to the old file. Deletion cannot erase backups or filesystem snapshots. No real credentials are read during development or automated tests; the migration happens in the running app.
+
+OAuth tokens necessarily enter the trusted server’s memory during authentication. They are excluded from ordinary logs, transcripts and child-process environments. The command runner is not an OS sandbox: these protections do not isolate credentials from malicious commands running as the same OS user. OAuth login and refresh remain Pi-owned; subscription access and billing remain provider-dependent. See [Pi’s credential contract](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#credential-store), [native vault behavior](https://github.com/Brooooooklyn/keyring-node/blob/v2.1.2/README.md), and [Anthropic’s subscription guidance](https://support.claude.com/en/articles/13189465-log-in-to-your-claude-account).
+
+Unit/browser tests inject a disposable test-only vault. An optional native smoke test writes and deletes one uniquely named fake entry without enumerating personal credentials: `DURABLE_FACTORY_TEST_NATIVE_VAULT=1 node --import tsx --test tests/native-vault.test.ts`. Run it in an unlocked macOS or Linux desktop session.
 
 One service or diagnostic owns a data directory at a time using an operating-system lock. Never delete or replace `ownership.lock` or `credentials/write.lock` while a process may hold them. Legacy heartbeat-lock directories require stopping the older service and explicitly resolving its leftover lock before upgrading.
 

@@ -4,7 +4,7 @@ import { chromium } from '@playwright/test';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { startService } from '../../apps/server/src/service.js';
+import { startService } from '../helpers/credentials.js';
 
 test(
   'settings browser flow, credential privacy, stale saves, restart, and mobile layout',
@@ -163,6 +163,10 @@ test(
       await writeFile(join(dataDir, 'credentials/requesty.json'), 'null', {
         mode: 0o600,
       });
+      const { FactoryClient } = await import(
+        '../../packages/shared/src/index.js'
+      );
+      await new FactoryClient(service.url).retryCredentialStorage();
       const page = await browser.newPage();
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));

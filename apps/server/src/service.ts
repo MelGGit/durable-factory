@@ -40,7 +40,13 @@ import {
   log,
   sourceRoot,
 } from './runtime.js';
-import { PrivateCredentials } from './credentials.js';
+import {
+  PrivateCredentials,
+  CredentialStorageError,
+  type CredentialVault,
+} from './credentials.js';
+import { OAuthSessions, type OAuthLogin } from './oauth.js';
+import { safeAuthFailure } from './auth-errors.js';
 import { openConfiguration, context } from './storage.js';
 import { providerStatuses, createFactoryModels } from './providers.js';
 import { createRegistry } from '@earendil-works/pi-durable';
@@ -76,6 +82,9 @@ import {
 } from './validation.js';
 
 export interface ServiceOptions {
+  /** Programmatic dependency injection; never configurable through HTTP or environment. */
+  credentialVault?: CredentialVault;
+  oauthLogin?: OAuthLogin;
   dataDir?: string;
   port?: number;
   development?: boolean;
@@ -142,6 +151,7 @@ export async function startService(options: ServiceOptions = {}) {
   let ownership: Awaited<ReturnType<typeof acquireOwnership>> | undefined;
   let configuration: Awaited<ReturnType<typeof openConfiguration>> | undefined;
   let credentials: PrivateCredentials;
+  let oauth: OAuthSessions | undefined;
   let chat: ChatService | undefined;
   let activity: RunActivityService | undefined;
   let planning: PlanningService;
@@ -194,6 +204,7 @@ export async function startService(options: ServiceOptions = {}) {
       ...saved,
       credentials: metadata.configured,
       credentialErrors: metadata.errors,
+      credentialStorage: metadata.storage,
       providers: await providerStatuses(credentials, metadata),
     };
   }
@@ -308,6 +319,17 @@ export async function startService(options: ServiceOptions = {}) {
         400,
       );
     if (path.startsWith('/api/v1/')) {
+      // Login state contains transient authorization URLs and is local-only even for GET.
+      if (
+        (path.startsWith('/api/v1/auth/') ||
+          path === '/api/v1/credentials/retry-storage') &&
+        !isLocal(req)
+      )
+        throw new ApiError(
+          'FORBIDDEN',
+          'Connect accounts on the server itself.',
+          403,
+        );
       if (tokenDigest) {
         const authorization = req.headers.authorization;
         const presented =
@@ -697,6 +719,44 @@ export async function startService(options: ServiceOptions = {}) {
         cachedRedactions = undefined;
         return send(res, 200, await snapshot(projectId));
       }
+      if (
+        path === '/api/v1/credentials/retry-storage' &&
+        req.method === 'POST'
+      ) {
+        await body(req);
+        return send(res, 200, { storage: (await credentials.retry()).storage });
+      }
+      const authMatch =
+        /^\/api\/v1\/auth\/(openai|anthropic)\/login(?:\/([A-Za-z0-9-]+)(\/answer)?)?$/.exec(
+          path,
+        );
+      if (authMatch) {
+        const provider = authMatch[1] as 'openai' | 'anthropic';
+        const id = authMatch[2];
+        if (!id && req.method === 'GET')
+          return send(res, 200, { session: oauth!.status(provider) });
+        if (!id && req.method === 'POST') {
+          await body(req);
+          try {
+            return send(res, 202, { session: await oauth!.start(provider) });
+          } catch (error) {
+            if (error instanceof ApiError) throw error;
+            throw new ApiError(
+              'PROVIDER_UNAVAILABLE',
+              safeAuthFailure(error).message,
+              503,
+            );
+          }
+        }
+        if (id && authMatch[3] && req.method === 'POST')
+          return send(res, 200, {
+            session: oauth!.answer(provider, id, await body(req, 20000)),
+          });
+        if (id && !authMatch[3] && req.method === 'DELETE') {
+          await body(req);
+          return send(res, 200, { session: await oauth!.cancel(provider, id) });
+        }
+      }
       const match =
         /^\/api\/v1\/credentials\/(requesty|github|openai|anthropic)$/.exec(
           path,
@@ -705,13 +765,13 @@ export async function startService(options: ServiceOptions = {}) {
         const id = match[1] as CredentialId;
         const value = await body(req);
         if (req.method === 'DELETE') {
-          await credentials.delete(id);
+          await oauth!.disconnect(id);
           return send(res, 200, { configured: false });
         }
         if (id !== 'requesty' && id !== 'github')
           throw new ApiError(
             'INVALID_INPUT',
-            'Use the provider sign-in diagnostic for subscription accounts.',
+            'Use Connect in Settings for subscription accounts.',
             400,
           );
         if (
@@ -784,11 +844,13 @@ export async function startService(options: ServiceOptions = {}) {
       const safe =
         error instanceof ApiError
           ? error
-          : new ApiError(
-              'INTERNAL',
-              'The service could not complete this operation. Check runtime storage permissions and try again.',
-              500,
-            );
+          : error instanceof CredentialStorageError
+            ? new ApiError('PROVIDER_UNAVAILABLE', error.message, 503)
+            : new ApiError(
+                'INTERNAL',
+                'The service could not complete this operation. Check runtime storage permissions and try again.',
+                500,
+              );
       log('request_failed', { code: safe.code });
       if (!res.headersSent)
         send(res, safe.status, {
@@ -984,8 +1046,16 @@ export async function startService(options: ServiceOptions = {}) {
   }
   try {
     ownership = await acquireOwnership(options.dataDir ?? defaultDataDir());
-    credentials = new PrivateCredentials(ownership!.dataDir);
+    credentials = new PrivateCredentials(
+      ownership!.dataDir,
+      options.credentialVault,
+    );
     await credentials.init();
+    oauth = new OAuthSessions(
+      credentials,
+      ownership!.dataDir,
+      options.oauthLogin,
+    );
     github = options.github ?? createGitHub(credentials);
     await initializeRuntime();
     const pollProjectLabels = async (projectId: string) => {
@@ -1555,6 +1625,7 @@ export async function startService(options: ServiceOptions = {}) {
       clearInterval(deletionTimer);
       clearTimeout(reopeningTimer);
       labelAbort.abort();
+      await oauth?.close();
       await cleanupPolling;
       await deletionPolling;
       if (runtimeOpen) await workflow?.close();
@@ -1573,6 +1644,7 @@ export async function startService(options: ServiceOptions = {}) {
       await closed;
       // A failed close deliberately retains ownership: never permit a second writer.
       if (configuration) await configuration.close();
+      await credentials?.drain();
       if (ownership) await ownership.release();
     },
   };

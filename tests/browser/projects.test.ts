@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { startService } from '../../apps/server/src/service.js';
+import { startService } from '../helpers/credentials.js';
 import { ChatClient, WorkflowClient } from '../../packages/shared/src/index.js';
 import { configure } from '../fixtures/chat.js';
 import { planningFixture } from '../fixtures/planning.js';

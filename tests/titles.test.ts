@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import {
   ChatClient,
   ApiError,

@@ -78,7 +78,7 @@ One local background service serves the built React application and its API, and
 
 Run independently of the browser. Startup is currently manual through the repository Bun command; automatic startup at login is deferred. A sleeping or powered-off computer performs no work; recovery begins when the service runs again. Bind the application to localhost for the personal first version.
 
-Keep persistent databases, private credentials, logs and artifacts in a configurable application-data directory outside the application source checkout and target repository. Separate replaceable program code from runtime data. Worktrees remain run-scoped and their paths are recorded for recovery.
+Keep persistent databases, logs and artifacts in a configurable application-data directory outside the application source checkout and target repository. Store private credentials in the operating system vault, scoped to that data directory; retain only the credential write lock in the directory after migration. Separate replaceable program code from runtime data. Worktrees remain run-scoped and their paths are recorded for recovery.
 
 Expose process health separately from readiness. Health indicates that the process responds; readiness indicates that storage ownership is established and startup reconciliation has finished enough to admit work safely. A failed provider connection blocks the affected operation, not the whole application's inspection UI. Report startup recovery progress, unavailable runs, and unresolved external operations in the application.
 
@@ -106,7 +106,7 @@ Use pi-ai directly for all roles. Separate Codex and Claude Code worker processe
 
 Expose provider, available model, and supported reasoning settings independently for planning, development, and review. Require explicit selections during setup rather than baking changing model names into the workflow. Capture effective role settings when work begins.
 
-Keep credentials on the service side in a private persistent credential store outside the target repository, Git worktrees, and ordinary logs. Use Pi's provider-owned login and token-refresh flows. Do not assume the account has access to every catalog model or that subscription billing rules are identical across providers; model availability is determined when the selected connection is used.
+Keep credentials on the service side in macOS Keychain or Linux Secret Service, outside the target repository, Git worktrees, and ordinary logs. Use Pi's provider-owned login and token-refresh flows through local-only Settings login sessions or the terminal fallback. Login sessions and authorization codes are ephemeral and never durable conversation data. Do not assume the account has access to every catalog model or that subscription billing rules are identical across providers; model availability is determined when the selected connection is used.
 
 If authentication or usage limits prevent progress, pause the affected work. Offer retry, reconnect, or an explicit provider/model change. Never silently switch to Requesty or another paid connection. An explicit model switch preserves the durable conversation history using Pi's supported handoff behavior and records the change.
 

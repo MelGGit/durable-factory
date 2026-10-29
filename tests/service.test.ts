@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, stat, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import { FactoryClient, ApiError } from '../packages/shared/src/index.js';
-import { PrivateCredentials } from '../apps/server/src/credentials.js';
+import { PrivateCredentials } from './helpers/credentials.js';
 import {
   openConfiguration,
   Configuration,
@@ -78,8 +78,11 @@ test('settings persist, revisions reject stale updates, credentials stay private
       !JSON.stringify(await client.providers()).includes('secret-fixture'),
     );
     assert.equal(
-      (await stat(join(dataDir, 'credentials/requesty.json'))).mode & 0o777,
-      0o600,
+      await readFile(join(dataDir, 'credentials/requesty.json')).then(
+        () => false,
+        () => true,
+      ),
+      true,
     );
     assert.equal(
       (await stat(join(dataDir, 'credentials'))).mode & 0o777,
@@ -218,6 +221,7 @@ test('credential damage stays isolated while settings remain editable and connec
     await writeFile(join(dataDir, 'credentials/github.json'), 'null', {
       mode: 0o600,
     });
+    await client.retryCredentialStorage();
     const snapshot = await client.settings();
     assert.equal(snapshot.credentials.requesty, true);
     assert.equal(snapshot.credentials.openai, false);

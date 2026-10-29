@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { startService } from '../../apps/server/src/service.js';
+import { startService } from '../helpers/credentials.js';
 import {
   formatTicketBody,
   WorkflowClient,

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import { serviceOptions } from '../apps/server/src/environment.js';
 
 const token = 'factory-test-token-0123456789abcdef0123456789';

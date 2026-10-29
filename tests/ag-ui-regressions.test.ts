@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HttpAgent, type BaseEvent } from '@ag-ui/client';
 import { EventSchema } from '@ag-ui/core/schemas';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 import {
   ChatClient,
   agUiMessages,

@@ -10,7 +10,7 @@ import {
   redactResponse,
   type Redaction,
 } from '../apps/server/src/redaction.js';
-import { startService } from '../apps/server/src/service.js';
+import { startService } from './helpers/credentials.js';
 
 const redactions: Redaction[] = [
   ['/home/me/projects/app', '<repository>'],
