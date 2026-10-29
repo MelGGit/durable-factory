@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ModelSelection } from './model-selection.js';
 import { CopyCommand } from './copy-command.js';
+import { useTheme, type ThemePreference } from './hooks/use-theme.js';
 import {
   discardUnsavedChanges,
   useUnsavedChanges,
@@ -32,6 +33,30 @@ const descriptions: Record<string, string> = {
   development: 'Implement the agreed change and tests.',
   review: 'Independently inspect the result.',
 };
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'system', label: 'System' },
+];
+function AppearanceOptions() {
+  const [theme, setTheme] = useTheme();
+  return (
+    <div className="theme-options" role="radiogroup" aria-label="Theme">
+      {THEME_OPTIONS.map((option) => (
+        <label key={option.value}>
+          <input
+            type="radio"
+            name="theme"
+            value={option.value}
+            checked={theme === option.value}
+            onChange={() => setTheme(option.value)}
+          />
+          <span>{option.label}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
 export function Settings({
   projectId,
   onChanged,
@@ -804,6 +829,17 @@ export function Settings({
           )}
           {!project && (
             <>
+              <section id="appearance" className="settings-section">
+                <div className="section-heading">
+                  <div>
+                    <h2>Appearance</h2>
+                    <p>Choose a light or dark look, or follow your system.</p>
+                  </div>
+                </div>
+                <div className="panel">
+                  <AppearanceOptions />
+                </div>
+              </section>
               <section id="connections" className="settings-section">
                 <div className="section-heading">
                   <div>

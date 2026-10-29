@@ -860,9 +860,13 @@ export function ChatApp() {
   const sidebar = (
     <div className="chat-sidebar">
       <a className="chat-brand" href="/">
-        <span className="brand-mark" aria-hidden="true">
-          df
-        </span>
+        <img
+          className="brand-mark"
+          src="/durable-factory-logo.png"
+          width="32"
+          height="32"
+          alt=""
+        />
         <strong>durable factory</strong>
       </a>
       <a

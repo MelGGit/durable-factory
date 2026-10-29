@@ -1,0 +1,7 @@
+# Durable Factory logo
+
+Created with the built-in image generation tool. The transparent terracotta mark suggests assembled modules and a stepped factory roof. The production assets are `apps/web/public/durable-factory-logo.png` (256px), `apps/web/public/durable-factory-icon-32.png` (32px tab icon), and `apps/web/public/favicon.ico` (32px/64px fallback, derived from the PNGs). The 64px source is `apps/web/public/favicon.png`.
+
+## Generation prompt
+
+Use case: logo-brand. Create one finished standalone logo symbol for Durable Factory, a software tool that runs reliable multi-stage development workflows. Asset type: compact app sidebar mark and browser favicon. Subject: a distinctive geometric factory/assembly symbol formed from two or three interlocking solid modules, with a subtle stepped factory-roof silhouette and a strong stable base. Favor one clean continuous silhouette and one or two generous negative-space cuts. Style: sophisticated flat vector-like brand mark, extremely simple and legible at 24 pixels. Single solid warm terracotta color #c6613f; no gradients, no shadows, no textures, no outlines, no 3D. Composition: centered square, symbol fills about 85 percent of canvas, very little surrounding empty space. True transparent background. No text, no initials, no wordmark, no enclosing square or badge, no border, no watermark. Deliver only the logo symbol, not a presentation sheet or mockup.

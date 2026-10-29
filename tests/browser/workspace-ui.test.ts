@@ -89,7 +89,13 @@ test(
             const icon = link.querySelector('.session-kind')!;
             const dots = row.querySelector('.session-actions-trigger')!;
             const parent = row.closest('nav')!;
+            const projectTitle = row
+              .closest('.project-group')!
+              .querySelector('.project-toggle strong')!;
             return {
+              titleOffset:
+                title.getBoundingClientRect().left -
+                projectTitle.getBoundingClientRect().left,
               rowHeight: row.getBoundingClientRect().height,
               iconAfter:
                 icon.getBoundingClientRect().left >=
@@ -114,6 +120,10 @@ test(
       assert.equal(geometry.length, 2);
       for (const g of geometry) {
         assert.equal(g.rowHeight, 36);
+        assert.ok(
+          Math.abs(g.titleOffset) < 1,
+          'session and project titles align',
+        );
         assert.ok(g.iconAfter);
         assert.ok(Math.abs(g.dotsCenter - g.titleCenter) <= 1);
         assert.equal(g.gap, '4px');
@@ -235,7 +245,7 @@ test(
         Object.defineProperty(navigator, 'clipboard', {
           configurable: true,
           value: {
-            writeText: async (value: string) => {
+            async writeText(value: string) {
               (window as unknown as { copiedCommand: string }).copiedCommand =
                 value;
             },

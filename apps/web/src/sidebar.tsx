@@ -104,12 +104,7 @@ export function ProjectTree({
                 aria-expanded={open}
                 onClick={() => toggle(project.id)}
               >
-                <span
-                  className={`chevron ${open ? 'open' : ''}`}
-                  aria-hidden="true"
-                >
-                  <Icon name="chevron" size={14} />
-                </span>
+                <Icon name="folder" />
                 <strong>{name}</strong>
                 <small>
                   {project.repository.github || 'No repository yet'}

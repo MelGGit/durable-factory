@@ -13,6 +13,31 @@ import {
   context,
 } from '../apps/server/src/storage.js';
 
+test('brand icons are served with browser image types and their original bytes', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'factory-icons-'));
+  const webDir = join(process.cwd(), 'apps/web/public');
+  const service = await startService({ dataDir, port: 0, webDir });
+  try {
+    for (const [filename, mime] of [
+      ['durable-factory-icon-32.png', 'image/png'],
+      ['durable-factory-logo.png', 'image/png'],
+      ['favicon.ico', 'image/x-icon'],
+    ]) {
+      const response = await fetch(`${service.url}/${filename}?v=2`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), mime);
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+      assert.deepEqual(
+        Buffer.from(await response.arrayBuffer()),
+        await readFile(join(webDir, filename)),
+      );
+    }
+  } finally {
+    await service.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('settings persist, revisions reject stale updates, credentials stay private, HTTP boundaries hold', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'factory-api-'));
   let service = await startService({ dataDir, port: 0 });
