@@ -8,7 +8,8 @@ import { startService } from '../apps/server/src/service.js';
 import {
   ChatClient,
   ApiError,
-  ChatReducer,
+  historyFromAgUi,
+  viewFromEvents,
   mergeEntries,
   type ChatFrame,
   type ConversationSnapshot,
@@ -136,9 +137,10 @@ test(
         2,
       );
       const response = await fetch(
-        `${service.url}/api/v1/conversations/${conversation.id}/history?limit=1`,
+        `${service.url}/api/v1/conversations/${conversation.id}/ag-ui/history?limit=1`,
       );
-      const small = await response.json();
+      const view = viewFromEvents((await response.json()).events);
+      const small = historyFromAgUi(view.messages, view.state);
       assert.equal(small.entries.length, 1);
       assert.ok(small.cursor);
       const previous = await client.history(conversation.id, small.cursor);
@@ -149,7 +151,7 @@ test(
       assert.equal(
         (
           await fetch(
-            `${service.url}/api/v1/conversations/${conversation.id}/history?cursor=broken`,
+            `${service.url}/api/v1/conversations/${conversation.id}/ag-ui/history?cursor=broken`,
           )
         ).status,
         400,
@@ -240,7 +242,7 @@ test('tools stream details and full artifacts, reviewer is inspection-only, deve
     stop = undefined;
     // Server shutdown must close active streams, even when clients stay attached.
     const response = await fetch(
-      `${service.url}/api/v1/conversations/${conversation.id}/events`,
+      `${service.url}/api/v1/conversations/${conversation.id}/ag-ui/events`,
     );
     const reader = response.body!.getReader();
     await reader.read();
@@ -255,37 +257,7 @@ test('tools stream details and full artifacts, reviewer is inspection-only, deve
   }
 });
 
-test('shared reducer rejects gaps and unknown streams, deduplicates updates, and merges history', () => {
-  const reducer = new ChatReducer();
-  const frame = {
-    apiVersion: 'v1',
-    streamId: 'one',
-    sequence: 1,
-    type: 'snapshot',
-    snapshot: {},
-  } as ChatFrame;
-  assert.equal(reducer.apply(frame), true);
-  assert.equal(reducer.apply(frame), false);
-  assert.throws(
-    () => reducer.apply({ ...frame, type: 'update', sequence: 3 }),
-    /missed/,
-  );
-  assert.throws(
-    () =>
-      reducer.apply({
-        ...frame,
-        type: 'update',
-        streamId: 'other',
-        sequence: 2,
-      }),
-    /snapshot/,
-  );
-  assert.equal(reducer.apply({ ...frame, type: 'update', sequence: 2 }), true);
-  assert.equal(reducer.apply({ ...frame, type: 'update', sequence: 2 }), false);
-  assert.throws(
-    () => reducer.apply({ ...frame, apiVersion: 'v2' } as never),
-    (e: unknown) => e instanceof ApiError && e.code === 'UNSUPPORTED_VERSION',
-  );
+test('shared merge keeps history ordered and prefers newer entries', () => {
   const entry = { id: '2', kind: 'pi.user', text: 'original', tools: [] };
   assert.deepEqual(
     mergeEntries(
@@ -362,7 +334,9 @@ test('large tool output remains fully pageable while wire previews and slow-clie
       }
     }
     const slow = new SlowResponse();
-    await service.chat!.stream(conversation.id, slow as never);
+    await service.chat!.stream(conversation.id, slow as never, () => ({
+      payload: 'data: {}\n\n',
+    }));
     assert.equal(slow.ended, true);
     assert.equal(slow.writes, 0);
     await assert.rejects(

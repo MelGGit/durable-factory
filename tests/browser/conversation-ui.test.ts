@@ -7,40 +7,34 @@ import { join, resolve } from 'node:path';
 import { startService } from '../../apps/server/src/service.js';
 import {
   ChatClient,
+  conversationView,
+  historyView,
+  viewSnapshotEvents,
   type ConversationSnapshot,
 } from '../../packages/shared/src/index.js';
+import { installAgUiStream } from './ag-ui-stream.js';
 import { fixture, configure } from '../fixtures/chat.js';
 
+const pushers = new WeakMap<
+  Page,
+  (value: ConversationSnapshot) => Promise<void>
+>();
 async function installSnapshotStream(
   page: Page,
   initial: ConversationSnapshot,
 ) {
-  await page.addInitScript(`(() => {
-        const initial = ${JSON.stringify(initial)};
-        const original = window.fetch.bind(window);
-        window.fetch = async (input, init) => {
-          if (typeof input === 'string' && input.endsWith('/events')) {
-            return new Response(new ReadableStream({ start(controller) {
-              let sequence = 0;
-              window.pushSnapshot = value => controller.enqueue(new TextEncoder().encode(
-                'data: ' + JSON.stringify({type:'STATE_SNAPSHOT', snapshot:{factory:{schemaVersion:1,kind:'conversation',apiVersion:'v1', streamId:'ui-test', sequence:++sequence, type:sequence === 1 ? 'snapshot' : 'update', snapshot:value}}}) + String.fromCharCode(10,10)
-              ));
-              window.pushSnapshot(initial);
-              init?.signal?.addEventListener('abort', () => controller.error(new Error('Aborted')), {once:true});
-            }}), {headers:{'Content-Type':'text/event-stream'}});
-          }
-          return original(input, init);
-        };
-      })()`);
+  pushers.set(
+    page,
+    await installAgUiStream(page, {
+      match: '/ag-ui/events',
+      threadId: initial.conversation.id,
+      view: conversationView,
+      initial,
+    }),
+  );
 }
 async function pushSnapshot(page: Page, snapshot: ConversationSnapshot) {
-  await page.evaluate(
-    (value) =>
-      (
-        window as unknown as { pushSnapshot: (value: unknown) => void }
-      ).pushSnapshot(value),
-    snapshot,
-  );
+  await pushers.get(page)!(snapshot);
 }
 
 test(
@@ -253,35 +247,26 @@ test(
       });
       page.setDefaultTimeout(6000);
       await installSnapshotStream(page, snapshot);
-      await page.route('**/history?*', (route) =>
+      await page.route('**/ag-ui/history?*', (route) =>
         route.fulfill({
           json: {
-            events: [
-              {
-                type: 'STATE_SNAPSHOT',
-                snapshot: {
-                  factory: {
-                    schemaVersion: 1,
-                    kind: 'history',
-                    entries: [
-                      {
-                        id: '1',
-                        kind: 'pi.assistant',
-                        text: 'Older assistant context',
-                        tools: [
-                          {
-                            id: 'old-call',
-                            name: 'probe',
-                            arguments: '{}',
-                            status: 'pending',
-                          },
-                        ],
-                      },
-                    ],
-                  },
+            events: viewSnapshotEvents(
+              historyView(conversation.id, [
+                {
+                  id: '1',
+                  kind: 'pi.assistant',
+                  text: 'Older assistant context',
+                  tools: [
+                    {
+                      id: 'old-call',
+                      name: 'probe',
+                      arguments: '{}',
+                      status: 'pending',
+                    },
+                  ],
                 },
-              },
-            ],
+              ]),
+            ),
           },
         }),
       );
@@ -366,15 +351,7 @@ test(
       const errors: string[] = [];
       page.on('pageerror', (e) => errors.push(e.message));
       await installSnapshotStream(page, snapshot);
-      const push = async () => {
-        await page.evaluate(
-          (value) =>
-            (
-              window as unknown as { pushSnapshot: (value: unknown) => void }
-            ).pushSnapshot(value),
-          snapshot,
-        );
-      };
+      const push = () => pushSnapshot(page, snapshot);
       await page.goto(`${service.url}/?conversation=${conversation.id}`);
       await page.locator('.agent-activity').waitFor();
       const tool = page.locator('.tool-card[data-tool-id="read-call"]');

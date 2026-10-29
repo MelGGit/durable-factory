@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventSchema } from '@ag-ui/core/schemas';
 import { simulationAdapter } from '../apps/server/src/workflow.js';
-import { AgUiRunActivityClient } from '../packages/shared/src/index.js';
+import { RunActivityClient } from '../packages/shared/src/index.js';
 import { workflowFixture } from './fixtures/workflow.js';
 import { until } from './fixtures/chat.js';
 import { context } from '../apps/server/src/storage.js';
@@ -71,7 +71,7 @@ test(
         )!.requestId,
       );
       assert.equal(queued.status, 'queued');
-      const activity = new AgUiRunActivityClient(s.service.url);
+      const activity = new RunActivityClient(s.service.url);
       let connected = false;
       stop = activity.watch(
         run.id,

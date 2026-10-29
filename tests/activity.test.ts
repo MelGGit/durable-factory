@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RunActivityClient,
+  type RunActivityPage,
   mergeActivity,
   type RunActivityFrame,
   type WorkflowRun,
@@ -127,11 +128,13 @@ test('activity streams publish changes and reconnect from a fresh snapshot', asy
       (r) => r.status === 'pr_ready',
     );
     const client = new RunActivityClient(fixture.service.url);
-    const frames: RunActivityFrame[] = [];
+    const frames: (Pick<RunActivityFrame, 'type' | 'streamId'> & {
+      snapshot: RunActivityPage;
+    })[] = [];
     stop = client.watch(
       run.id,
-      (_page, frame) => {
-        frames.push(frame);
+      (page, frame) => {
+        frames.push({ ...frame, snapshot: page });
       },
       () => {},
     );

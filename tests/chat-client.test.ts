@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { encodeAgUi } from '../apps/server/src/ag-ui.js';
 import {
+  AgUiViewStream,
   ChatClient,
-  type ChatFrame,
+  conversationView,
   type ConversationSnapshot,
   type ConnectionState,
 } from '../packages/shared/src/index.js';
@@ -26,16 +28,15 @@ const snapshot: ConversationSnapshot = {
   submissions: [],
   execution: 'idle',
 };
-const frame = (
-  sequence = 1,
-  type: 'snapshot' | 'update' = 'snapshot',
-): ChatFrame => ({
-  apiVersion: 'v1',
-  streamId: 'stream-1',
-  sequence,
-  type,
-  snapshot,
-});
+/** One connection's worth of standard AG-UI events for a snapshot. */
+const frames = (...values: ConversationSnapshot[]) => {
+  const stream = new AgUiViewStream('1', 'stream');
+  return values
+    .map((value) => encodeAgUi(stream.encode(conversationView(value))))
+    .join('');
+};
+const sse = (body: ReadableStream<Uint8Array>) =>
+  new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
 
 test('stream client observes heartbeat traffic, times out silently lost streams, and reconnects from snapshots', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
@@ -43,7 +44,7 @@ test('stream client observes heartbeat traffic, times out silently lost streams,
   let calls = 0;
   const fetcher = (async (_url, options) => {
     calls++;
-    return new Response(
+    return sse(
       new ReadableStream<Uint8Array>({
         start(controller) {
           controllers.push(controller);
@@ -70,9 +71,8 @@ test('stream client observes heartbeat traffic, times out silently lost streams,
   };
   try {
     await flush();
-    await push(`data: ${JSON.stringify(frame())}\n\n`);
-    assert.equal(received, 1);
-    await push(`data: ${JSON.stringify(frame())}\n\n`);
+    const first = new AgUiViewStream('1', 'stream-1');
+    await push(encodeAgUi(first.encode(conversationView(snapshot))));
     assert.equal(received, 1);
     t.mock.timers.tick(44000);
     await flush();
@@ -86,9 +86,7 @@ test('stream client observes heartbeat traffic, times out silently lost streams,
     t.mock.timers.tick(1000);
     await flush();
     assert.equal(calls, 2);
-    await push(
-      `data: ${JSON.stringify({ ...frame(), streamId: 'stream-2' })}\n\n`,
-    );
+    await push(frames(snapshot));
     assert.equal(received, 2);
     assert.equal(states.at(-1), 'connected');
     stop();
@@ -101,23 +99,29 @@ test('stream client observes heartbeat traffic, times out silently lost streams,
   }
 });
 
-test('stream gaps reconnect; unsupported versions stop with an explicit error', async (t) => {
+test('a closed stream reconnects from a fresh snapshot; unsupported versions stop with an explicit error', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0,
     versions = 0;
   const fetcher = (async () => {
     calls++;
-    const frames =
+    const view = conversationView(snapshot);
+    const body =
       calls === 1
-        ? [frame(), frame(3, 'update')]
-        : [{ ...frame(), apiVersion: 'v2' }];
-    return new Response(
+        ? frames(snapshot)
+        : encodeAgUi(
+            new AgUiViewStream('1', 'next').encode({
+              ...view,
+              state: {
+                factory: { ...view.state.factory, apiVersion: 'v2' as 'v1' },
+              },
+            }),
+          );
+    return sse(
       new ReadableStream({
         start(controller) {
-          for (const value of frames)
-            controller.enqueue(
-              new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`),
-            );
+          controller.enqueue(new TextEncoder().encode(body));
+          if (calls === 1) controller.close();
         },
       }),
     );
@@ -152,12 +156,10 @@ test('a stalled snapshot consumer is cancelled by the stream watchdog', async (t
     cancelled = 0;
   const fetcher = (async () => {
     calls++;
-    return new Response(
+    return sse(
       new ReadableStream({
         start(controller) {
-          controller.enqueue(
-            new TextEncoder().encode(`data: ${JSON.stringify(frame())}\n\n`),
-          );
+          controller.enqueue(new TextEncoder().encode(frames(snapshot)));
         },
       }),
     );

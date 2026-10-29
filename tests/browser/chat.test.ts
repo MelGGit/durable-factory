@@ -66,16 +66,13 @@ test(
       await page.locator('.chat-conversation[data-execution="idle"]').waitFor();
       // Lose the acknowledgement after admission. Retrying must reuse the saved ID.
       let dropped = false;
-      await page.route(
-        '**/api/v1/conversations/*/submissions',
-        async (route) => {
-          if (!dropped && route.request().method() === 'POST') {
-            dropped = true;
-            await route.fetch();
-            await route.abort('failed');
-          } else await route.continue();
-        },
-      );
+      await page.route('**/api/v1/ag-ui/run', async (route) => {
+        if (!dropped && route.request().method() === 'POST') {
+          dropped = true;
+          await route.fetch();
+          await route.abort('failed');
+        } else await route.continue();
+      });
       await page
         .getByLabel('Message', { exact: true })
         .fill('One uncertain send');

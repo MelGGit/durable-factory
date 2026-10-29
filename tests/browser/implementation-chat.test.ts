@@ -10,9 +10,11 @@ import { context } from '../../apps/server/src/storage.js';
 import { fauxAssistantMessage } from '../../apps/server/src/chat-fixtures.js';
 import { until } from '../fixtures/chat.js';
 import {
-  agUiViewEvents,
+  activityView,
+  viewSnapshotEvents,
   type RunActivityItem,
 } from '../../packages/shared/src/index.js';
+import { installAgUiStream } from './ag-ui-stream.js';
 
 test(
   'implementation chat retains live command updates outside the history window, paginates, and stays independent from planning',
@@ -132,7 +134,7 @@ test(
         .fill('Draft implementation guidance');
       await page
         .getByRole('navigation', { name: /sessions$/ })
-        .getByRole('button', { name: /^Planning Workflow plan/ })
+        .getByRole('button', { name: /^Workflow plan/ })
         .click();
       await page.waitForURL(`**/?conversation=${planning}`);
       assert.equal(await page.locator('.implementation-events').count(), 0);
@@ -319,40 +321,12 @@ test(
           { conversationId, role: 'development', partial: '', tools: [tool] },
         ],
       };
-      await page.addInitScript(
-        ({ initial }) => {
-          const original = window.fetch;
-          const state = window as typeof window & {
-            emitActivity: (snapshot: unknown) => void;
-          };
-          window.fetch = (input, init) => {
-            if (String(input).includes('/activity/ag-ui/events')) {
-              let sequence = 0;
-              return Promise.resolve(
-                new Response(
-                  new ReadableStream({
-                    start(controller) {
-                      state.emitActivity = (snapshot) =>
-                        controller.enqueue(
-                          new TextEncoder().encode(
-                            `data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: { factory: { schemaVersion: 1, kind: 'activity', apiVersion: 'v1', streamId: 'test', sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot } } })}\n\n`,
-                          ),
-                        );
-                      state.emitActivity(initial);
-                      init?.signal?.addEventListener('abort', () =>
-                        controller.close(),
-                      );
-                    },
-                  }),
-                  { headers: { 'Content-Type': 'text/event-stream' } },
-                ),
-              );
-            }
-            return original(input, init);
-          };
-        },
-        { initial },
-      );
+      const emit = await installAgUiStream(page, {
+        match: '/activity/ag-ui/events',
+        threadId: run.id,
+        view: activityView,
+        initial,
+      });
       await page.route('**/artifacts/task-1?*', (route) =>
         route.fulfill({ json: { text: 'Complete output stays loaded' } }),
       );
@@ -387,14 +361,6 @@ test(
           ],
         },
       };
-      const emit = async (snapshot: unknown) =>
-        page.evaluate((snapshot) => {
-          (
-            window as typeof window & {
-              emitActivity: (snapshot: unknown) => void;
-            }
-          ).emitActivity(snapshot);
-        }, snapshot);
       await emit({ ...initial, items: [call] });
       await card.getByText('{}', { exact: true }).last().waitFor();
       await card
@@ -413,11 +379,12 @@ test(
         },
       };
       // The call can initially be outside the loaded history window.
+      emit.startFrom(initial);
       await page.reload();
       await page.waitForFunction(
         () =>
-          typeof (window as unknown as { emitActivity?: unknown })
-            .emitActivity === 'function',
+          typeof (window as unknown as { __agUiPush?: unknown }).__agUiPush ===
+          'function',
       );
       await emit({ items: [result], live: [], cursor: 'older-call' });
       await card
@@ -434,15 +401,8 @@ test(
       await page.route('**/activity/ag-ui?*', (route) =>
         route.fulfill({
           json: {
-            events: agUiViewEvents(
-              {
-                apiVersion: 'v1',
-                streamId: 'page',
-                sequence: 1,
-                type: 'snapshot',
-                snapshot: { items: [call], live: [] },
-              },
-              'activity',
+            events: viewSnapshotEvents(
+              activityView({ items: [call], live: [] }),
             ),
           },
         }),

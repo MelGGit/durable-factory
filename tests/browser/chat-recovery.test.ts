@@ -72,15 +72,13 @@ test(
       await page1
         .getByRole('heading', { name: 'Draft A', exact: true })
         .waitFor();
+      // The saved request ID is the AG-UI message ID of the recovered send.
       await until(
-        () =>
-          client.submission(a.id, 'legacy-input').catch((error) => {
-            // Restoring the heading can precede admission of the recovered send.
-            if (error instanceof ApiError && error.code === 'NOT_FOUND')
-              return undefined;
-            throw error;
-          }),
-        (value) => value?.status === 'completed',
+        async () => (await client.history(a.id)).entries,
+        (entries) =>
+          entries.some((entry) =>
+            entry.text.includes('Offline reply: Legacy pending input'),
+          ),
       );
       assert.equal(
         await page1.getByLabel('Message', { exact: true }).inputValue(),
@@ -102,7 +100,7 @@ test(
         ),
       );
       await page1.getByLabel('Message', { exact: true }).fill('Keep A draft');
-      await page2.getByRole('button', { name: 'Draft B offline' }).click();
+      await page2.getByRole('button', { name: 'Draft B Planning' }).click();
       await page2
         .getByRole('heading', { name: 'Draft B', exact: true })
         .waitFor();
@@ -121,17 +119,14 @@ test(
       );
       let dropped = false;
       let requestId = '';
-      await page1.route(
-        '**/api/v1/conversations/*/submissions',
-        async (route) => {
-          if (!dropped && route.request().method() === 'POST') {
-            dropped = true;
-            requestId = route.request().postDataJSON().requestId;
-            await route.fetch();
-            await route.abort('failed');
-          } else await route.continue();
-        },
-      );
+      await page1.route('**/api/v1/ag-ui/run', async (route) => {
+        if (!dropped && route.request().method() === 'POST') {
+          dropped = true;
+          requestId = route.request().postDataJSON().messages.at(-1).id;
+          await route.fetch();
+          await route.abort('failed');
+        } else await route.continue();
+      });
       await page1
         .getByLabel('Message', { exact: true })
         .fill('Uncertain send from A');
@@ -208,7 +203,10 @@ test(
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
       await page.goto(service.url);
-      await page.getByRole('button', { name: 'Reconnect gap offline' }).click();
+      await page
+        .getByRole('navigation', { name: /sessions$/ })
+        .getByRole('button', { name: 'Reconnect gap Planning', exact: true })
+        .click();
       await page
         .getByRole('heading', { name: 'Reconnect gap', exact: true })
         .waitFor();
@@ -279,7 +277,10 @@ test(
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
       await page.goto(service.url);
-      await page.getByRole('button', { name: 'History A offline' }).click();
+      await page
+        .getByRole('navigation', { name: /sessions$/ })
+        .getByRole('button', { name: 'History A Planning', exact: true })
+        .click();
       await page
         .getByRole('heading', { name: 'History A', exact: true })
         .waitFor();
@@ -302,7 +303,10 @@ test(
       );
       await page.getByRole('button', { name: 'Load older messages' }).click();
       await until(async () => requested, Boolean);
-      await page.getByRole('button', { name: 'History B offline' }).click();
+      await page
+        .getByRole('navigation', { name: /sessions$/ })
+        .getByRole('button', { name: 'History B Planning', exact: true })
+        .click();
       await page
         .getByRole('heading', { name: 'History B', exact: true })
         .waitFor();

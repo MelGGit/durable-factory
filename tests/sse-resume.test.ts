@@ -87,19 +87,6 @@ test('a resumed stream is open at once, even though it has nothing to send yet',
     assert.equal(await resumed.opened(1500), true);
     assert.equal(await resumed.next(200), undefined);
     resumed.close();
-    const conversation = await s.issue();
-    const run = await s.client.startRun(conversation, 'open-at-once');
-    for (const path of [
-      `/api/v1/runs/${run.id}/activity/events`,
-      `/api/v1/conversations/${conversation}/events`,
-    ]) {
-      const held = open(s.service.url, path);
-      const state = await held.next(3000);
-      held.close();
-      const again = open(s.service.url, path, state!.id);
-      assert.equal(await again.opened(1500), true, path);
-      again.close();
-    }
   } finally {
     await s.close();
   }
@@ -190,65 +177,7 @@ test('a workflow status change that leaves the stored revision alone still reach
   }
 });
 
-test('activity and conversation streams skip a snapshot only when the client holds exactly that state', async () => {
-  const s = await workflowFixture();
-  try {
-    const conversation = await s.issue();
-    const run = await s.client.startRun(conversation, 'resume-streams');
-    for (const path of [
-      `/api/v1/runs/${run.id}/activity/events`,
-      `/api/v1/conversations/${conversation}/events`,
-    ]) {
-      const fresh = open(s.service.url, path);
-      const first = await fresh.next(3000);
-      fresh.close();
-      assert.equal(first?.data.type, 'snapshot', path);
-      assert.ok(first?.id && first.id.length > 10, `${path} has an id`);
-
-      const resumed = open(s.service.url, path, first!.id);
-      const next = await resumed.next(1200);
-      resumed.close();
-      // Background work may change the state, but the held state is never re-sent.
-      if (next) {
-        assert.notEqual(next.id, first!.id, `${path} re-sent held state`);
-        assert.equal(next.data.type, 'snapshot', path);
-        assert.equal(next.data.sequence, 1, path);
-      }
-
-      const stale = open(s.service.url, path, 'not-the-current-version');
-      const frame = await stale.next(3000);
-      stale.close();
-      assert.equal(frame?.data.type, 'snapshot', path);
-      assert.equal(frame?.data.sequence, 1, path);
-    }
-  } finally {
-    await s.close();
-  }
-});
-
-test('a conversation stream resumed at the current state delivers the next change as a snapshot', async () => {
-  const s = await workflowFixture();
-  try {
-    const conversation = await s.issue();
-    const path = `/api/v1/conversations/${conversation}/events`;
-    const fresh = open(s.service.url, path);
-    const first = await fresh.next(3000);
-    fresh.close();
-    const resumed = open(s.service.url, path, first!.id);
-    await s.chat.submit(conversation, 'one more thing', 'resume-change');
-    let frame = await resumed.next(5000);
-    while (frame && frame.id === first!.id) frame = await resumed.next(5000);
-    resumed.close();
-    assert.ok(frame, 'the change arrived');
-    assert.equal(frame.data.type, 'snapshot');
-    assert.equal(frame.data.sequence, 1);
-    assert.notEqual(frame.id, first!.id);
-  } finally {
-    await s.close();
-  }
-});
-
-test('AG-UI streams are unchanged: no ids, and the snapshot is always sent', async () => {
+test('AG-UI streams carry no SSE ids, so a reconnect always starts from a fresh snapshot', async () => {
   const s = await workflowFixture();
   try {
     const conversation = await s.issue();

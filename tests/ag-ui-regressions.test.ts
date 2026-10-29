@@ -9,7 +9,8 @@ import { startService } from '../apps/server/src/service.js';
 import {
   ChatClient,
   agUiMessages,
-  AgUiConversationEvents,
+  AgUiViewStream,
+  conversationView,
   type ConversationSnapshot,
   type TranscriptEntry,
 } from '../packages/shared/src/index.js';
@@ -256,14 +257,16 @@ test('live text streams once and its committed replacement preserves earlier mes
     submissions: [],
     execution: 'running',
   };
-  const projector = new AgUiConversationEvents('1', 'live-run', history);
-  const first = projector.update(snapshot);
-  const next = projector.update({ ...snapshot, partial: 'New reply' });
+  const stream = new AgUiViewStream('1', 'live-run', { frames: false });
+  const update = (value: typeof snapshot) =>
+    stream.encode(conversationView(value));
+  const first = update(snapshot);
+  const next = update({ ...snapshot, partial: 'New reply' });
   assert.ok(
     !next.some((event) => event.type === 'MESSAGES_SNAPSHOT'),
     'Token deltas should not resend the full transcript',
   );
-  const final = projector.update({
+  const final = update({
     ...snapshot,
     partial: '',
     execution: 'idle',
@@ -279,8 +282,11 @@ test('live text streams once and its committed replacement preserves earlier mes
       .filter((event) => event.type === 'TEXT_MESSAGE_CONTENT')
       .map((event) => ('delta' in event ? event.delta : ''))
       .join(''),
-    'New reply finished',
+    'New reply',
+    'The live message streams once as deltas',
   );
+  // The committed reply replaces its live slot through a snapshot, so clients
+  // never keep twins and earlier messages are retained.
   const replacement = final.find(
     (event) => event.type === 'MESSAGES_SNAPSHOT',
   ) as BaseEvent & { messages: { id: string; content: string }[] };
@@ -289,7 +295,7 @@ test('live text streams once and its committed replacement preserves earlier mes
     ['Earlier reply', 'New reply finished'],
   );
   assert.ok(
-    !replacement.messages.some((message) => message.id.includes(':live:')),
+    !replacement.messages.some((message) => message.id.endsWith(':live')),
   );
 });
 

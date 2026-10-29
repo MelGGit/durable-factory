@@ -6,16 +6,10 @@ import { join } from 'node:path';
 import { request } from 'node:http';
 import { HttpAgent, type BaseEvent } from '@ag-ui/client';
 import { EventSchema } from '@ag-ui/core/schemas';
-import { fromAgUiMessages, useAgUiRuntime } from '@assistant-ui/react-ag-ui';
-import { createElement } from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import type { AssistantRuntime } from '@assistant-ui/react';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startService } from '../apps/server/src/service.js';
 import {
-  AgUiChatClient,
-  AgUiViewReducer,
-  agUiViewEvents,
+  ChatClient,
   type ConversationSnapshot,
 } from '../packages/shared/src/index.js';
 import { fixture, configure, until } from './fixtures/chat.js';
@@ -24,7 +18,7 @@ async function setup(speed = Infinity) {
   const dataDir = await mkdtemp(join(tmpdir(), 'factory-ag-ui-'));
   const deps = fixture(speed);
   const service = await startService({ dataDir, port: 0, chat: deps });
-  const client = new AgUiChatClient(service.url);
+  const client = new ChatClient(service.url);
   await configure(client);
   const conversation = await client.createConversation(
     'AG-UI compatibility',
@@ -115,16 +109,13 @@ test(
         ),
       );
       assert.equal(agent.state.factory.schemaVersion, 1);
-      // The real assistant-ui adapter reconstructs backend messages, not a local mock.
-      const restored = fromAgUiMessages(agent.messages);
-      assert.ok(restored.some((m) => m.role === 'assistant'));
+      // Tool calls and their results are reconstructed from standard events.
       assert.ok(
-        restored.some(
-          (m) =>
-            Array.isArray(m.content) &&
-            m.content.some((part) => part.type === 'tool-call'),
+        agent.messages.some(
+          (m) => m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0,
         ),
       );
+      assert.ok(agent.messages.some((m) => m.role === 'tool'));
       const done = seen.at(-1) as BaseEvent & {
         runId: string;
         threadId: string;
@@ -146,63 +137,59 @@ test(
 );
 
 test(
-  'assistant-ui runtime fixture sends a message and renders the backend reply',
+  'the shared client sends through the standard run endpoint and observes the reply as AG-UI events',
   { timeout: 20000 },
   async () => {
     const f = await setup();
-    let renderer: ReactTestRenderer | undefined;
-    let runtime: AssistantRuntime | undefined;
-    const errors: Error[] = [];
-    const agent = new HttpAgent({
-      url: `${f.service.url}/api/v1/ag-ui/run`,
-      threadId: f.conversation.id,
-      headers: f.headers,
-    });
-    function Fixture() {
-      runtime = useAgUiRuntime({
-        agent,
-        onError: (error) => errors.push(error),
-      });
-      return null;
-    }
-    const actEnvironment = globalThis as typeof globalThis & {
-      IS_REACT_ACT_ENVIRONMENT?: boolean;
-    };
-    const oldEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
-    actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    let stop: (() => void) | undefined;
     try {
-      await act(async () => {
-        renderer = create(createElement(Fixture));
-      });
-      await act(async () => {
-        runtime!.thread.append('A real assistant-ui request');
-      });
-      const state = await until(
-        async () => {
-          await act(async () => {
-            await delay(20);
-          });
-          return runtime!.thread.getState();
+      let latest: ConversationSnapshot | undefined;
+      const errors: Error[] = [];
+      stop = f.client.watch(
+        f.conversation.id,
+        (value) => {
+          latest = value;
         },
-        (state) =>
-          !state.isRunning &&
-          state.messages.some((message) => message.role === 'assistant'),
+        () => {},
+        (error) => errors.push(error),
+      );
+      await f.client.send(
+        f.conversation.id,
+        'A shared client request',
+        'sdk-message',
+      );
+      // A repeated send of the same message reuses the admission.
+      await f.client.send(
+        f.conversation.id,
+        'A shared client request',
+        'sdk-message',
+      );
+      const state = await until(
+        async () => latest,
+        (value) =>
+          Boolean(
+            value?.entries.some(
+              (entry) =>
+                entry.kind === 'pi.assistant' &&
+                entry.text.includes('Offline reply: A shared client request'),
+            ),
+          ),
       );
       assert.deepEqual(errors, []);
-      assert.ok(
-        state.messages.some((message) =>
-          message.content.some(
-            (part) =>
-              part.type === 'text' &&
-              part.text.includes('Offline reply: A real assistant-ui request'),
-          ),
-        ),
+      assert.equal(
+        state!.entries.filter((entry) => entry.kind === 'pi.user').length,
+        1,
+      );
+      assert.equal(
+        state!.entries.find((entry) => entry.kind === 'pi.user')?.messageId,
+        'sdk-message',
+      );
+      await assert.rejects(
+        f.client.send(f.conversation.id, 'Different text', 'sdk-message'),
+        /different input|CONFLICT|already/i,
       );
     } finally {
-      await act(async () => {
-        renderer?.unmount();
-      });
-      actEnvironment.IS_REACT_ACT_ENVIRONMENT = oldEnvironment;
+      stop?.();
       await f.close();
     }
   },
@@ -279,7 +266,7 @@ test(
       () => {},
     );
     try {
-      await f.client.submit(f.conversation.id, 'use tool', 'shutdown-tool');
+      await f.client.send(f.conversation.id, 'use tool', 'shutdown-tool');
       await until(
         () => f.client.history(f.conversation.id),
         (page) => page.entries.some((entry) => entry.tools.length),
@@ -518,7 +505,7 @@ test('AG-UI validates requests and preserves host, origin, CSRF and role boundar
   }
 });
 
-test('passive AG-UI views restore state without admitting work, and enforce sequence continuity', async () => {
+test('passive AG-UI views restore state without admitting work, as standard events', async () => {
   const f = await setup();
   let stop: (() => void) | undefined;
   try {
@@ -533,34 +520,30 @@ test('passive AG-UI views restore state without admitting work, and enforce sequ
     await until(async () => snapshot, Boolean);
     assert.equal(snapshot!.execution, 'idle');
     assert.equal(snapshot!.entries.length, 0);
-    const reducer = new AgUiViewReducer();
-    const frame = {
-      apiVersion: 'v1' as const,
-      streamId: 'test',
-      sequence: 1,
-      type: 'snapshot' as const,
-      snapshot: snapshot!,
-    };
-    const first = agUiViewEvents(frame, 'conversation');
-    assert.equal(reducer.apply(first[0], 'conversation'), undefined);
-    assert.equal(reducer.apply(first[1], 'conversation')!.sequence, 1);
-    assert.equal(reducer.apply(first[1], 'conversation'), undefined);
-    assert.throws(
-      () =>
-        reducer.apply(
-          agUiViewEvents(
-            { ...frame, sequence: 3, type: 'update' },
-            'conversation',
-          )[1],
-          'conversation',
-        ),
-      /fresh AG-UI snapshot/,
+    const base = `${f.service.url}/api/v1/conversations/${f.conversation.id}/ag-ui`;
+    // The raw stream is a run lifecycle with messages, state and a frame marker.
+    const controller = new AbortController();
+    const response = await fetch(`${base}/events`, {
+      signal: controller.signal,
+    });
+    const reader = response.body!.getReader();
+    let text = '';
+    while (!text.includes('factory.frame'))
+      text += new TextDecoder().decode((await reader.read()).value);
+    controller.abort();
+    const raw = text
+      .split('\n\n')
+      .flatMap((frame) =>
+        frame.startsWith('data:') ? [JSON.parse(frame.slice(5))] : [],
+      );
+    for (const event of raw) EventSchema.parse(event);
+    assert.deepEqual(
+      raw.map((event) => event.type),
+      ['RUN_STARTED', 'MESSAGES_SNAPSHOT', 'STATE_SNAPSHOT', 'CUSTOM'],
     );
-    const snap = await (
-      await fetch(
-        `${f.service.url}/api/v1/conversations/${f.conversation.id}/ag-ui/snapshot`,
-      )
-    ).json();
+    assert.equal(raw[2].snapshot.factory.kind, 'conversation');
+    assert.equal(raw[2].snapshot.factory.apiVersion, 'v1');
+    const snap = await (await fetch(`${base}/snapshot`)).json();
     for (const event of snap.events) EventSchema.parse(event);
   } finally {
     stop?.();
