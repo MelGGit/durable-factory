@@ -23,7 +23,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ApiError,
   formatTicketBody,
-  AgUiChatClient,
+  ChatClient,
   WorkflowClient,
   type DeletionOperation,
   type WorkflowSnapshot,
@@ -45,7 +45,7 @@ import {
   type PendingSend,
 } from './chat-storage.js';
 
-const client = new AgUiChatClient();
+const client = new ChatClient();
 const workflowClient = new WorkflowClient();
 type ConversationView = {
   id: string;
@@ -637,21 +637,13 @@ export function ChatApp() {
       return;
     inFlight.current.add(pending.requestId);
     try {
-      let accepted;
-      try {
-        accepted = await client.submission(
-          pending.conversationId,
-          pending.requestId,
-        );
-      } catch (e) {
-        if (!(e instanceof ApiError) || e.code !== 'NOT_FOUND') throw e;
-      }
-      if (!accepted || accepted.status === 'acknowledged')
-        await client.submit(
-          pending.conversationId,
-          pending.content,
-          pending.requestId,
-        );
+      // The request ID is the AG-UI user-message ID, so repeating an uncertain
+      // send reuses its earlier admission instead of queueing the text twice.
+      await client.send(
+        pending.conversationId,
+        pending.content,
+        pending.requestId,
+      );
       persist((previous) => ({
         ...previous,
         pending: previous.pending.filter(
@@ -735,7 +727,7 @@ export function ChatApp() {
     setBusy(true);
     setError('');
     try {
-      const conversation = await new AgUiChatClient(
+      const conversation = await new ChatClient(
         '',
         undefined,
         creation.projectId,

@@ -4,14 +4,14 @@ Recorded 2026-10-22. This records observed application integration, not certific
 
 ## Pinned environment
 
-| Component | Version | Result |
-| --- | --- | --- |
-| Node.js | 24.18.0 | Service, SQLite, type checks and Node test runner exercised |
-| Bun | 1.4.3 | Install, lockfile, Vite build and Node-targeted bundle exercised |
-| Pi Durable | 1.3.0 | Published package installed; real SQLite documents and forced restart recovery exercised |
-| pi-ai | 1.3.0 | Published package installed; faux provider, explicit model collections, provider factories and persistent credential adapter exercised |
-| Chord | 1.3.0 | Published package installed; context and document transactions exercised through Pi |
-| React / Vite / TypeScript | 19.2.0 / 7.1.12 / 5.9.3 | Pinned in manifests and Bun lockfile |
+| Component                 | Version                 | Result                                                                                                                                 |
+| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js                   | 24.18.0                 | Service, SQLite, type checks and Node test runner exercised                                                                            |
+| Bun                       | 1.4.3                   | Install, lockfile, Vite build and Node-targeted bundle exercised                                                                       |
+| Pi Durable                | 1.3.0                   | Published package installed; real SQLite documents and forced restart recovery exercised                                               |
+| pi-ai                     | 1.3.0                   | Published package installed; faux provider, explicit model collections, provider factories and persistent credential adapter exercised |
+| Chord                     | 1.3.0                   | Published package installed; context and document transactions exercised through Pi                                                    |
+| React / Vite / TypeScript | 19.2.0 / 7.1.12 / 5.9.3 | Pinned in manifests and Bun lockfile                                                                                                   |
 
 The reference durable-pi backend pins 1.0.3; we use the published 1.3.0 package set and current APIs rather than copying that older setup. No reference application code was copied.
 

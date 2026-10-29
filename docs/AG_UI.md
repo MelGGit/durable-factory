@@ -39,24 +39,26 @@ Run/message IDs must be non-empty and at most 512 characters. User IDs in the nu
 - Bindings between exchange IDs, user-message IDs, content, and submission receipts persist in conversation-scoped storage. Different content under an existing identity returns `409`. The same user-message ID in a new exchange reuses the accepted submission, including after restart. Use a new message ID for genuinely new work.
 - Closing a connection or switching conversations detaches observation and never cancels accepted work. Explicit interrupt/pause controls retain their existing semantics. Standard AG-UI HTTP has no `Last-Event-ID` resumption: recover durable history, and retry uncertain delivery with a new exchange ID and the original user-message ID.
 
-## Factory observation extensions
+## Observation streams
 
-These read-only interfaces carry standard AG-UI events but are **not** the standard POST/run transport:
+The web app and the shared clients observe conversations and run timelines as standard AG-UI streams, using the official SDK (`HttpAgent`). These read-only endpoints join a thread rather than starting a run:
 
-| Endpoint                                                           | Result                                                                                         |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `GET /api/v1/conversations/:id/ag-ui/snapshot`                     | JSON `{ events }` containing message/state snapshots                                           |
-| `GET /api/v1/conversations/:id/ag-ui/history?cursor=...&limit=...` | JSON `{ events }`; state contains `factory.kind = "history"`, `entries`, and optional `cursor` |
-| `GET /api/v1/conversations/:id/ag-ui/events`                       | Passive SSE message/state snapshots                                                            |
-| `GET /api/v1/runs/:id/activity/ag-ui?cursor=...&limit=...`         | JSON `{ events }` for the combined developer/reviewer/service timeline                         |
-| `GET /api/v1/runs/:id/activity/ag-ui/events`                       | Passive SSE timeline, live tools, and developer composer state                                 |
+| Endpoint                                                           | Result                                                                                       |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `GET /api/v1/conversations/:id/ag-ui/snapshot`                     | JSON `{ events }`: `MESSAGES_SNAPSHOT` and `STATE_SNAPSHOT`                                  |
+| `GET /api/v1/conversations/:id/ag-ui/history?cursor=...&limit=...` | JSON `{ events }` for an older page; state has `factory.kind = "history"`, `order`, `cursor` |
+| `GET /api/v1/conversations/:id/ag-ui/events`                       | SSE stream of the conversation                                                               |
+| `GET /api/v1/runs/:id/activity/ag-ui?cursor=...&limit=...`         | JSON `{ events }` for the combined developer/reviewer/service timeline                       |
+| `GET /api/v1/runs/:id/activity/ag-ui/events`                       | SSE stream of the timeline, live tools, and developer composer state                         |
 
-Passive state snapshots contain `factory.schemaVersion = 1`, `kind` (`conversation` or `activity`), `apiVersion`, `streamId`, `sequence`, `type`, and `snapshot`. Connections begin with replacement snapshots; updates increase the sequence. Duplicate frames are ignored; gaps require reconnect/history backfill. Pagination matches the existing APIs. Streams preserve 15-second heartbeats, bounded output buffers, and the 45-second client watchdog.
+A stream begins with `RUN_STARTED`, a `MESSAGES_SNAPSHOT` and a `STATE_SNAPSHOT`. Later changes are standard events: appended messages and token growth use `TEXT_MESSAGE_*` and `TOOL_CALL_*`; other changes are a replacement `MESSAGES_SNAPSHOT`; state changes are `STATE_DELTA` JSON patches. The in-progress generation is the assistant message `<thread>:live`. A stream never emits `RUN_FINISHED`. Each consistent view ends with a `CUSTOM` event named `factory.frame`, so clients publish only complete views.
 
-The shipped frontend uses `AgUiChatClient` and `AgUiRunActivityClient` for these views. Existing REST submission/receipt endpoints handle uncertain sends, durable queueing, steering, withdrawal, interruption, human answers, and workflow controls. Settings, drafts, tools, scroll behavior, and inspector panels retain their existing behavior. Legacy `ChatClient` and `RunActivityClient` remain available.
+Transcript text and tool calls/results are messages. Fields messages cannot carry (entry kind, timestamps, tool status and artifact links, submissions, execution state, planning and workflow state, older-history cursor) live in `state.factory` (`schemaVersion: 1`, `apiVersion`, `kind` of `conversation`, `activity` or `history`). There are no stream IDs, sequence numbers or `Last-Event-ID` replay: every connection starts from a fresh snapshot, and clients backfill durable history through the history endpoints. Heartbeats (15 seconds), bounded output buffers and the 45-second client watchdog are unchanged.
+
+The shared `ChatClient` and `RunActivityClient` implement `watch()` on this protocol, and `ChatClient.send()` sends text through `POST /api/v1/ag-ui/run`. It resolves once the service has durably admitted the message and then detaches from the run's stream. The user-message ID is the idempotency key, so retrying an uncertain send is safe. Steering, withdrawal, interruption, human answers, deletion and workflow controls stay on the factory REST APIs.
 
 ## Compatibility and limits
 
 The integration supports text, backend tool calls/results, message/state snapshots, lifecycle events, and factory observation extensions. Client tools, AG-UI approvals/resume, attachments, reasoning events, history editing/branching, WebSockets, and protobuf are outside this release. Human answers and approvals continue through factory APIs; generic AG-UI compatibility does not supply those application controls automatically.
 
-`tests/ag-ui.test.ts` exercises the endpoint with the official `HttpAgent`, validates events against official schemas, and mounts the real assistant-ui AG-UI runtime as a test-only fixture. Assistant-ui is a development dependency only; the shipped UI keeps our components.
+`tests/ag-ui.test.ts` exercises the endpoint with the official `HttpAgent` and validates events against official schemas. `tests/ag-ui-view.test.ts` checks that an SDK observer rebuilds every view from a valid event stream.

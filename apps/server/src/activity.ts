@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { contentVersion, writeSse } from './sse.js';
+import { writeSse } from './sse.js';
 import type { ServerResponse } from 'node:http';
 import {
   API_VERSION,
@@ -289,9 +289,7 @@ export class RunActivityService {
   async stream(
     id: string,
     res: ServerResponse,
-    encode?: (frame: RunActivityFrame) => string,
-    /** The id of the page a reconnecting client already holds. */
-    resume?: string,
+    encode: (frame: RunActivityFrame) => string,
   ) {
     const initial = await this.page(id);
     if (res.destroyed) return;
@@ -304,9 +302,8 @@ export class RunActivityService {
     });
     res.flushHeaders();
     const streamId = randomUUID();
-    const held = JSON.stringify(initial);
     let sequence = 0,
-      last = !encode && resume === contentVersion(held) ? held : '',
+      last = '',
       closed = false,
       busy = false;
     const close = () => {
@@ -336,15 +333,7 @@ export class RunActivityService {
         type: sequence === 1 ? 'snapshot' : 'update',
         snapshot,
       };
-      if (
-        !(await writeSse(
-          res,
-          encode
-            ? encode(frame)
-            : `id: ${contentVersion(value)}\ndata: ${JSON.stringify(frame)}\n\n`,
-        ))
-      )
-        close();
+      if (!(await writeSse(res, encode(frame)))) close();
     };
     const poll = setInterval(() => {
       if (busy || closed) return;

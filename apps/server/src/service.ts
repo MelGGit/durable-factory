@@ -5,14 +5,15 @@ import type { DeletionOperation } from '../../../packages/shared/src/deletion.js
 import { RunActivityService } from './activity.js';
 import {
   runAgUi,
-  encodeAgUiConversation,
-  encodeAgUiActivity,
+  conversationEncoder,
+  activityEncoder,
   agUiSnapshot,
 } from './ag-ui.js';
 import {
-  agUiMessages,
-  agUiViewEvents,
-} from '../../../packages/shared/src/ag-ui.js';
+  activityView,
+  historyView,
+  viewSnapshotEvents,
+} from '../../../packages/shared/src/ag-ui-view.js';
 import {
   createServer,
   type IncomingMessage,
@@ -471,8 +472,10 @@ export async function startService(options: ServiceOptions = {}) {
         );
       if (agUiConversation && req.method === 'GET') {
         const [, id, action] = agUiConversation;
-        if (action === 'events')
-          return chat!.stream(id, res, encodeAgUiConversation);
+        if (action === 'events') {
+          const view = conversationEncoder(id);
+          return chat!.stream(id, res, view.encode, view.failed);
+        }
         if (action === 'snapshot')
           return send(res, 200, {
             events: agUiSnapshot(await chat!.activitySnapshot(id)),
@@ -483,18 +486,9 @@ export async function startService(options: ServiceOptions = {}) {
           Number(url.searchParams.get('limit') ?? 50),
         );
         return send(res, 200, {
-          events: [
-            {
-              type: 'MESSAGES_SNAPSHOT',
-              messages: agUiMessages(id, page.entries),
-            },
-            {
-              type: 'STATE_SNAPSHOT',
-              snapshot: {
-                factory: { schemaVersion: 1, kind: 'history', ...page },
-              },
-            },
-          ],
+          events: viewSnapshotEvents(
+            historyView(id, page.entries, page.cursor),
+          ),
         });
       }
       const agUiActivity =
@@ -503,23 +497,14 @@ export async function startService(options: ServiceOptions = {}) {
         );
       if (agUiActivity && req.method === 'GET') {
         const [, id, events] = agUiActivity;
-        if (events) return activity!.stream(id, res, encodeAgUiActivity);
+        if (events) return activity!.stream(id, res, activityEncoder(id));
         const snapshot = await activity!.page(
           id,
           url.searchParams.get('cursor') ?? undefined,
           Number(url.searchParams.get('limit') ?? 50),
         );
         return send(res, 200, {
-          events: agUiViewEvents(
-            {
-              apiVersion: API_VERSION,
-              streamId: 'page',
-              sequence: 1,
-              type: 'snapshot',
-              snapshot,
-            },
-            'activity',
-          ),
+          events: viewSnapshotEvents(activityView(snapshot)),
         });
       }
       if (path === '/api/v1/runs/events' && req.method === 'GET')
@@ -579,28 +564,6 @@ export async function startService(options: ServiceOptions = {}) {
         } finally {
           await file.close();
         }
-      }
-      const activityRoute =
-        /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/activity(?:\/(events))?$/.exec(
-          path,
-        );
-      if (activityRoute && req.method === 'GET') {
-        if (activityRoute[2])
-          return activity!.stream(
-            activityRoute[1],
-            res,
-            undefined,
-            lastEventId(req),
-          );
-        return send(
-          res,
-          200,
-          await activity!.page(
-            activityRoute[1],
-            url.searchParams.get('cursor') ?? undefined,
-            Number(url.searchParams.get('limit') ?? 50),
-          ),
-        );
       }
       const inspectionRoute =
         /^\/api\/v1\/runs\/([A-Za-z0-9_-]+)\/inspection$/.exec(path);
@@ -669,24 +632,12 @@ export async function startService(options: ServiceOptions = {}) {
           );
       }
       const chatRoute =
-        /^\/api\/v1\/conversations\/([A-Za-z0-9_-]+)\/(history|events|submissions|interrupt|artifacts)(?:\/([A-Za-z0-9_-]+)(?:\/(withdraw))?)?$/.exec(
+        /^\/api\/v1\/conversations\/([A-Za-z0-9_-]+)\/(submissions|interrupt|artifacts)(?:\/([A-Za-z0-9_-]+)(?:\/(withdraw))?)?$/.exec(
           path,
         );
       if (chatRoute) {
         const [, id, action, item, operation] = chatRoute;
         const query = new URL(req.url!, 'http://localhost').searchParams;
-        if (action === 'events' && req.method === 'GET')
-          return chat!.stream(id, res, undefined, undefined, lastEventId(req));
-        if (action === 'history' && req.method === 'GET')
-          return send(
-            res,
-            200,
-            await chat!.history(
-              id,
-              query.get('cursor') ?? undefined,
-              Number(query.get('limit') ?? 50),
-            ),
-          );
         if (action === 'submissions' && !item && req.method === 'GET')
           return send(
             res,

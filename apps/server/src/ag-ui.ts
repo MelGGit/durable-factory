@@ -1,12 +1,15 @@
 import { EventEncoder } from '@ag-ui/encoder';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
 import type { BaseEvent } from '@ag-ui/core';
+import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
 import {
   AG_UI_VERSION,
   ApiError,
-  AgUiConversationEvents,
-  agUiViewEvents,
+  AgUiViewStream,
+  activityView,
+  conversationView,
+  viewSnapshotEvents,
   type ChatFrame,
   type RunActivityFrame,
   type ConversationSnapshot,
@@ -17,24 +20,36 @@ import type { ChatService } from './chat.js';
 const encoder = new EventEncoder({ accept: 'text/event-stream' });
 export const encodeAgUi = (events: BaseEvent[]) =>
   events.map((event) => encoder.encode(event)).join('');
-export const encodeAgUiConversation = (frame: ChatFrame) => ({
-  payload: encodeAgUi(agUiViewEvents(frame, 'conversation')),
-});
-export const encodeAgUiActivity = (frame: RunActivityFrame) =>
-  encodeAgUi(agUiViewEvents(frame, 'activity'));
 
-export function agUiSnapshot(snapshot: ConversationSnapshot) {
-  return agUiViewEvents(
+const streamFailed = () =>
+  encodeAgUi([
     {
-      apiVersion: 'v1',
-      streamId: 'snapshot',
-      sequence: 1,
-      type: 'snapshot',
-      snapshot,
-    },
-    'conversation',
-  );
+      type: 'RUN_ERROR',
+      code: 'STREAM_FAILED',
+      message:
+        'The conversation stream failed. Reconcile durable history before retrying.',
+    } as BaseEvent,
+  ]);
+
+/** A passive conversation view: the thread's current state, then changes.
+ * Each connection needs its own encoder, which remembers what it has sent. */
+export function conversationEncoder(threadId: string) {
+  const stream = new AgUiViewStream(threadId, randomUUID());
+  return {
+    encode: (frame: ChatFrame) => ({
+      payload: encodeAgUi(stream.encode(conversationView(frame.snapshot))),
+    }),
+    failed: streamFailed,
+  };
 }
+export function activityEncoder(runId: string) {
+  const stream = new AgUiViewStream(runId, randomUUID());
+  return (frame: RunActivityFrame) =>
+    encodeAgUi(stream.encode(activityView(frame.snapshot)));
+}
+
+export const agUiSnapshot = (snapshot: ConversationSnapshot) =>
+  viewSnapshotEvents(conversationView(snapshot));
 
 /** Restore durable presentation history independently of bounded live windows.
  * Cursors fix each older page's upper bound even if work commits during a read. */
@@ -111,26 +126,19 @@ export async function runAgUi(
     message.id,
     content,
   );
-  const projection = new AgUiConversationEvents(
-    input.threadId,
-    input.runId,
-    history,
-  );
+  const stream = new AgUiViewStream(input.threadId, input.runId, {
+    protocolVersion: AG_UI_VERSION,
+    frames: false,
+  });
+  // The exchange keeps the complete transcript, independent of the bounded
+  // observation window, so replacement snapshots never lose earlier messages.
+  const transcript = new Map(history.map((entry) => [entry.id, entry]));
   let started = false;
   await chat.stream(
     input.threadId,
     res,
     async (frame) => {
       const events: BaseEvent[] = [];
-      if (!started) {
-        events.push({
-          type: 'RUN_STARTED',
-          threadId: input.threadId,
-          runId: input.runId,
-          protocolVersion: AG_UI_VERSION,
-        } as BaseEvent);
-        started = true;
-      }
       // The bounded view may have evicted an old receipt; resolve this exchange
       // directly rather than inferring completion from the conversation's status.
       const submission = await chat.lookup(input.threadId, admission.requestId);
@@ -158,11 +166,24 @@ export async function runAgUi(
           : snapshot.entries;
       for (const entry of additions)
         if (Number(entry.id) > Number(newestEntry)) newestEntry = entry.id;
-      events.push(...projection.update(snapshot, additions));
+      for (const entry of additions) transcript.set(entry.id, entry);
+      const view = (entries: TranscriptEntry[], live = true) =>
+        conversationView({
+          ...snapshot,
+          entries: entries.sort((a, b) => Number(a.id) - Number(b.id)),
+          ...(live ? {} : { partial: '', tools: [] }),
+        });
+      // Earlier work only hydrates the client; replies to this exchange then
+      // stream as generation events, even when they arrive in the first frame.
+      if (!started) {
+        events.push(...stream.encode(view(history.slice(), false)));
+        started = true;
+      }
+      events.push(...stream.encode(view([...transcript.values()])));
       const awaitingInput = needsInput(snapshot);
       const done = terminal || awaitingInput;
       if (done) {
-        events.push(...projection.finish());
+        events.push(...stream.finish());
         if (submission.status === 'failed')
           events.push({
             type: 'RUN_ERROR',
@@ -190,14 +211,6 @@ export async function runAgUi(
       }
       return { payload: encodeAgUi(events), done: Boolean(done) };
     },
-    () =>
-      encodeAgUi([
-        {
-          type: 'RUN_ERROR',
-          code: 'STREAM_FAILED',
-          message:
-            'The conversation stream failed. Reconcile durable history before retrying.',
-        } as BaseEvent,
-      ]),
+    streamFailed,
   );
 }

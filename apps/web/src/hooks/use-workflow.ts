@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  AgUiChatClient,
+  ChatClient,
   WorkflowClient,
   type DeletionOperation,
   type WorkflowSnapshot,
 } from '../../../../packages/shared/src/index.js';
 
-const client = new AgUiChatClient();
+const client = new ChatClient();
 const workflowClient = new WorkflowClient();
 
 /** Polls runs and pending deletions once a second. */

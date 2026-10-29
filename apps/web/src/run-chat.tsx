@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  AgUiRunActivityClient,
+  RunActivityClient,
   WorkflowClient,
   mergeActivity,
   runUpdatedAt,
@@ -14,7 +14,7 @@ import { conversationItems } from './transcript.js';
 import { CommandLog, Inspector } from './runs.js';
 import { RunStatusBadge } from './run-status.js';
 import { Tool } from './chat.js';
-const activity = new AgUiRunActivityClient();
+const activity = new RunActivityClient();
 const workflow = new WorkflowClient();
 
 export function ImplementationTranscript({

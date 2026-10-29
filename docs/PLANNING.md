@@ -26,10 +26,10 @@ The creation tool additionally verifies that the authorizing user submission has
 
 Existing localhost, origin, JSON-body, and CSRF protections apply.
 
-| Method and route | Behavior |
-| --- | --- |
-| `POST /api/v1/github/validate` | `{}`; checks saved repository access and issue readability with the current privately stored token; returns `GitHubValidation`, with write access explicitly unverified |
-| `POST /api/v1/conversations/:id/issue/retry` | `{}`; returns `PlanningState` after reconciling the existing approved operation; can resend only an operation that was never sent or definitively rejected |
+| Method and route                             | Behavior                                                                                                                                                                |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/v1/github/validate`               | `{}`; checks saved repository access and issue readability with the current privately stored token; returns `GitHubValidation`, with write access explicitly unverified |
+| `POST /api/v1/conversations/:id/issue/retry` | `{}`; returns `PlanningState` after reconciling the existing approved operation; can resend only an operation that was never sent or definitively rejected              |
 
 Ordered chat snapshots include optional `planning` state. The planning-document watch joins the existing SSE delivery line, so ticket and issue changes propagate without another stream protocol. No endpoint creates an operation without chat approval. Validation feedback is shown beside its settings control. Credentials and raw remote error bodies are never returned.
 

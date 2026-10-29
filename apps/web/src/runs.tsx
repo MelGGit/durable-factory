@@ -499,11 +499,10 @@ export function Inspector({
                 e.preventDefault();
                 setBusy(true);
                 void chat
-                  .submit(
+                  .send(
                     run.developerConversationId,
                     guidance,
                     crypto.randomUUID(),
-                    'followUp',
                   )
                   .then(() => setGuidance(''))
                   .catch((e) => setError(e.message))

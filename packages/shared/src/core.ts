@@ -178,6 +178,11 @@ export class FactoryClient {
       );
     })) as T;
   }
+  /** The session's CSRF token, fetched on first use. */
+  protected async csrf() {
+    if (!this.csrfToken) await this.connect();
+    return this.csrfToken!;
+  }
   async connect() {
     const session = await this.request<SessionResponse>('/session');
     if (session.apiVersion !== API_VERSION)

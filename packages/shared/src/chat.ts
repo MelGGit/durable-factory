@@ -1,6 +1,14 @@
 import type { DeletionOperation } from './deletion.js';
 import type { PlanningState } from './planning.js';
-import { AgUiViewReducer, type AgUiEvent } from './ag-ui.js';
+import { HttpAgent } from '@ag-ui/client';
+import {
+  conversationFromAgUi,
+  historyFromAgUi,
+  observeAgUi,
+  unwrapError,
+  viewFromEvents,
+} from './ag-ui-view.js';
+import type { AgUiEvent } from './ag-ui.js';
 import {
   API_VERSION,
   ApiError,
@@ -73,6 +81,8 @@ export interface ConversationSnapshot {
   execution: 'idle' | 'running' | 'interrupting';
   olderCursor?: string;
 }
+/** A projection of the conversation, as the service observes it. The wire
+ * carries this as AG-UI messages and state; see `ag-ui-view.ts`. */
 export interface ChatFrame {
   apiVersion: typeof API_VERSION;
   streamId: string;
@@ -112,37 +122,7 @@ export function mergeEntries(
   }));
 }
 
-export class ChatReducer {
-  streamId = '';
-  sequence = 0;
-  snapshot?: ConversationSnapshot;
-  apply(frame: ChatFrame) {
-    if (frame.apiVersion !== API_VERSION)
-      throw new ApiError(
-        'UNSUPPORTED_VERSION',
-        'The app and service versions do not match.',
-        409,
-      );
-    if (frame.type === 'snapshot') {
-      if (frame.streamId === this.streamId && frame.sequence <= this.sequence)
-        return false;
-      this.streamId = frame.streamId;
-      this.sequence = frame.sequence;
-      this.snapshot = frame.snapshot;
-      return true;
-    }
-    if (frame.streamId !== this.streamId)
-      throw new Error('A fresh snapshot is required.');
-    if (frame.sequence <= this.sequence) return false;
-    if (frame.sequence !== this.sequence + 1)
-      throw new Error('A stream update was missed.');
-    this.sequence = frame.sequence;
-    this.snapshot = frame.snapshot;
-    return true;
-  }
-}
 export class ChatClient extends FactoryClient {
-  protected agUi = false;
   deleteConversation(id: string) {
     return this.mutation<DeletionOperation>(
       `/conversations/${encodeURIComponent(id)}`,
@@ -184,31 +164,69 @@ export class ChatClient extends FactoryClient {
     });
   }
   async history(id: string, cursor?: string, signal?: AbortSignal) {
-    const response = await this.request<HistoryPage | { events: AgUiEvent[] }>(
-      `/conversations/${encodeURIComponent(id)}/${this.agUi ? 'ag-ui/' : ''}history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+    const response = await this.request<{ events: AgUiEvent[] }>(
+      `/conversations/${encodeURIComponent(id)}/ag-ui/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
       { signal },
     );
-    if (!this.agUi) return response as HistoryPage;
-    const state = (
-      response as {
-        events: (AgUiEvent & {
-          snapshot?: {
-            factory?: HistoryPage & { schemaVersion: number; kind: string };
-          };
-        })[];
-      }
-    ).events.find((event) => event.type === 'STATE_SNAPSHOT')?.snapshot
-      ?.factory;
-    if (!state || state.schemaVersion !== 1 || state.kind !== 'history')
-      throw new ApiError(
-        'UNSUPPORTED_VERSION',
-        'Unsupported AG-UI history.',
-        409,
-      );
-    return {
-      entries: state.entries,
-      ...(state.cursor ? { cursor: state.cursor } : {}),
+    const view = viewFromEvents(response.events);
+    return historyFromAgUi(view.messages, view.state);
+  }
+  /**
+   * Sends text through the standard AG-UI run endpoint and resolves once the
+   * service has durably admitted it. `messageId` makes a retry idempotent: the
+   * same ID with the same text reuses the earlier admission. The run's own
+   * stream is detached here; `watch` shows the conversation.
+   */
+  async send(conversationId: string, content: string, messageId: string) {
+    const attempt = async () => {
+      const csrf = await this.csrf();
+      const agent = new HttpAgent({
+        url: `${this.baseUrl}/api/v1/ag-ui/run`,
+        threadId: conversationId,
+        headers: { 'X-Factory-CSRF': csrf },
+        fetch: async (url, init) => {
+          const response = await this.fetcher.call(globalThis, url, init);
+          if (!response.ok)
+            throw await responseError(
+              response,
+              'The service could not complete the request.',
+            );
+          return response;
+        },
+        initialMessages: [{ id: messageId, role: 'user', content }],
+      });
+      await new Promise<void>((resolve, reject) => {
+        let admitted = false;
+        const fail = (error: unknown) => {
+          if (!admitted) reject(unwrapError(error));
+        };
+        agent
+          .runAgent(
+            { runId: crypto.randomUUID() },
+            {
+              onRunStartedEvent: () => {
+                admitted = true;
+                resolve();
+                agent.abortRun();
+              },
+              onRunFailed: ({ error }) => fail(error),
+              onRunErrorEvent: ({ event }) => fail(new Error(event.message)),
+            },
+          )
+          .then(
+            () => fail(new Error('The run ended before it was admitted.')),
+            fail,
+          );
+      });
     };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'FORBIDDEN')
+        throw error;
+      await this.connect();
+      return attempt();
+    }
   }
   submit(
     id: string,
@@ -246,6 +264,8 @@ export class ChatClient extends FactoryClient {
       `/conversations/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifact)}?offset=${offset}`,
     );
   }
+  /** Observes a conversation as a standard AG-UI stream. Every (re)connection
+   * delivers a fresh `snapshot` frame, then `update` frames. */
   watch(
     id: string,
     onSnapshot: (
@@ -255,109 +275,14 @@ export class ChatClient extends FactoryClient {
     onConnection: (state: ConnectionState) => void,
     onError: (error: Error) => void = () => {},
   ) {
-    const lifetime = new AbortController();
-    let active: AbortController | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let wake: (() => void) | undefined;
-    void (async () => {
-      let retries = 0;
-      while (!lifetime.signal.aborted) {
-        onConnection(retries ? 'disconnected' : 'connecting');
-        active = new AbortController();
-        const resetTimeout = () => {
-          clearTimeout(timer);
-          timer = setTimeout(() => active?.abort(), 45000);
-        };
-        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-        try {
-          resetTimeout();
-          const response = await this.fetcher.call(
-            globalThis,
-            `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/${this.agUi ? 'ag-ui/' : ''}events`,
-            { signal: active.signal },
-          );
-          if (!response.ok)
-            throw await responseError(response, 'Could not connect.');
-          if (!response.body) throw new Error('Streaming is unavailable.');
-          reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          const reducer = new ChatReducer();
-          const agUiReducer = new AgUiViewReducer();
-          let buffer = '';
-          for (;;) {
-            const chunk = await reader.read();
-            if (chunk.done) throw new Error('Stream closed.');
-            resetTimeout();
-            buffer += decoder.decode(chunk.value, { stream: true });
-            buffer = buffer.replace(/\r\n/g, '\n');
-            if (buffer.length > 2 * 1024 * 1024)
-              throw new Error('Stream frame is too large.');
-            let end: number;
-            while ((end = buffer.indexOf('\n\n')) >= 0) {
-              const event = buffer.slice(0, end);
-              buffer = buffer.slice(end + 2);
-              const data = event
-                .split('\n')
-                .filter((line) => line.startsWith('data:'))
-                .map((line) => line.slice(5).trimStart())
-                .join('\n');
-              if (!data) continue;
-              const parsed = JSON.parse(data);
-              const frame = this.agUi
-                ? agUiReducer.apply(parsed, 'conversation')
-                : (parsed as ChatFrame);
-              if (!frame) continue;
-              if (reducer.apply(frame)) {
-                retries = 0;
-                onConnection('connected');
-                await onSnapshot(reducer.snapshot!, {
-                  ...frame,
-                  signal: active.signal,
-                });
-              }
-            }
-          }
-        } catch (error) {
-          if (lifetime.signal.aborted) break;
-          onConnection('disconnected');
-          if (error instanceof ApiError) {
-            onError(error);
-            if (
-              [
-                'AUTHENTICATION',
-                'NOT_FOUND',
-                'UNSUPPORTED_VERSION',
-                'FORBIDDEN',
-              ].includes(error.code)
-            )
-              break;
-          }
-        } finally {
-          clearTimeout(timer);
-          active.abort();
-          await reader?.cancel().catch(() => {});
-        }
-        const wait =
-          Math.min(30000, 1000 * 2 ** Math.min(retries++, 5)) *
-          (0.75 + Math.random() * 0.25);
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-          retryTimer = setTimeout(resolve, wait);
-        });
-      }
-    })();
-    return () => {
-      lifetime.abort();
-      active?.abort();
-      clearTimeout(timer);
-      clearTimeout(retryTimer);
-      wake?.();
-    };
+    return observeAgUi({
+      url: `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/ag-ui/events`,
+      threadId: id,
+      fetcher: this.fetcher,
+      project: conversationFromAgUi,
+      onView: onSnapshot,
+      onConnection,
+      onError,
+    });
   }
-}
-
-/** Uses standard AG-UI events for passive views and factory APIs for durable controls. */
-export class AgUiChatClient extends ChatClient {
-  protected override agUi = true;
 }
