@@ -68,7 +68,11 @@ import {
   cleanupArtifacts,
 } from './cleanup.js';
 import { Workspaces } from './workspace.js';
-import { parseUpdate, validateSettings } from './validation.js';
+import {
+  parseUpdate,
+  validateSettings,
+  validateTitleGenerator,
+} from './validation.js';
 
 export interface ServiceOptions {
   dataDir?: string;
@@ -124,6 +128,7 @@ function changesAccess(method: string | undefined, path: string) {
     (method === 'POST' && path === '/api/v1/github/validate') ||
     (method !== 'GET' && path.startsWith('/api/v1/projects')) ||
     (method === 'PUT' && path === '/api/v1/runners') ||
+    (method === 'PUT' && path === '/api/v1/title-generator') ||
     ((method === 'PUT' || method === 'DELETE') &&
       path.startsWith('/api/v1/credentials/'))
   );
@@ -383,6 +388,16 @@ export async function startService(options: ServiceOptions = {}) {
       }
       if (path === '/api/v1/runners' && req.method === 'GET')
         return send(res, 200, { runners: await configuration!.runners() });
+      if (path === '/api/v1/title-generator' && req.method === 'GET')
+        return send(res, 200, await configuration!.titleGenerator());
+      if (path === '/api/v1/title-generator' && req.method === 'PUT') {
+        const value = await validateTitleGenerator(
+          await body(req),
+          credentials,
+        );
+        await configuration!.saveTitleGenerator(value);
+        return send(res, 200, await configuration!.titleGenerator());
+      }
       if (path === '/api/v1/runners' && req.method === 'PUT') {
         const { runners } = (await body(req)) as { runners?: unknown };
         await configuration!.setRunners(runners);
@@ -928,6 +943,8 @@ export async function startService(options: ServiceOptions = {}) {
           ...options.chat,
           models,
           registerRequesty,
+          titleSelection: async () =>
+            (await configuration!.titleGenerator()).selection,
           planning,
           workflowView: async (id) => {
             const run = await workflow.get(id);

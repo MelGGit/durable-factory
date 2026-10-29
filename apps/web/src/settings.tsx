@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { ModelSelection } from './model-selection.js';
+import { CopyCommand } from './copy-command.js';
 import {
   discardUnsavedChanges,
   useUnsavedChanges,
@@ -13,6 +15,8 @@ import {
   projectLabel,
   type CredentialId,
   type ProviderId,
+  type RoleSettings,
+  type TitleGeneratorSettings,
 } from '../../../packages/shared/src/index.js';
 export const names: Record<string, string> = {
   requesty: 'Requesty',
@@ -59,6 +63,16 @@ export function Settings({
   const [renaming, setRenaming] = useState<string>();
   const [runners, setRunners] = useState<number>();
   const [runnersDraft, setRunnersDraft] = useState('');
+  const [runnersBusy, setRunnersBusy] = useState(false);
+  const [titleSaved, setTitleSaved] = useState<TitleGeneratorSettings>();
+  const [titleDraft, setTitleDraft] = useState<RoleSettings | null>(null);
+  const [titleBusy, setTitleBusy] = useState(false);
+  const titleDirty = Boolean(
+    titleSaved &&
+      JSON.stringify(titleSaved.selection) !== JSON.stringify(titleDraft),
+  );
+  const runnersDirty =
+    runners !== undefined && String(runners) !== runnersDraft;
   const dirty = Boolean(
     saved && draft && JSON.stringify(saved.settings) !== JSON.stringify(draft),
   );
@@ -74,6 +88,9 @@ export function Settings({
       const shared = await client.runners();
       setRunners(shared.runners);
       setRunnersDraft(String(shared.runners));
+      const titles = await client.titleGenerator();
+      setTitleSaved(titles);
+      setTitleDraft(titles.selection);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not reach the service.');
     } finally {
@@ -83,7 +100,9 @@ export function Settings({
   useEffect(() => {
     void load();
   }, [client]);
-  useUnsavedChanges(dirty);
+  useUnsavedChanges(
+    dirty || (projectId === undefined && (titleDirty || runnersDirty)),
+  );
   const change = (work: (next: Settings) => void) => {
     setDraft((previous) => {
       const next = structuredClone(previous!);
@@ -262,6 +281,8 @@ export function Settings({
               className="runners-block panel"
               onSubmit={(event) => {
                 event.preventDefault();
+                setRunnersBusy(true);
+                setError('');
                 void client
                   .saveRunners(Number(runnersDraft))
                   .then((result) => {
@@ -277,15 +298,13 @@ export function Settings({
                         ? e.message
                         : 'Could not save parallel runs.',
                     ),
-                  );
+                  )
+                  .finally(() => setRunnersBusy(false));
               }}
             >
               <div>
-                <h3>All projects</h3>
-                <p>
-                  Runs start oldest first across every project, and credentials
-                  are shared.
-                </p>
+                <h2>Execution</h2>
+                <p>Runs start oldest first across every project.</p>
               </div>
               <label>
                 Parallel runs
@@ -294,20 +313,84 @@ export function Settings({
                   min="1"
                   max="16"
                   step="1"
+                  required
+                  disabled={runnersBusy}
                   value={runnersDraft}
                   onChange={(e) => setRunnersDraft(e.target.value)}
                 />
                 <small>
-                  How many runs may work at once, from 1 to 16. Lowering it
-                  never stops work in progress.
+                  1–16 runs at once. Lowering this never stops work in progress.
                 </small>
               </label>
               <button
                 className="secondary"
-                disabled={String(runners) === runnersDraft}
+                disabled={!runnersDirty || runnersBusy}
               >
-                Save
+                {runnersBusy ? 'Saving…' : 'Save'}
               </button>
+            </form>
+          )}
+          {titleSaved && saved && (
+            <form
+              className="panel title-generator"
+              aria-label="Title generator"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setTitleBusy(true);
+                setError('');
+                setNotice('');
+                void client
+                  .saveTitleGenerator({
+                    revision: titleSaved.revision,
+                    selection: titleDraft,
+                  })
+                  .then((value) => {
+                    setTitleSaved(value);
+                    setTitleDraft(value.selection);
+                    setNotice('Title generator saved.');
+                  })
+                  .catch((e) =>
+                    setError(
+                      e instanceof Error
+                        ? e.message
+                        : 'Could not save title generator.',
+                    ),
+                  )
+                  .finally(() => setTitleBusy(false));
+              }}
+            >
+              <h2>Title generator</h2>
+              <p>
+                Choose an optional model to name new planning chats across all
+                projects. A small model works well.
+              </p>
+              <fieldset disabled={titleBusy} className="settings-fields">
+                <ModelSelection
+                  selection={titleDraft}
+                  providers={saved.providers}
+                  onChange={(value) => {
+                    setTitleDraft(value);
+                    setNotice('');
+                  }}
+                />
+              </fieldset>
+              <div className="title-generator-footer">
+                <p>
+                  No model selected, or generation unavailable? The first
+                  message becomes the title. Existing chats keep their titles.
+                </p>
+                <button
+                  type="submit"
+                  className="secondary"
+                  disabled={
+                    !titleDirty ||
+                    titleBusy ||
+                    Boolean(titleDraft && !titleDraft.model.trim())
+                  }
+                >
+                  {titleBusy ? 'Saving…' : 'Save title generator'}
+                </button>
+              </div>
             </form>
           )}
         </>
@@ -764,65 +847,69 @@ export function Settings({
                             {saved.credentialErrors[id]}
                           </p>
                         )}
-                        {id === 'requesty' || id === 'github' ? (
-                          <form
-                            className="credential-form"
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              void credential(id);
-                            }}
-                          >
-                            <label className="sr-only" htmlFor={`${id}-token`}>
-                              {names[id]} token
-                            </label>
-                            <input
-                              id={`${id}-token`}
-                              disabled={credentialBusy !== null}
-                              type="password"
-                              autoComplete="new-password"
-                              value={credentialInputs[id]}
-                              placeholder={
-                                saved.credentials[id]
-                                  ? 'Replace token'
-                                  : 'Enter token'
-                              }
-                              onChange={(e) =>
-                                setCredentialInputs((previous) => ({
-                                  ...previous,
-                                  [id]: e.target.value,
-                                }))
-                              }
-                            />
-                            <button
-                              type="submit"
-                              className="secondary"
-                              disabled={
-                                !credentialInputs[id] || credentialBusy !== null
-                              }
+                        <div className="connection-actions">
+                          {id === 'requesty' || id === 'github' ? (
+                            <form
+                              className="credential-form"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                void credential(id);
+                              }}
                             >
-                              {credentialBusy === id
-                                ? 'Saving…'
-                                : 'Store token'}
+                              <label
+                                className="sr-only"
+                                htmlFor={`${id}-token`}
+                              >
+                                {names[id]} token
+                              </label>
+                              <input
+                                id={`${id}-token`}
+                                disabled={credentialBusy !== null}
+                                type="password"
+                                autoComplete="new-password"
+                                value={credentialInputs[id]}
+                                placeholder={
+                                  saved.credentials[id]
+                                    ? 'Replace token'
+                                    : 'Enter token'
+                                }
+                                onChange={(e) =>
+                                  setCredentialInputs((previous) => ({
+                                    ...previous,
+                                    [id]: e.target.value,
+                                  }))
+                                }
+                              />
+                              <button
+                                type="submit"
+                                className="secondary"
+                                disabled={
+                                  !credentialInputs[id] ||
+                                  credentialBusy !== null
+                                }
+                              >
+                                {credentialBusy === id
+                                  ? 'Saving…'
+                                  : 'Store token'}
+                              </button>
+                            </form>
+                          ) : (
+                            <CopyCommand provider={id} />
+                          )}
+                          {(saved.credentials[id] ||
+                            saved.credentialErrors[id]) && (
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() => void credential(id, true)}
+                              disabled={credentialBusy !== null}
+                            >
+                              {saved.credentialErrors[id]
+                                ? 'Remove connection'
+                                : 'Disconnect'}
                             </button>
-                          </form>
-                        ) : (
-                          <code className="login-command">
-                            bun run diagnose login {id}
-                          </code>
-                        )}
-                        {(saved.credentials[id] ||
-                          saved.credentialErrors[id]) && (
-                          <button
-                            type="button"
-                            className="text-button"
-                            onClick={() => void credential(id, true)}
-                            disabled={credentialBusy !== null}
-                          >
-                            {saved.credentialErrors[id]
-                              ? 'Remove connection'
-                              : 'Disconnect'}
-                          </button>
-                        )}
+                          )}
+                        </div>
                       </div>
                     ),
                   )}

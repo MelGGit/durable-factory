@@ -10,6 +10,7 @@ import { StartRun } from './runs.js';
 import { ProjectTree, followLink } from './sidebar.js';
 import { Home } from './home.js';
 import { Icon } from './icons.js';
+import { SessionActions } from './session-actions.js';
 import { PageHeader } from './page-header.js';
 import { useConversationUrl, useRoute } from './hooks/use-route.js';
 import { usePageHeader } from './hooks/use-page-header.js';
@@ -365,6 +366,8 @@ export function ChatApp() {
   };
   useEffect(() => {
     void refresh().catch((e) => setError(e.message));
+    const timer = setInterval(() => void refresh().catch(() => {}), 5000);
+    return () => clearInterval(timer);
   }, []);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
@@ -474,19 +477,21 @@ export function ChatApp() {
     );
     return (
       <div className="chat-delete-control">
-        {operation && <small role="status">{operation.message}</small>}
-        <button
-          type="button"
-          className="delete-chat"
+        {operation && (
+          <small className="sr-only" role="status">
+            {operation.message}
+          </small>
+        )}
+        <SessionActions
+          title={title}
           disabled={Boolean(operation && operation.state !== 'blocked')}
-          aria-label={`${operation?.state === 'blocked' ? 'Retry deleting' : 'Delete'} ${title}`}
-          onClick={() => {
+          retry={operation?.state === 'blocked'}
+          status={operation?.message}
+          onDelete={() => {
             setDeleteError('');
             setDeleteTarget({ id, title, run });
           }}
-        >
-          {operation?.state === 'blocked' ? 'Retry deletion' : 'Delete'}
-        </button>
+        />
       </div>
     );
   };
@@ -601,6 +606,11 @@ export function ChatApp() {
         if (!previous.length) view.cursor = value.olderCursor;
         view.entries = mergeEntries(view.entries, incoming);
         setSnapshot(value);
+        setConversations((previous) =>
+          previous.map((item) =>
+            item.id === value.conversation.id ? value.conversation : item,
+          ),
+        );
         setEntries(view.entries);
         setCursor(view.cursor);
       },
@@ -818,6 +828,17 @@ export function ChatApp() {
   const pending = local.pending.filter(
     (item) => item.conversationId === selected,
   );
+  const emptyPlanning = Boolean(
+    snapshot?.conversation.role === 'planning' &&
+      !selectedRun &&
+      !entries.length &&
+      !cursor &&
+      !snapshot.partial &&
+      !snapshot.tools.length &&
+      snapshot.execution === 'idle' &&
+      !snapshot.submissions.length &&
+      !pending.length,
+  );
   const interruptControl =
     snapshot &&
     snapshot.conversation.role !== 'review' &&
@@ -862,65 +883,64 @@ export function ChatApp() {
         <Icon name="plus" />
         Add project
       </a>
-      <div className="sidebar-heading">
-        Projects
-        <a
-          className="sidebar-add"
-          href="/projects/new"
-          aria-label="New project"
-          title="Add project"
-          onClick={(event) =>
-            followLink(event, () => navigate('/projects/new'))
-          }
-        >
-          <Icon name="plus" />
-        </a>
-      </div>
+      <div className="sidebar-heading">Projects</div>
       <ProjectTree
         projects={visibleProjects}
         conversations={conversations}
         runs={workflowSnapshot?.runs ?? []}
         workflowDisabled={workflowSnapshot?.mode === 'disabled'}
         renderConversation={(item) => (
-          <div key={item.id} className="chat-navigation-row">
+          <div
+            key={item.id}
+            className={`chat-navigation-row${inChat && item.id === selected ? ' selected-session' : ''}`}
+          >
             <button
               type="button"
               aria-current={inChat && item.id === selected ? 'page' : undefined}
-              className={inChat && item.id === selected ? 'selected' : ''}
+              className={`session-link${inChat && item.id === selected ? ' selected' : ''}`}
+              title={item.title}
               onClick={() => {
                 selectConversation(item.id);
               }}
             >
-              <span className="session-label">Planning</span>
               <strong>{item.title}</strong>
-              <small>{item.model.model}</small>
+              <span
+                className="session-kind"
+                role="img"
+                aria-label="Planning"
+                title="Planning"
+              >
+                <Icon name="plan" size={15} />
+              </span>
             </button>
             {deletionControl(item.id, item.title, false)}
           </div>
         )}
         renderRun={(run) => (
-          <div key={run.id} className="chat-navigation-row">
+          <div
+            key={run.id}
+            className={`chat-navigation-row${inChat && selectedRun?.id === run.id ? ' selected-session' : ''}`}
+          >
             <button
               type="button"
-              className={inChat && selectedRun?.id === run.id ? 'selected' : ''}
+              className={`session-link${inChat && selectedRun?.id === run.id ? ' selected' : ''}`}
+              title={`${run.mode === 'simulation' ? 'Simulation · ' : ''}${run.status.replaceAll('_', ' ')}${run.status === 'queued' ? ` · position ${queuePosition.get(run.id)}` : ''} · #${run.issue.number} · ${run.specification.title}`}
               aria-current={
                 inChat && selectedRun?.id === run.id ? 'page' : undefined
               }
               onClick={() => selectConversation(run.developerConversationId)}
             >
-              <span className="session-label implementation">
-                Implementation
-              </span>
               <strong>
                 #{run.issue.number} · {run.specification.title}
               </strong>
-              <small>
-                {run.mode === 'simulation' ? 'Simulation · ' : ''}
-                {run.status.replaceAll('_', ' ')}
-                {run.status === 'queued' && queuePosition.has(run.id)
-                  ? ` · position ${queuePosition.get(run.id)}`
-                  : ''}
-              </small>
+              <span
+                className="session-kind implementation"
+                role="img"
+                aria-label="Implementation"
+                title="Implementation"
+              >
+                <Icon name="run" size={15} />
+              </span>
             </button>
             {deletionControl(run.id, run.specification.title, true)}
           </div>
@@ -1073,6 +1093,7 @@ export function ChatApp() {
                 projects={visibleProjects}
                 conversations={conversations}
                 runs={workflowSnapshot?.runs ?? []}
+                deletions={deletions}
                 onNew={(projectId) => void create(projectId)}
                 onOpen={selectConversation}
               />
@@ -1084,7 +1105,7 @@ export function ChatApp() {
                 >
                   <section
                     key={selected}
-                    className="chat-conversation"
+                    className={`chat-conversation${emptyPlanning ? ' empty-planning' : ''}`}
                     aria-label="Conversation"
                     data-connection={connection}
                     data-execution={snapshot?.execution ?? 'idle'}
@@ -1238,12 +1259,13 @@ export function ChatApp() {
                               : 'Working…'}
                           </div>
                         )}
-                      {!selectedRun &&
+                      {!emptyPlanning &&
+                        !selectedRun &&
                         !entries.length &&
                         !snapshot?.partial && (
                           <p className="transcript-hint">
-                            Describe the outcome you want, constraints, and
-                            questions to explore.
+                            Describe the feature you want to build and any
+                            constraints.
                           </p>
                         )}
                     </div>
@@ -1265,6 +1287,56 @@ export function ChatApp() {
                       </div>
                     )}
                     <div className="composer-area">
+                      {emptyPlanning && (
+                        <div className="chat-welcome">
+                          <h2>What feature would you like to plan?</h2>
+                          <p>
+                            Describe the feature, who it’s for, and what success
+                            looks like.
+                          </p>
+                          {!local.drafts[selected]?.trim() && (
+                            <div
+                              className="starter-prompts"
+                              aria-label="Conversation starters"
+                            >
+                              {[
+                                [
+                                  'Plan a feature',
+                                  'I’d like to plan a new feature: ',
+                                ],
+                                [
+                                  'Define requirements',
+                                  'Help me define the requirements for this feature: ',
+                                ],
+                                [
+                                  'Break down a feature',
+                                  'Help me break this feature into implementation steps: ',
+                                ],
+                              ].map(([prompt, draft]) => (
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  key={prompt}
+                                  onClick={() => {
+                                    persist((previous) => ({
+                                      ...previous,
+                                      drafts: {
+                                        ...previous.drafts,
+                                        [selected]: draft,
+                                      },
+                                    }));
+                                    document
+                                      .getElementById('chat-message')
+                                      ?.focus();
+                                  }}
+                                >
+                                  {prompt}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div
                         className="submission-list"
                         aria-label="Submission status"
@@ -1322,7 +1394,7 @@ export function ChatApp() {
                             placeholder={
                               selectedRun
                                 ? 'Guide the implementation or ask a question…'
-                                : 'Think it through together…'
+                                : 'Describe the feature you want to plan…'
                             }
                             value={local.drafts[selected] ?? ''}
                             onChange={(e) =>

@@ -39,6 +39,12 @@ test(
         .getByRole('textbox', { name: 'Message', exact: true })
         .fill('Discard my draft');
       await page
+        .getByRole('button', {
+          name: 'Actions for Delete this plan',
+          exact: true,
+        })
+        .click();
+      await page
         .getByRole('button', { name: 'Delete Delete this plan', exact: true })
         .click();
       const dialog = page.getByRole('dialog', {
@@ -54,6 +60,12 @@ test(
           (item) => item.id === plan.id,
         ),
       );
+      await page
+        .getByRole('button', {
+          name: 'Actions for Delete this plan',
+          exact: true,
+        })
+        .click();
       await page
         .getByRole('button', { name: 'Delete Delete this plan', exact: true })
         .click();
@@ -120,6 +132,12 @@ test(
         .click();
       await page
         .getByRole('button', {
+          name: `Actions for ${run.specification.title}`,
+          exact: true,
+        })
+        .click();
+      await page
+        .getByRole('button', {
           name: `Delete ${run.specification.title}`,
           exact: true,
         })
@@ -138,6 +156,17 @@ test(
         name: `Retry deleting ${run.specification.title}`,
         exact: true,
       });
+      await page
+        .getByRole('status')
+        .filter({ hasText: /could not|blocked|termination|stop/i })
+        .first()
+        .waitFor();
+      await page
+        .getByRole('button', {
+          name: `Actions for ${run.specification.title}`,
+          exact: true,
+        })
+        .click();
       await retry.waitFor();
       assert.equal((await f.client.run(run.id)).status, 'termination_blocker');
       canStop = true;
@@ -148,9 +177,7 @@ test(
       await page
         .getByRole('button', { name: 'Close conversations', exact: true })
         .click();
-      await page
-        .getByRole('heading', { name: 'Start with a conversation.' })
-        .waitFor();
+      await page.getByRole('heading', { name: 'Your workspace' }).waitFor();
       assert.ok(
         (await f.chat.conversations()).conversations.some(
           (item) => item.id === plan,

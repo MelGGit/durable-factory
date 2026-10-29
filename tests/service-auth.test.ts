@@ -235,6 +235,11 @@ test('settings and credentials can only be changed from the server itself', asyn
         { method: 'PUT', path: '/api/v1/settings', body: settings },
         {
           method: 'PUT',
+          path: '/api/v1/title-generator',
+          body: { revision: 0, selection: null },
+        },
+        {
+          method: 'PUT',
           path: '/api/v1/credentials/github',
           body: { value: 'secret-fixture-github' },
         },

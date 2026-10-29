@@ -8,7 +8,7 @@ import type { Route } from './use-route.js';
 
 export type PageHeaderState = { title: string; tag?: string };
 
-/** The title shown in the top bar, and the mode tag for conversations. */
+/** The title shown in the top bar. */
 export function usePageHeader({
   route,
   projects,
@@ -30,21 +30,14 @@ export function usePageHeader({
       title: `${project ? projectLabel(project) : 'Project'} settings`,
     };
   }
-  const role = snapshot?.conversation.role;
   if (selectedRun)
     return {
       title: selectedRun.specification.title,
-      tag: role === 'review' ? 'Review' : 'Implementation',
     };
   if (hasSelection && snapshot)
     return {
       title: snapshot.conversation.title,
-      tag:
-        role === 'development'
-          ? 'Implementation'
-          : role === 'review'
-            ? 'Review'
-            : 'Planning',
+      tag: snapshot.conversation.role === 'planning' ? 'Planning' : undefined,
     };
   return { title: hasSelection ? '' : 'Home' };
 }

@@ -1,6 +1,6 @@
 import React from 'react';
 
-/** The top bar shared by every view: page title, optional mode tag and actions. */
+/** The top bar shared by every view: page title and contextual actions. */
 export function PageHeader({
   title,
   tag,
@@ -27,7 +27,9 @@ export function PageHeader({
           Conversations
         </button>
       )}
-      <h1>{title}</h1>
+      <div className="header-heading">
+        <h1 title={title}>{title}</h1>
+      </div>
       {tag && <span className="mode-tag">{tag}</span>}
       {actions && <div className="header-actions">{actions}</div>}
     </header>

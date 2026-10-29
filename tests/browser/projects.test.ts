@@ -101,9 +101,9 @@ test('the sidebar groups conversations by project and has no issue starter', asy
       await page.getByText('IMPLEMENTATION', { exact: true }).count(),
       0,
     );
-    // Chats carry a label instead of sitting under a heading.
+    // Session kinds are inline icons instead of separate text rows.
     const alpha = page.getByRole('region', { name: 'alpha' });
-    await alpha.locator('.session-label', { hasText: 'Planning' }).waitFor();
+    await alpha.getByRole('img', { name: 'Planning', exact: true }).waitFor();
     // Settings is the last thing in the sidebar, at its bottom edge.
     const sidebar = await page.locator('.chat-sidebar').boundingBox();
     const settings = await page.locator('.settings-link').boundingBox();
@@ -142,9 +142,10 @@ test('projects are added from their own page, not from settings', async () => {
     page.setDefaultTimeout(10000);
     await page.goto(service.url);
     assert.equal(await page.getByLabel('Project name').count(), 0);
-    await page.getByRole('link', { name: 'New project' }).click();
-    await page.waitForURL('**/projects/new');
-    await page.goto(service.url);
+    assert.equal(
+      await page.getByRole('link', { name: 'New project' }).count(),
+      0,
+    );
     await page.getByRole('link', { name: 'Add project', exact: true }).click();
     await page.waitForURL('**/projects/new');
     await page.getByLabel('Project name').fill('Brand new');
@@ -249,6 +250,7 @@ test('every view shows its page title and chats show their mode', async () => {
     await page
       .locator('.chat-header .mode-tag', { hasText: 'Planning' })
       .waitFor();
+    assert.equal(await page.locator('.chat-header .header-project').count(), 0);
     assert.equal(await page.getByText(/Browser: |Agent: /).count(), 0);
     assert.equal(await page.locator('.chat-header .eyebrow').count(), 0);
   } finally {

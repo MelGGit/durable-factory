@@ -24,6 +24,10 @@ export interface RoleSettings {
   model: string;
   reasoning: string | null;
 }
+export interface TitleGeneratorSettings {
+  revision: number;
+  selection: RoleSettings | null;
+}
 export interface Settings {
   schemaVersion: 1;
   repository: { path: string; github: string; baseBranch: string };
@@ -195,6 +199,16 @@ export class FactoryClient {
   }
   runners() {
     return this.request<{ runners: number }>('/runners');
+  }
+  titleGenerator() {
+    return this.request<TitleGeneratorSettings>('/title-generator');
+  }
+  saveTitleGenerator(value: TitleGeneratorSettings) {
+    return this.mutation<TitleGeneratorSettings>(
+      '/title-generator',
+      'PUT',
+      value,
+    );
   }
   saveRunners(runners: number) {
     return this.mutation<{ runners: number }>('/runners', 'PUT', { runners });

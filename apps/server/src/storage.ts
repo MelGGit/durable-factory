@@ -16,6 +16,7 @@ import {
   defaultSettings,
   type ProjectSummary,
   type Settings,
+  type TitleGeneratorSettings,
 } from '../../../packages/shared/src/index.js';
 
 export const context = BACKGROUND_CONTEXT;
@@ -42,6 +43,7 @@ export const Configuration = defineDoc({
     order: [DEFAULT_PROJECT_ID] as string[],
     /** How many runs may work at once, across all projects. */
     runners: 1,
+    titleGenerator: { revision: 0, selection: null } as JsonObject,
   }),
   checkpointWhen: () => true,
 });
@@ -112,6 +114,7 @@ export async function openConfiguration(
         delete legacy.revision;
       }
       config.runners ??= 1;
+      config.titleGenerator ??= { revision: 0, selection: null };
       for (const project of Object.values(
         config.projects as unknown as Record<string, ProjectRecord>,
       )) {
@@ -143,6 +146,26 @@ export async function openConfiguration(
     },
     async runners() {
       return (await harness.snapshot(Configuration, context))?.runners ?? 1;
+    },
+    async titleGenerator(): Promise<TitleGeneratorSettings> {
+      return copy(
+        (await harness.snapshot(Configuration, context))!.titleGenerator,
+      ) as unknown as TitleGeneratorSettings;
+    },
+    async saveTitleGenerator(value: TitleGeneratorSettings) {
+      await harness.commit(async (tx) => {
+        const doc = await tx.doc(Configuration);
+        if (doc.titleGenerator.revision !== value.revision)
+          throw new ApiError(
+            'CONFLICT',
+            'Settings changed in another window. Reload settings before saving again.',
+            409,
+          );
+        doc.titleGenerator = {
+          revision: value.revision + 1,
+          selection: copy(value.selection),
+        } as unknown as JsonObject;
+      }, context);
     },
     async setRunners(count: unknown) {
       if (

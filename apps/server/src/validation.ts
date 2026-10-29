@@ -3,6 +3,7 @@ import {
   PROVIDERS,
   ROLES,
   type Settings,
+  type TitleGeneratorSettings,
 } from '../../../packages/shared/src/index.js';
 import { providerStatuses } from './providers.js';
 import type { PrivateCredentials } from './credentials.js';
@@ -25,6 +26,43 @@ function text(value: unknown, max = 4096): value is string {
   return (
     typeof value === 'string' && value.length <= max && !value.includes('\0')
   );
+}
+export async function validateTitleGenerator(
+  input: unknown,
+  credentials: PrivateCredentials,
+): Promise<TitleGeneratorSettings> {
+  const value = object(input, ['revision', 'selection']);
+  if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 0)
+    invalid('A valid title generator revision is required.');
+  if (value.selection !== null) {
+    const selection = object(value.selection, [
+      'provider',
+      'model',
+      'reasoning',
+    ]);
+    if (
+      !PROVIDERS.includes(selection.provider as (typeof PROVIDERS)[number]) ||
+      !text(selection.model, 200) ||
+      !selection.model ||
+      /\s/.test(selection.model)
+    )
+      invalid(
+        'Choose a title provider and model, or disable title generation.',
+      );
+    const provider = (await providerStatuses(credentials)).find(
+      (p) => p.id === selection.provider,
+    );
+    const model = provider?.models.find((m) => m.id === selection.model);
+    if (selection.provider !== 'requesty' && !model)
+      invalid('Choose a model from the provider catalog.');
+    if (
+      selection.reasoning !== null &&
+      (typeof selection.reasoning !== 'string' ||
+        !model?.reasoning.includes(selection.reasoning))
+    )
+      invalid('The selected reasoning setting is not supported by this model.');
+  }
+  return structuredClone(value) as unknown as TitleGeneratorSettings;
 }
 export async function validateSettings(
   input: unknown,

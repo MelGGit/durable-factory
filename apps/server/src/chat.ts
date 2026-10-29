@@ -35,10 +35,12 @@ import {
   type Role,
   DEFAULT_PROJECT_ID,
   type Settings,
+  type RoleSettings,
   type TranscriptEntry,
   type ToolView,
 } from '../../../packages/shared/src/index.js';
 import { context } from './storage.js';
+import { TitleState, TitleService } from './titles.js';
 import {
   Planning,
   planningInstructions,
@@ -89,6 +91,7 @@ const AgUiBindings = defineDoc({
 });
 export interface ChatDependencies {
   models: Models;
+  titleSelection?: () => Promise<RoleSettings | null>;
   workflowView?: (
     runId: string,
   ) => Promise<NonNullable<ConversationSnapshot['workflow']>>;
@@ -293,6 +296,7 @@ export function recordingTools(dataDir: string, tools: ToolRegistration[]) {
 }
 
 export class ChatService {
+  private titles: TitleService;
   private lines = new Map<string, Promise<unknown>>();
   private streams = new Set<() => Promise<void>>();
   private interrupts = new Set<Promise<void>>();
@@ -302,7 +306,11 @@ export class ChatService {
     private dataDir: string,
     private settings: (projectId: string) => Promise<{ settings: Settings }>,
     private deps: ChatDependencies,
-  ) {}
+  ) {
+    this.titles = new TitleService(harness, deps.models, (id) =>
+      deps.registerRequesty?.(id),
+    );
+  }
   private serial<T>(key: string, work: () => Promise<T>): Promise<T> {
     const pending = (this.lines.get(key) ?? Promise.resolve())
       .catch(() => {})
@@ -363,7 +371,15 @@ export class ChatService {
         (await this.harness.snapshot(Catalog, context))?.items ?? {},
       ).find((item) => item.requestId === requestId);
       if (existing) {
-        if (existing.title !== title || existing.role !== role)
+        const policy = await this.harness.snapshot(
+          TitleState,
+          Number(existing.id) as ConversationId,
+          context,
+        );
+        if (
+          (policy?.originalTitle || existing.title) !== title ||
+          existing.role !== role
+        )
           throw new ApiError(
             'CONFLICT',
             'This request ID already created another conversation.',
@@ -412,6 +428,7 @@ export class ChatService {
               model: structuredClone(model),
             };
             await tx.doc(Requests, id);
+            await this.titles.initialize(tx, id, title);
             if (role === 'planning')
               await this.deps.planning?.initialize(tx, id, settings.repository);
           },
@@ -557,6 +574,15 @@ export class ChatService {
           403,
         );
       const conversation = await this.conversation(id);
+      const policy = await this.harness.snapshot(
+        TitleState,
+        conversation.id,
+        context,
+      );
+      const titleSelection =
+        policy?.eligible && policy.state === 'waiting'
+          ? ((await this.deps.titleSelection?.()) ?? null)
+          : null;
       const shouldSubmit = await this.harness.commit(async (tx) => {
         await assertNotDeleting(tx, id, summary.runId);
         const doc = await tx.doc(Requests, conversation.id);
@@ -577,6 +603,16 @@ export class ChatService {
           if (inbox.items.length >= 100)
             throw new ApiError('BUSY', 'The follow-up queue is full.', 409);
           doc.requests[requestId] = { content, mode };
+          if (policy?.eligible)
+            await this.titles.prepare(
+              tx,
+              conversation.id,
+              content,
+              titleSelection,
+              summary.repository.github ||
+                summary.repository.path.split('/').pop() ||
+                'Project',
+            );
           if (summary.role === 'planning')
             await this.deps.planning?.authorize(
               tx,
@@ -592,6 +628,7 @@ export class ChatService {
           { type: 'input', content, requestId, whenBusy: mode },
           context,
         );
+      if (shouldSubmit && policy?.eligible) this.titles.start(id);
       return this.lookup(id, requestId);
     });
   }
@@ -657,6 +694,7 @@ export class ChatService {
     });
   }
   async stopForDeletion(id: string) {
+    await this.titles.stop(id);
     await this.interrupt(id);
     await Promise.all([...this.interrupts]);
   }
@@ -702,6 +740,9 @@ export class ChatService {
           );
       }
     }
+    await this.titles.recover(
+      conversations.filter((s) => !s.runId).map((s) => s.id),
+    );
   }
   async history(id: string, cursor?: string, limit = 50): Promise<HistoryPage> {
     const conversation = await this.conversation(id);
@@ -1027,6 +1068,7 @@ export class ChatService {
       conversation.id,
       context,
     );
+    const catalogWatch = await this.harness.watchDoc(Catalog, context);
     const planningWatch = this.deps.planning
       ? await this.harness.watchDoc(Planning, conversation.id, context)
       : undefined;
@@ -1051,6 +1093,7 @@ export class ChatService {
       await Promise.all([
         watch.stop(),
         requestsWatch?.stop(),
+        catalogWatch?.stop(),
         planningWatch?.stop(),
         workflowWatch?.stop(),
       ]);
@@ -1128,6 +1171,7 @@ export class ChatService {
       };
       watch.start((view) => enqueue(view));
       requestsWatch?.start(() => enqueue(watch.value));
+      catalogWatch?.start(() => enqueue(watch.value));
       workflowWatch?.start(() => enqueue(watch.value));
       planningWatch?.start(() => enqueue(watch.value));
     } catch (error) {
@@ -1191,6 +1235,7 @@ export class ChatService {
     this.closing = true;
     await Promise.all([...this.streams].map((stop) => stop()));
     await Promise.allSettled([...this.lines.values(), ...this.interrupts]);
+    await this.titles.close();
   }
 }
 

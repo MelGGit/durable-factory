@@ -12,6 +12,7 @@ import {
 import { markdown } from './markdown.js';
 import { conversationItems } from './transcript.js';
 import { CommandLog, Inspector } from './runs.js';
+import { RunStatusBadge } from './run-status.js';
 import { Tool } from './chat.js';
 const activity = new AgUiRunActivityClient();
 const workflow = new WorkflowClient();
@@ -356,7 +357,7 @@ export function RunSidebar({
         <h2>Issue #{run.issue.number}</h2>
         <p>
           {run.mode === 'simulation' ? 'Simulation · ' : ''}
-          {run.status.replaceAll('_', ' ')}
+          <RunStatusBadge status={run.status} />
         </p>
         <ol className="run-stepper" aria-label="Implementation stages">
           {['Setup', 'Development', 'Checks', 'Review', 'PR'].map(

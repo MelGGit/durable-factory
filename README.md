@@ -58,6 +58,8 @@ Open [http://127.0.0.1:4317](http://127.0.0.1:4317). Node serves both the API an
 
 For a Bun project, setup might be `bun install --frozen-lockfile`, with required checks such as `bun run check` and `bun run test`. Use commands that actually validate your target repository.
 
+General **Settings → Title generator** lets you choose an optional provider/model shared by every project. New planning chats get a short title from their first message, then an AI-written title when a model is selected. Generation runs separately from planning; unavailable models or failed requests keep the first-message title. Existing chats and custom titles stay unchanged. No model is selected automatically.
+
 Requesty and GitHub tokens are entered in Settings and stored privately by the service. For subscription sign-in, stop the service first and run the relevant interactive diagnostic:
 
 ```sh
