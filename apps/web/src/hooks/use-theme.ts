@@ -30,6 +30,14 @@ export function applyTheme(pref: ThemePreference): void {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute('content', META_COLORS[theme]);
+  document
+    .querySelector('#app-icon')
+    ?.setAttribute(
+      'href',
+      theme === 'dark'
+        ? '/durable-factory-icon-dark-32.png?v=3'
+        : '/durable-factory-icon-32.png?v=3',
+    );
 }
 
 export function useTheme(): [ThemePreference, (pref: ThemePreference) => void] {

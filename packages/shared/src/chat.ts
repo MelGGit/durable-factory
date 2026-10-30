@@ -157,6 +157,13 @@ export class ChatClient extends FactoryClient {
       {},
     );
   }
+  planIssue(issueNumber: number, requestId: string) {
+    return this.mutation<ConversationSummary>(
+      `/issues/${issueNumber}/planning`,
+      'POST',
+      { requestId },
+    );
+  }
   createConversation(title: string, requestId: string) {
     return this.mutation<ConversationSummary>('/conversations', 'POST', {
       title,

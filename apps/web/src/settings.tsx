@@ -153,7 +153,7 @@ export function Settings({
       });
       setSaved(response);
       setDraft(response.settings);
-      setNotice('Settings saved. They will be here when you return.');
+      setNotice('Settings saved.');
       onChanged();
     } catch (e) {
       setError(
@@ -224,217 +224,6 @@ export function Settings({
   const project = projectId !== undefined;
   return (
     <div className="view settings-view">
-      {project && (
-        <>
-          {saved && (
-            <div className="project-actions">
-              {renaming === undefined ? (
-                <>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setRenaming(saved.name)}
-                  >
-                    Rename
-                  </button>
-                  {projects.length > 1 && (
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => {
-                        if (
-                          !window.confirm(
-                            `Delete project “${projectName}”? This only works once it has no conversations or runs.`,
-                          )
-                        )
-                          return;
-                        void client
-                          .deleteProject(saved.projectId)
-                          .then(() => {
-                            discardUnsavedChanges();
-                            onChanged();
-                            onDeleted();
-                          })
-                          .catch((e) =>
-                            setError(
-                              e instanceof Error
-                                ? e.message
-                                : 'Could not delete the project.',
-                            ),
-                          );
-                      }}
-                    >
-                      Delete
-                    </button>
-                  )}
-                </>
-              ) : (
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void client
-                      .renameProject(saved.projectId, renaming)
-                      .then(() => {
-                        setRenaming(undefined);
-                        onChanged();
-                        return load();
-                      })
-                      .catch((e) =>
-                        setError(
-                          e instanceof Error
-                            ? e.message
-                            : 'Could not rename the project.',
-                        ),
-                      );
-                  }}
-                >
-                  <label className="sr-only" htmlFor="rename-project">
-                    Project name
-                  </label>
-                  <input
-                    id="rename-project"
-                    autoFocus
-                    maxLength={80}
-                    placeholder="Folder name"
-                    title="Leave empty to use the name of the project folder"
-                    value={renaming}
-                    onChange={(e) => setRenaming(e.target.value)}
-                  />
-                  <button className="secondary">Save name</button>
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setRenaming(undefined)}
-                  >
-                    Cancel
-                  </button>
-                </form>
-              )}
-            </div>
-          )}
-        </>
-      )}
-      {!project && (
-        <>
-          {runners !== undefined && (
-            <form
-              className="runners-block panel"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setRunnersBusy(true);
-                setError('');
-                void client
-                  .saveRunners(Number(runnersDraft))
-                  .then((result) => {
-                    setRunners(result.runners);
-                    setRunnersDraft(String(result.runners));
-                    setNotice(
-                      `Up to ${result.runners} run${result.runners === 1 ? '' : 's'} will work at once.`,
-                    );
-                  })
-                  .catch((e) =>
-                    setError(
-                      e instanceof Error
-                        ? e.message
-                        : 'Could not save parallel runs.',
-                    ),
-                  )
-                  .finally(() => setRunnersBusy(false));
-              }}
-            >
-              <div>
-                <h2>Execution</h2>
-                <p>Runs start oldest first across every project.</p>
-              </div>
-              <label>
-                Parallel runs
-                <input
-                  type="number"
-                  min="1"
-                  max="16"
-                  step="1"
-                  required
-                  disabled={runnersBusy}
-                  value={runnersDraft}
-                  onChange={(e) => setRunnersDraft(e.target.value)}
-                />
-                <small>
-                  1–16 runs at once. Lowering this never stops work in progress.
-                </small>
-              </label>
-              <button
-                className="secondary"
-                disabled={!runnersDirty || runnersBusy}
-              >
-                {runnersBusy ? 'Saving…' : 'Save'}
-              </button>
-            </form>
-          )}
-          {titleSaved && saved && (
-            <form
-              className="panel title-generator"
-              aria-label="Title generator"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setTitleBusy(true);
-                setError('');
-                setNotice('');
-                void client
-                  .saveTitleGenerator({
-                    revision: titleSaved.revision,
-                    selection: titleDraft,
-                  })
-                  .then((value) => {
-                    setTitleSaved(value);
-                    setTitleDraft(value.selection);
-                    setNotice('Title generator saved.');
-                  })
-                  .catch((e) =>
-                    setError(
-                      e instanceof Error
-                        ? e.message
-                        : 'Could not save title generator.',
-                    ),
-                  )
-                  .finally(() => setTitleBusy(false));
-              }}
-            >
-              <h2>Title generator</h2>
-              <p>
-                Choose an optional model to name new planning chats across all
-                projects. A small model works well.
-              </p>
-              <fieldset disabled={titleBusy} className="settings-fields">
-                <ModelSelection
-                  selection={titleDraft}
-                  providers={saved.providers}
-                  onChange={(value) => {
-                    setTitleDraft(value);
-                    setNotice('');
-                  }}
-                />
-              </fieldset>
-              <div className="title-generator-footer">
-                <p>
-                  No model selected, or generation unavailable? The first
-                  message becomes the title. Existing chats keep their titles.
-                </p>
-                <button
-                  type="submit"
-                  className="secondary"
-                  disabled={
-                    !titleDirty ||
-                    titleBusy ||
-                    Boolean(titleDraft && !titleDraft.model.trim())
-                  }
-                >
-                  {titleBusy ? 'Saving…' : 'Save title generator'}
-                </button>
-              </div>
-            </form>
-          )}
-        </>
-      )}
       {error && (
         <div className="alert error" role="alert">
           <span>{error}</span>
@@ -461,23 +250,14 @@ export function Settings({
                 <fieldset className="settings-fields" disabled={busy}>
                   <section id="repository" className="settings-section">
                     <div className="section-heading">
-                      <span className="section-number">01</span>
                       <div>
-                        <h2>The repository</h2>
+                        <h2>Repository</h2>
                         <p>
-                          One project. A dedicated place for every future run.
+                          Choose the checkout and base branch for future runs.
                         </p>
                       </div>
-                      <span className="section-meta">LOCAL + GITHUB</span>
                     </div>
-                    <div className="panel">
-                      <div className="panel-topline">
-                        <span className="mini-icon">⌑</span>
-                        <div>
-                          <h3>Project location</h3>
-                          <p>Your existing checkout stays in your control.</p>
-                        </div>
-                      </div>
+                    <div className="settings-content">
                       <label>
                         Local repository path
                         <input
@@ -505,7 +285,7 @@ export function Settings({
                                 next.repository.github = e.target.value;
                               })
                             }
-                            placeholder="owner / repository"
+                            placeholder="owner/repository"
                             autoComplete="off"
                           />
                           <small>Use owner/repository, without spaces.</small>
@@ -528,9 +308,14 @@ export function Settings({
                       </div>
                     </div>
                   </section>
-                  <div className="panel">
-                    <h2>Commit identity</h2>
-                    <div className="field-grid">
+                  <section className="settings-section">
+                    <div className="section-heading">
+                      <div>
+                        <h2>Commit identity</h2>
+                        <p>The author used for commits in future runs.</p>
+                      </div>
+                    </div>
+                    <div className="two-columns">
                       <label>
                         Commit author name
                         <input
@@ -555,25 +340,16 @@ export function Settings({
                         />
                       </label>
                     </div>
-                    <p>
-                      Captured for future runs. Complete repository, models,
-                      checks, connections and identity to enable real execution
-                      and automatic agent:ready starts.
-                    </p>
-                  </div>
+                  </section>
                   <section id="models" className="settings-section">
                     <div className="section-heading">
-                      <span className="section-number">02</span>
                       <div>
-                        <h2>The right model for each role</h2>
-                        <p>
-                          Choose explicitly. Your factory never switches
-                          providers on its own.
-                        </p>
+                        <h2>Models</h2>
+                        <p>Set the provider and model for each role.</p>
                       </div>
                     </div>
                     <div className="role-grid">
-                      {ROLES.map((role, i) => {
+                      {ROLES.map((role) => {
                         const selection = draft.roles[role];
                         const provider = saved.providers.find(
                           (item) => item.id === selection.provider,
@@ -582,126 +358,131 @@ export function Settings({
                           (item) => item.id === selection.model,
                         );
                         return (
-                          <article className="panel role-card" key={role}>
-                            <div className={`role-icon role-${role}`}>
-                              {['✳', '⌘', '◎'][i]}
+                          <article className="role-row" key={role}>
+                            <div className="role-heading">
+                              <h3>{names[role]}</h3>
+                              <p>{descriptions[role]}</p>
                             </div>
-                            <h3>{names[role]}</h3>
-                            <p>{descriptions[role]}</p>
-                            <label htmlFor={`${role}-provider`}>Provider</label>
-                            <select
-                              id={`${role}-provider`}
-                              value={selection.provider ?? ''}
-                              onChange={(e) =>
-                                change((next) => {
-                                  next.roles[role] = {
-                                    provider: (e.target.value ||
-                                      null) as ProviderId | null,
-                                    model: '',
-                                    reasoning: null,
-                                  };
-                                })
-                              }
-                            >
-                              <option value="">Choose a provider</option>
-                              {saved.providers.map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {names[item.id]}
-                                </option>
-                              ))}
-                            </select>
-                            <label htmlFor={`${role}-model`}>Model</label>
-                            {selection.provider === 'requesty' ? (
-                              <input
-                                id={`${role}-model`}
-                                value={selection.model}
-                                placeholder="Exact Requesty model ID"
-                                onChange={(e) =>
-                                  change((next) => {
-                                    next.roles[role].model = e.target.value;
-                                    next.roles[role].reasoning = null;
-                                  })
-                                }
-                              />
-                            ) : (
-                              <select
-                                id={`${role}-model`}
-                                disabled={!selection.provider}
-                                value={selection.model}
-                                onChange={(e) =>
-                                  change((next) => {
-                                    next.roles[role].model = e.target.value;
-                                    next.roles[role].reasoning = null;
-                                  })
-                                }
-                              >
-                                <option value="">Choose a model</option>
-                                {provider?.models.map((item) => (
-                                  <option value={item.id} key={item.id}>
-                                    {item.name}
+                            <div className="role-controls">
+                              <div>
+                                <label htmlFor={`${role}-provider`}>
+                                  Provider
+                                </label>
+                                <select
+                                  id={`${role}-provider`}
+                                  value={selection.provider ?? ''}
+                                  onChange={(e) =>
+                                    change((next) => {
+                                      next.roles[role] = {
+                                        provider: (e.target.value ||
+                                          null) as ProviderId | null,
+                                        model: '',
+                                        reasoning: null,
+                                      };
+                                    })
+                                  }
+                                >
+                                  <option value="">Choose a provider</option>
+                                  {saved.providers.map((item) => (
+                                    <option key={item.id} value={item.id}>
+                                      {names[item.id]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label htmlFor={`${role}-model`}>Model</label>
+                                {selection.provider === 'requesty' ? (
+                                  <input
+                                    id={`${role}-model`}
+                                    value={selection.model}
+                                    placeholder="Exact Requesty model ID"
+                                    onChange={(e) =>
+                                      change((next) => {
+                                        next.roles[role].model = e.target.value;
+                                        next.roles[role].reasoning = null;
+                                      })
+                                    }
+                                  />
+                                ) : (
+                                  <select
+                                    id={`${role}-model`}
+                                    disabled={!selection.provider}
+                                    value={selection.model}
+                                    onChange={(e) =>
+                                      change((next) => {
+                                        next.roles[role].model = e.target.value;
+                                        next.roles[role].reasoning = null;
+                                      })
+                                    }
+                                  >
+                                    <option value="">Choose a model</option>
+                                    {provider?.models.map((item) => (
+                                      <option value={item.id} key={item.id}>
+                                        {item.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+                              <div>
+                                <label htmlFor={`${role}-reasoning`}>
+                                  Reasoning
+                                </label>
+                                <select
+                                  id={`${role}-reasoning`}
+                                  disabled={!model?.reasoning.length}
+                                  value={selection.reasoning ?? ''}
+                                  onChange={(e) =>
+                                    change((next) => {
+                                      next.roles[role].reasoning =
+                                        e.target.value || null;
+                                    })
+                                  }
+                                >
+                                  <option value="">
+                                    {model?.reasoning.length
+                                      ? 'Provider default'
+                                      : 'No verified options'}
                                   </option>
-                                ))}
-                              </select>
-                            )}
-                            <label htmlFor={`${role}-reasoning`}>
-                              Reasoning
-                            </label>
-                            <select
-                              id={`${role}-reasoning`}
-                              disabled={!model?.reasoning.length}
-                              value={selection.reasoning ?? ''}
-                              onChange={(e) =>
-                                change((next) => {
-                                  next.roles[role].reasoning =
-                                    e.target.value || null;
-                                })
-                              }
-                            >
-                              <option value="">
-                                {model?.reasoning.length
-                                  ? 'Provider default'
-                                  : 'No verified options'}
-                              </option>
-                              {model?.reasoning.map((level) => (
-                                <option key={level} value={level}>
-                                  {level}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="role-status">
-                              <span
-                                className={`status-dot ${provider?.configured ? '' : 'unconfigured'}`}
-                              />
-                              {provider?.status === 'error'
-                                ? 'Connection needs attention'
-                                : provider?.configured
-                                  ? 'Credentials stored'
-                                  : 'Connection not configured'}
+                                  {model?.reasoning.map((level) => (
+                                    <option key={level} value={level}>
+                                      {level}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="role-status">
+                                <span
+                                  className={`status-dot ${provider?.configured ? '' : 'unconfigured'}`}
+                                />
+                                {provider?.status === 'error'
+                                  ? 'Connection needs attention'
+                                  : provider?.configured
+                                    ? 'Credentials stored'
+                                    : 'Connection not configured'}
+                              </div>
                             </div>
                           </article>
                         );
                       })}
                     </div>
                     <p className="section-footnote">
-                      Model lists describe catalog capabilities, not verified
-                      account access. Requesty reasoning options are unavailable
-                      without model capability metadata.
+                      Model availability depends on your account. Reasoning
+                      options appear when the model supports them.
                     </p>
                   </section>
                   <section id="execution" className="settings-section">
                     <div className="section-heading">
-                      <span className="section-number">03</span>
                       <div>
-                        <h2>How work gets checked</h2>
+                        <h2>Commands</h2>
                         <p>
-                          Define the commands and time limits for future runs.
+                          Run setup before development and required checks
+                          before review.
                         </p>
                       </div>
-                      <span className="section-meta">
-                        NOT EXECUTED DURING SETUP
-                      </span>
                     </div>
-                    <div className="panel">
+                    <div className="settings-content">
                       <div className="two-columns">
                         <label>
                           Setup commands
@@ -743,11 +524,16 @@ export function Settings({
                           </small>
                         </label>
                       </div>
-                      <div className="divider" />
-                      <h3>
-                        Operation timeouts{' '}
-                        <span className="unit-label">SECONDS</span>
-                      </h3>
+                    </div>
+                  </section>
+                  <section className="settings-section">
+                    <div className="section-heading">
+                      <div>
+                        <h2>Timeouts</h2>
+                        <p>Maximum duration of each operation, in seconds.</p>
+                      </div>
+                    </div>
+                    <div className="settings-content">
                       <div className="timeout-grid">
                         {Object.entries(draft.timeouts).map(([key, value]) => (
                           <label key={key}>
@@ -776,14 +562,18 @@ export function Settings({
                   </section>
                 </fieldset>
               </form>
-              <div className="panel github-panel">
-                <h3>GitHub</h3>
+              <div className="settings-section github-section">
+                <div className="section-heading">
+                  <div>
+                    <h2>GitHub</h2>
+                    <p>Check access to the saved repository.</p>
+                  </div>
+                </div>
                 <div className="github-validation">
                   <p>
-                    Use a fine-grained token scoped to your repository with
-                    Issues read and write permission. Save repository settings
-                    before validating. A readable repository does not prove
-                    issue write access.
+                    Use a token with Issues, Contents and Pull requests
+                    read/write permissions. Save changes before validating;
+                    validation only checks read access.
                   </p>
                   <button
                     type="button"
@@ -807,15 +597,103 @@ export function Settings({
                   {githubError && <p role="alert">{githubError}</p>}
                 </div>
               </div>
+              <section className="settings-section project-management">
+                <div className="section-heading">
+                  <div>
+                    <h2>Project</h2>
+                    <p>{projectName}</p>
+                  </div>
+                </div>
+                <div className="project-actions">
+                  {renaming === undefined ? (
+                    <>
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => setRenaming(saved.name)}
+                      >
+                        Rename
+                      </button>
+                      {projects.length > 1 && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => {
+                            if (
+                              !window.confirm(
+                                `Delete project “${projectName}”? This only works once it has no conversations or runs.`,
+                              )
+                            )
+                              return;
+                            void client
+                              .deleteProject(saved.projectId)
+                              .then(() => {
+                                discardUnsavedChanges();
+                                onChanged();
+                                onDeleted();
+                              })
+                              .catch((e) =>
+                                setError(
+                                  e instanceof Error
+                                    ? e.message
+                                    : 'Could not delete the project.',
+                                ),
+                              );
+                          }}
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void client
+                          .renameProject(saved.projectId, renaming)
+                          .then(() => {
+                            setRenaming(undefined);
+                            onChanged();
+                            return load();
+                          })
+                          .catch((e) =>
+                            setError(
+                              e instanceof Error
+                                ? e.message
+                                : 'Could not rename the project.',
+                            ),
+                          );
+                      }}
+                    >
+                      <label className="sr-only" htmlFor="rename-project">
+                        Project name
+                      </label>
+                      <input
+                        id="rename-project"
+                        autoFocus
+                        maxLength={80}
+                        placeholder="Project name"
+                        title="Leave empty to use the name of the project folder"
+                        value={renaming}
+                        onChange={(e) => setRenaming(e.target.value)}
+                      />
+                      <button className="secondary">Save name</button>
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => setRenaming(undefined)}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  )}
+                </div>
+              </section>
               <footer className="save-bar">
                 <div>
-                  <span className={`status-dot ${dirty ? 'unsaved' : ''}`} />
                   <strong>
-                    {dirty
-                      ? 'You have unsaved changes'
-                      : 'Your settings are up to date'}
+                    {dirty ? 'Unsaved changes' : 'All changes saved'}
                   </strong>
-                  <span className="revision">Revision {saved.revision}</span>
                 </div>
                 <div>
                   <button
@@ -836,7 +714,7 @@ export function Settings({
                     form="settings-form"
                     disabled={!dirty || busy}
                   >
-                    {busy ? 'Saving…' : 'Save settings'} <span>↗</span>
+                    {busy ? 'Saving…' : 'Save settings'}
                   </button>
                 </div>
               </footer>
@@ -851,7 +729,7 @@ export function Settings({
                     <p>Choose a light or dark look, or follow your system.</p>
                   </div>
                 </div>
-                <div className="panel">
+                <div className="settings-content">
                   <AppearanceOptions />
                 </div>
               </section>
@@ -860,19 +738,15 @@ export function Settings({
                   <div>
                     <h2>Your connections</h2>
                     <p>
-                      Shared by every project. Credentials stay on this
-                      computer, outside your repository.
+                      Model and GitHub connections shared across all projects.
                     </p>
                   </div>
                 </div>
-                <div className="panel connections-panel">
+                <div className="connections-list">
                   {(['requesty', 'openai', 'anthropic', 'github'] as const).map(
                     (id) => (
                       <div className="connection-row" key={id}>
                         <div className="connection-name">
-                          <span className="connection-monogram">
-                            {id === 'github' ? 'gh' : names[id][0]}
-                          </span>
                           <div>
                             <h3>{names[id]}</h3>
                             <span>
@@ -885,7 +759,7 @@ export function Settings({
                           </div>
                         </div>
                         <span
-                          className={`connection-state ${saved.credentials[id] ? 'configured' : ''}`}
+                          className={`connection-state ${saved.credentialErrors[id] ? 'needs-attention' : saved.credentials[id] ? 'configured' : ''}`}
                         >
                           {saved.credentialErrors[id]
                             ? 'Needs attention'
@@ -971,12 +845,12 @@ export function Settings({
                   )}
                   <div className="connection-help">
                     <p>
-                      Credentials use {saved.credentialStorage.backend}.{' '}
+                      Stored in {saved.credentialStorage.backend} on this
+                      computer.{' '}
                       {saved.credentialStorage.status === 'ready'
                         ? 'Secure storage is ready.'
-                        : 'Secure storage needs attention. Unlock your system vault and retry.'}{' '}
-                      Storing credentials does not test model access or make a
-                      model call.
+                        : 'Unlock your system vault and retry secure storage.'}{' '}
+                      Saving a connection does not verify model access.
                     </p>
                     <button
                       type="button"
@@ -1003,6 +877,123 @@ export function Settings({
                   </div>
                 </div>
               </section>
+              {runners !== undefined && (
+                <form
+                  className="settings-section runners-block"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    setRunnersBusy(true);
+                    setError('');
+                    void client
+                      .saveRunners(Number(runnersDraft))
+                      .then((result) => {
+                        setRunners(result.runners);
+                        setRunnersDraft(String(result.runners));
+                        setNotice(
+                          `Up to ${result.runners} run${result.runners === 1 ? '' : 's'} will work at once.`,
+                        );
+                      })
+                      .catch((e) =>
+                        setError(
+                          e instanceof Error
+                            ? e.message
+                            : 'Could not save parallel runs.',
+                        ),
+                      )
+                      .finally(() => setRunnersBusy(false));
+                  }}
+                >
+                  <div>
+                    <h2>Execution</h2>
+                    <p>Runs start oldest first across every project.</p>
+                  </div>
+                  <label>
+                    Parallel runs
+                    <input
+                      type="number"
+                      min="1"
+                      max="16"
+                      step="1"
+                      required
+                      disabled={runnersBusy}
+                      value={runnersDraft}
+                      onChange={(e) => setRunnersDraft(e.target.value)}
+                    />
+                    <small>
+                      1–16 at once. Active runs continue if this is lowered.
+                    </small>
+                  </label>
+                  <button
+                    className="secondary"
+                    disabled={!runnersDirty || runnersBusy}
+                  >
+                    {runnersBusy ? 'Saving…' : 'Save'}
+                  </button>
+                </form>
+              )}
+              {titleSaved && (
+                <form
+                  className="settings-section title-generator"
+                  aria-label="Title generator"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    setTitleBusy(true);
+                    setError('');
+                    setNotice('');
+                    void client
+                      .saveTitleGenerator({
+                        revision: titleSaved.revision,
+                        selection: titleDraft,
+                      })
+                      .then((value) => {
+                        setTitleSaved(value);
+                        setTitleDraft(value.selection);
+                        setNotice('Title generator saved.');
+                      })
+                      .catch((e) =>
+                        setError(
+                          e instanceof Error
+                            ? e.message
+                            : 'Could not save title generator.',
+                        ),
+                      )
+                      .finally(() => setTitleBusy(false));
+                  }}
+                >
+                  <h2>Title generator</h2>
+                  <p>
+                    Automatically name new planning chats. A small model works
+                    well.
+                  </p>
+                  <fieldset disabled={titleBusy} className="settings-fields">
+                    <ModelSelection
+                      selection={titleDraft}
+                      providers={saved.providers}
+                      onChange={(value) => {
+                        setTitleDraft(value);
+                        setNotice('');
+                      }}
+                    />
+                  </fieldset>
+                  <div className="title-generator-footer">
+                    <p>
+                      Uses the first message when no model is selected or
+                      available. Existing titles stay unchanged.
+                    </p>
+                    <button
+                      type="submit"
+                      className="secondary"
+                      disabled={
+                        !titleDirty ||
+                        titleBusy ||
+                        Boolean(titleDraft && !titleDraft.model.trim())
+                      }
+                    >
+                      {titleBusy ? 'Saving…' : 'Save title generator'}
+                    </button>
+                  </div>
+                </form>
+              )}
             </>
           )}
         </>

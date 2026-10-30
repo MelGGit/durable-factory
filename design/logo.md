@@ -1,6 +1,6 @@
 # Durable Factory logo
 
-Created with the built-in image generation tool. The transparent terracotta mark suggests assembled modules and a stepped factory roof. The production assets are `apps/web/public/durable-factory-logo.png` (256px), `apps/web/public/durable-factory-icon-32.png` (32px tab icon), and `apps/web/public/favicon.ico` (32px/64px fallback, derived from the PNGs). The 64px source is `apps/web/public/favicon.png`.
+Created with the built-in image generation tool. The transparent mark suggests assembled modules and a stepped factory roof. The sidebar uses `apps/web/public/durable-factory-logo.png` (256px) as a CSS mask to inherit the text color. The browser tab icons are `apps/web/public/durable-factory-icon-32.png` (light theme, #141413) and `apps/web/public/durable-factory-icon-dark-32.png` (dark theme, #eeeeec), selected with the app's theme preference. `apps/web/public/favicon.ico` (32px/64px) and `apps/web/public/favicon.png` (64px) provide light-theme fallbacks. The original terracotta source is preserved in the sidebar mask asset.
 
 ## Generation prompt
 

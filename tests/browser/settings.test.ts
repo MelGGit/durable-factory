@@ -28,10 +28,14 @@ test(
       const responseBodies: string[] = [];
       page.on('response', (response) => {
         if (response.url().includes('/api/'))
-          void response.text().then((value) => responseBodies.push(value));
+          void response
+            .text()
+            .then((value) => responseBodies.push(value))
+            // Navigating or restarting can discard an unfinished response.
+            .catch(() => {});
       });
       await page.goto(`${service.url}/projects/default/settings`);
-      await page.getByRole('heading', { name: 'The repository' }).waitFor();
+      await page.getByRole('heading', { name: 'Repository' }).waitFor();
       assert.equal(
         await page.getByRole('button', { name: 'Save settings' }).isDisabled(),
         true,
@@ -116,20 +120,62 @@ test(
         'develop',
       );
       await mkdir(resolve('test-results'), { recursive: true });
-      await page.screenshot({
-        path: resolve('test-results/settings-desktop.png'),
-        fullPage: true,
-      });
-      await page.setViewportSize({ width: 390, height: 844 });
-      await page.screenshot({
-        path: resolve('test-results/settings-mobile.png'),
-        fullPage: true,
-      });
+      // Check the actual scrolling pane: the app shell can hide overflow
+      // even when the document itself still fits the screen.
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme });
+        for (const width of [1440, 1024, 390, 320]) {
+          await page.setViewportSize({ width, height: 844 });
+          for (const [view, route, heading] of [
+            ['general', '/settings', 'Appearance'],
+            ['project', '/projects/default/settings', 'Repository'],
+          ]) {
+            await page.goto(`${service.url}${route}`);
+            await page
+              .getByRole('heading', { name: heading, exact: true })
+              .waitFor();
+            const layout = await page
+              .locator('.view-scroll')
+              .evaluate((pane) => {
+                const bounds = pane.getBoundingClientRect();
+                return {
+                  overflow: pane.scrollWidth > pane.clientWidth,
+                  clippedControls: Array.from(
+                    pane.querySelectorAll('input, select, textarea, button'),
+                  ).filter((control) => {
+                    const rect = control.getBoundingClientRect();
+                    return (
+                      rect.width > 0 &&
+                      (rect.left < bounds.left || rect.right > bounds.right)
+                    );
+                  }).length,
+                };
+              });
+            assert.deepEqual(
+              layout,
+              { overflow: false, clippedControls: 0 },
+              `${view}, ${colorScheme}, ${width}px`,
+            );
+            if (width === 1440 || width === 390) {
+              await page.screenshot({
+                path: resolve(
+                  `test-results/settings-${view}-${colorScheme}-${width}.png`,
+                ),
+              });
+            }
+          }
+        }
+      }
+      // Keep save and discard reachable together on small screens.
+      await page.getByLabel('Base branch').fill('discard-me');
+      await page.getByRole('button', { name: 'Discard edits' }).click();
       assert.equal(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth > innerWidth,
-        ),
-        false,
+        await page.getByLabel('Base branch').inputValue(),
+        'develop',
+      );
+      assert.equal(
+        await page.getByRole('button', { name: 'Save settings' }).isDisabled(),
+        true,
       );
       assert.deepEqual(errors, []);
       await context.close();

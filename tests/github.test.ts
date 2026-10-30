@@ -278,3 +278,64 @@ test('real workflow GitHub endpoints capture issues, exclude PR label hits, enco
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('Home issue listing excludes PRs and closed issues, and updates only the selected issue', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-github-issues-'));
+  const credentials = new PrivateCredentials(directory);
+  await credentials.init();
+  try {
+    await credentials.replace('github', {
+      type: 'api_key',
+      key: 'fixture-token',
+    });
+    const requests: { url: string; init?: RequestInit }[] = [];
+    const issue = {
+      number: 4,
+      html_url: 'https://github.com/example/project/issues/4',
+      title: 'Existing issue',
+      body: 'Issue context',
+      updated_at: '2026-01-01T00:00:00Z',
+      state: 'open',
+    };
+    const github = createGitHub(credentials, (async (url, init) => {
+      requests.push({ url: String(url), init });
+      if (init?.method === 'PATCH')
+        return Response.json({ ...issue, ...JSON.parse(String(init.body)) });
+      return Response.json(
+        [
+          issue,
+          { ...issue, number: 5, pull_request: {} },
+          { ...issue, number: 6, state: 'closed' },
+        ],
+        {
+          headers: {
+            Link: '<https://api.github.com/repos/example/project/issues?page=2>; rel="next"',
+          },
+        },
+      );
+    }) as typeof fetch);
+    const page = await github.openIssues!('example/project', 1);
+    assert.deepEqual(
+      page.issues.map((issue) => issue.number),
+      [4],
+    );
+    assert.equal(page.hasNext, true);
+    assert.match(requests[0].url, /state=open.*page=1/);
+    const updated = await github.updateIssue!(
+      'example/project',
+      4,
+      'Approved revision',
+      'Approved body',
+    );
+    assert.equal(updated.number, 4);
+    assert.equal(updated.title, 'Approved revision');
+    assert.ok(requests[1].url.endsWith('/issues/4'));
+    assert.equal(requests[1].init?.method, 'PATCH');
+    assert.deepEqual(JSON.parse(String(requests[1].init?.body)), {
+      title: 'Approved revision',
+      body: 'Approved body',
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

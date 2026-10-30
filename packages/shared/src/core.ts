@@ -1,4 +1,4 @@
-import type { GitHubValidation } from './planning.js';
+import type { GitHubValidation, ProjectIssuesResponse } from './planning.js';
 export const API_VERSION = 'v1' as const;
 export const ROLES = ['planning', 'development', 'review'] as const;
 export type Role = (typeof ROLES)[number];
@@ -166,6 +166,7 @@ const projectPaths = new Set([
   '/runs',
   '/runs/events',
   '/github/validate',
+  '/issues',
 ]);
 export class FactoryClient {
   private csrfToken?: string;
@@ -177,7 +178,8 @@ export class FactoryClient {
   ) {}
   protected scoped(path: string) {
     const bare = path.split('?')[0];
-    return this.projectId && projectPaths.has(bare)
+    return this.projectId &&
+      (projectPaths.has(bare) || /^\/issues\/\d+\/planning$/.test(bare))
       ? `/projects/${encodeURIComponent(this.projectId)}${path}`
       : path;
   }
@@ -217,6 +219,11 @@ export class FactoryClient {
   }
   settings() {
     return this.request<SettingsResponse>('/settings');
+  }
+  projectIssues(page = 1, signal?: AbortSignal) {
+    return this.request<ProjectIssuesResponse>(`/issues?page=${page}`, {
+      signal,
+    });
   }
   validateGitHub() {
     return this.mutation<GitHubValidation>('/github/validate', 'POST', {});

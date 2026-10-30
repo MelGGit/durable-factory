@@ -1,4 +1,5 @@
 import React from 'react';
+import { ProjectIssues } from './project-issues.js';
 import {
   projectLabel,
   runUpdatedAt,
@@ -6,6 +7,7 @@ import {
   type ProjectSummary,
   type WorkflowRun,
   type DeletionOperation,
+  type WorkflowSnapshot,
 } from '../../../packages/shared/src/index.js';
 import { Icon } from './icons.js';
 import { RunStatusBadge, runNeedsAttention, stageLabel } from './run-status.js';
@@ -25,6 +27,8 @@ export function Home({
   deletions,
   onNew,
   onOpen,
+  onRun,
+  workflowMode,
 }: {
   projects: ProjectSummary[];
   conversations: ConversationSummary[];
@@ -32,6 +36,8 @@ export function Home({
   deletions: DeletionOperation[];
   onNew: (projectId: string) => void;
   onOpen: (conversationId: string) => void;
+  onRun: (run: WorkflowRun) => void;
+  workflowMode: WorkflowSnapshot['mode'];
 }) {
   const names = new Map(projects.map((p) => [p.id, projectLabel(p)]));
   const blocked = deletions.filter((d) => d.state === 'blocked');
@@ -85,7 +91,10 @@ export function Home({
     .sort((a, b) => b.at - a.at)
     .slice(0, 8);
   const returning =
-    conversations.length > 0 || runs.length > 0 || blocked.length > 0;
+    conversations.length > 0 ||
+    runs.length > 0 ||
+    blocked.length > 0 ||
+    projects.some((project) => Boolean(project.repository.github));
   const queue = new Map(
     runs
       .filter((r) => r.status === 'queued')
@@ -135,7 +144,7 @@ export function Home({
         <h2>{returning ? 'Your workspace' : 'Start with a conversation.'}</h2>
         <p className="home-lead">
           {returning
-            ? 'Pick up where you left off, or start something new.'
+            ? 'Choose an issue to implement, refine it with the planning agent, or start a new conversation.'
             : 'Inspect a repository, agree a ticket with the planning agent, then hand it to an implementation run. Everything stays here when you return.'}
         </p>
         {(attention.length > 0 || blocked.length > 0) && (
@@ -199,7 +208,11 @@ export function Home({
           <h3 className="home-section">Projects</h3>
           <div className="home-projects">
             {projects.map((project) => (
-              <article key={project.id} className="home-card">
+              <section
+                key={project.id}
+                className="home-card home-project"
+                aria-label={`${projectLabel(project)} issues`}
+              >
                 <div className="home-card-head">
                   <Icon name="folder" />
                   <strong>{projectLabel(project)}</strong>
@@ -227,7 +240,14 @@ export function Home({
                     Project settings
                   </a>
                 </div>
-              </article>
+                <ProjectIssues
+                  project={project}
+                  runs={availableRuns}
+                  mode={workflowMode}
+                  onRun={onRun}
+                  onOpen={onOpen}
+                />
+              </section>
             ))}
           </div>
         </section>

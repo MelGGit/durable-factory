@@ -294,7 +294,7 @@ export async function startService(options: ServiceOptions = {}) {
     // /projects/:id/<resource> addresses a resource of one project. Handlers
     // see the plain path, and the project the request is for.
     const scopedPath =
-      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|github\/validate))$/.exec(
+      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|github\/validate|issues(?:\/\d+\/planning)?))$/.exec(
         url.pathname,
       );
     const scopedProject = scopedPath?.[1];
@@ -623,6 +623,77 @@ export async function startService(options: ServiceOptions = {}) {
             await workflow.command(runRoute[1], await body(req)),
           );
       }
+      if (path === '/api/v1/issues' && req.method === 'GET') {
+        const page = Number(url.searchParams.get('page') ?? 1);
+        if (!Number.isSafeInteger(page) || page < 1 || page > 100)
+          throw new ApiError('INVALID_INPUT', 'Invalid issue page.', 400);
+        const repository = (await configuration!.read(projectId)).settings
+          .repository.github;
+        if (!repository) return send(res, 200, { issues: [], hasNext: false });
+        if (!github.openIssues)
+          throw new ApiError('NOT_READY', 'Issue listing is unavailable.', 503);
+        const result = await github.openIssues(repository, page);
+        return send(res, 200, {
+          issues: result.issues
+            .filter((issue) => !issue.pullRequest && issue.state === 'open')
+            .map(({ number, url, title, updatedAt, state }) => ({
+              number,
+              url,
+              title,
+              updatedAt,
+              state,
+            })),
+          hasNext: result.hasNext,
+        });
+      }
+      const planIssue = /^\/api\/v1\/issues\/(\d+)\/planning$/.exec(path);
+      if (planIssue && req.method === 'POST') {
+        const input = await body(req);
+        const number = Number(planIssue[1]);
+        if (
+          !Number.isSafeInteger(number) ||
+          number < 1 ||
+          !input ||
+          typeof input !== 'object' ||
+          !('requestId' in input) ||
+          typeof input.requestId !== 'string'
+        )
+          throw new ApiError(
+            'INVALID_INPUT',
+            'Provide an issue number and request ID.',
+            400,
+          );
+        const repository = (await configuration!.read(projectId)).settings
+          .repository.github;
+        if (!github.getIssue)
+          throw new ApiError(
+            'NOT_READY',
+            'Issue inspection is unavailable.',
+            503,
+          );
+        const issue = await github.getIssue(repository, number);
+        if (issue.pullRequest || issue.state !== 'open')
+          throw new ApiError('CONFLICT', 'Choose an open GitHub issue.', 409);
+        if (issue.body.length > 64000)
+          throw new ApiError(
+            'INVALID_INPUT',
+            'This issue is too large for a planning conversation. Shorten its body on GitHub first.',
+            400,
+          );
+        return send(
+          res,
+          201,
+          await chat!.create(
+            {
+              title: `Edit #${issue.number} · ${issue.title}`.slice(0, 120),
+              requestId: input.requestId,
+            },
+            'planning',
+            projectId,
+            issue,
+          ),
+        );
+      }
       if (path === '/api/v1/github/validate' && req.method === 'POST') {
         await body(req);
         return send(
@@ -844,13 +915,23 @@ export async function startService(options: ServiceOptions = {}) {
       const safe =
         error instanceof ApiError
           ? error
-          : error instanceof CredentialStorageError
-            ? new ApiError('PROVIDER_UNAVAILABLE', error.message, 503)
-            : new ApiError(
-                'INTERNAL',
-                'The service could not complete this operation. Check runtime storage permissions and try again.',
-                500,
-              );
+          : error instanceof GitHubFailure
+            ? new ApiError(
+                error.code,
+                error.message,
+                error.code === 'AUTHENTICATION'
+                  ? 401
+                  : error.code === 'FORBIDDEN'
+                    ? 403
+                    : 503,
+              )
+            : error instanceof CredentialStorageError
+              ? new ApiError('PROVIDER_UNAVAILABLE', error.message, 503)
+              : new ApiError(
+                  'INTERNAL',
+                  'The service could not complete this operation. Check runtime storage permissions and try again.',
+                  500,
+                );
       log('request_failed', { code: safe.code });
       if (!res.headersSent)
         send(res, safe.status, {
@@ -936,15 +1017,43 @@ export async function startService(options: ServiceOptions = {}) {
         ...real.extension,
         tools: recordingTools(ownership!.dataDir, real.tools).tools,
       });
+      const selectedAdapter =
+        options.workflow?.adapter ??
+        (mode === 'simulation'
+          ? simulationAdapter(options.workflow?.clock)
+          : mode === 'real'
+            ? real.adapter()
+            : undefined);
+      const workflowAdapter =
+        selectedAdapter?.mode === 'simulation' &&
+        !selectedAdapter.issue &&
+        github.getIssue
+          ? {
+              ...selectedAdapter,
+              issue: async (
+                repository: string,
+                number: number,
+                signal?: AbortSignal,
+              ) => {
+                const issue = await github.getIssue!(
+                  repository,
+                  number,
+                  signal,
+                );
+                if (issue.pullRequest || issue.state !== 'open')
+                  throw new ApiError(
+                    'CONFLICT',
+                    'Choose an open GitHub issue.',
+                    409,
+                  );
+                return issue;
+              },
+            }
+          : selectedAdapter;
       workflow = new WorkflowService(
         configuration.harness,
         workflowTasks.task,
-        options.workflow?.adapter ??
-          (mode === 'simulation'
-            ? simulationAdapter(options.workflow?.clock)
-            : mode === 'real'
-              ? real.adapter()
-              : undefined),
+        workflowAdapter,
         options.workflow?.clock,
       );
       openedWorkflow = workflow;

@@ -217,12 +217,6 @@ export async function openConfiguration(
           string,
           ProjectRecord
         >;
-        if (Object.values(projects).some((p) => p.name === clean))
-          throw new ApiError(
-            'CONFLICT',
-            'A project with this name already exists.',
-            409,
-          );
         const settings = defaultSettings();
         const source = projects[copyFrom]?.settings;
         if (source) {
@@ -230,7 +224,7 @@ export async function openConfiguration(
           settings.timeouts = copy(source.timeouts);
           settings.roles = copy(source.roles);
         }
-        const id = `p-${randomUUID().slice(0, 8)}`;
+        const id = randomUUID();
         projects[id] = newProject(
           id,
           clean,
@@ -247,17 +241,6 @@ export async function openConfiguration(
         const doc = await tx.doc(Configuration);
         if (doc.schemaVersion !== 1) throw unsupported();
         const project = projectOf(doc, projectId);
-        if (
-          clean &&
-          Object.values(
-            doc.projects as unknown as Record<string, ProjectRecord>,
-          ).some((p) => p.id !== projectId && p.name === clean)
-        )
-          throw new ApiError(
-            'CONFLICT',
-            'A project with this name already exists.',
-            409,
-          );
         project.name = clean;
         return summarize(project);
       }, context);

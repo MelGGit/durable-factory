@@ -5,6 +5,7 @@ import {
 } from '../../apps/server/src/chat-fixtures.js';
 import type {
   GitHubAdapter,
+  GitHubIssue,
   RemoteIssue,
 } from '../../apps/server/src/github.js';
 import { GitHubFailure } from '../../apps/server/src/github.js';
@@ -50,6 +51,10 @@ export function planningFixture() {
           'Here is the saved plan. Should I create this GitHub issue?',
         );
       }
+      if (text === 'update it') {
+        if (!results.length) return call('update_issue');
+        return fauxAssistantMessage('Issue update recorded.');
+      }
       if (text === 'yes' || text === 'create it' || text === 'force create') {
         if (!results.length) return call('create_issue');
         return fauxAssistantMessage('Issue operation recorded.');
@@ -62,6 +67,59 @@ export function planningFixture() {
 export class FakeGitHub implements GitHubAdapter {
   issues: RemoteIssue[] = [];
   calls = 0;
+  updates = 0;
+  details = new Map<
+    number,
+    { title: string; updatedAt: string; state: 'open' | 'closed' }
+  >();
+  async getIssue(
+    _repository: string,
+    number: number,
+    _signal?: AbortSignal,
+  ): Promise<GitHubIssue> {
+    const issue = this.issues.find((i) => i.number === number);
+    if (!issue) throw new GitHubFailure('Issue not found.', true);
+    return {
+      ...issue,
+      title: ticket.title,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      state: 'open',
+      ...this.details.get(number),
+    };
+  }
+  async openIssues(repository: string, page: number) {
+    const issues = await Promise.all(
+      this.issues.map((issue) => this.getIssue(repository, issue.number)),
+    );
+    const open = issues.filter(
+      (issue) => issue.state === 'open' && !issue.pullRequest,
+    );
+    return {
+      issues: open.slice((page - 1) * 2, page * 2),
+      hasNext: page * 2 < open.length,
+    };
+  }
+  async updateIssue(
+    repository: string,
+    number: number,
+    title: string,
+    body: string,
+  ) {
+    this.updates++;
+    if (this.mode === 'rejected')
+      throw new GitHubFailure('Token expired.', true);
+    if (this.mode === 'unknown') throw new Error('Timeout');
+    const issue = this.issues.find((i) => i.number === number);
+    if (!issue) throw new GitHubFailure('Issue not found.', true);
+    issue.body = body;
+    this.details.set(number, {
+      title,
+      updatedAt: `2026-01-01T00:00:${String(this.updates).padStart(2, '0')}.000Z`,
+      state: 'open',
+    });
+    if (this.mode === 'lost') throw new Error('Response lost after update');
+    return this.getIssue(repository, number);
+  }
   pages: number[] = [];
   mode: 'success' | 'lost' | 'rejected' | 'unknown' = 'success';
   async validate(repository: string) {
@@ -80,7 +138,7 @@ export class FakeGitHub implements GitHubAdapter {
       hasNext: page * 2 < this.issues.length,
     };
   }
-  async create(_repository: string, _title: string, body: string) {
+  async create(_repository: string, title: string, body: string) {
     this.calls++;
     if (this.mode === 'rejected')
       throw new GitHubFailure('Token expired.', true);
@@ -91,6 +149,11 @@ export class FakeGitHub implements GitHubAdapter {
       body,
     };
     this.issues.push(issue);
+    this.details.set(issue.number, {
+      title,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      state: 'open',
+    });
     if (this.mode === 'lost') throw new Error('Response lost after creation');
     return { number: issue.number, url: issue.url };
   }

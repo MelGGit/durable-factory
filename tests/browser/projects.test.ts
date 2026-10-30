@@ -67,7 +67,7 @@ test('the sidebar groups conversations by project and has no issue starter', asy
     await groups.nth(1).waitFor();
     assert.equal(await groups.count(), 2);
     assert.equal(await page.getByLabel('GitHub issue number').count(), 0);
-    const mine = page.getByRole('region', { name: 'Second' });
+    const mine = page.getByRole('region', { name: 'Second', exact: true });
     await mine.getByText('Second chat').waitFor();
     assert.equal(await mine.getByText('Default chat').count(), 0);
 
@@ -80,14 +80,14 @@ test('the sidebar groups conversations by project and has no issue starter', asy
     await groups.nth(1).waitFor();
     assert.equal(
       await page
-        .getByRole('region', { name: 'Second' })
+        .getByRole('region', { name: 'Second', exact: true })
         .getByText('Second chat')
         .count(),
       0,
       'collapsed state survives a reload',
     );
 
-    await page.getByRole('region', { name: 'alpha' }).waitFor();
+    await page.getByRole('region', { name: 'alpha', exact: true }).waitFor();
     assert.equal(await page.getByText('Default project').count(), 0);
     assert.equal(await page.getByLabel('Search conversations').count(), 0);
     assert.equal(
@@ -102,7 +102,7 @@ test('the sidebar groups conversations by project and has no issue starter', asy
       0,
     );
     // Session kinds are inline icons instead of separate text rows.
-    const alpha = page.getByRole('region', { name: 'alpha' });
+    const alpha = page.getByRole('region', { name: 'alpha', exact: true });
     await alpha.getByRole('img', { name: 'Planning', exact: true }).waitFor();
     // Settings is the last thing in the sidebar, at its bottom edge.
     const sidebar = await page.locator('.chat-sidebar').boundingBox();
@@ -153,7 +153,9 @@ test('projects are added from their own page, not from settings', async () => {
     await page.getByLabel('Provider').first().waitFor();
     await page.getByRole('button', { name: 'Create project' }).click();
     await page.waitForURL(`${service.url}/`);
-    await page.getByRole('region', { name: 'Brand new' }).waitFor();
+    await page
+      .getByRole('region', { name: 'Brand new', exact: true })
+      .waitFor();
   } finally {
     await browser.close();
     await service.close();

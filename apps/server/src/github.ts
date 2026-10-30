@@ -2,17 +2,14 @@ import {
   ApiError,
   type GitHubValidation,
   type IssueLink,
+  type ProjectIssue,
 } from '../../../packages/shared/src/index.js';
 import type { PrivateCredentials } from './credentials.js';
 export interface RemoteIssue extends IssueLink {
   body: string;
   pullRequest?: boolean;
 }
-export interface GitHubIssue extends RemoteIssue {
-  title: string;
-  updatedAt: string;
-  state: 'open' | 'closed';
-}
+export interface GitHubIssue extends RemoteIssue, ProjectIssue {}
 export interface GitHubPull {
   number: number;
   url: string;
@@ -27,6 +24,18 @@ export interface GitHubPull {
   merged?: boolean;
 }
 export interface GitHubAdapter {
+  openIssues?(
+    repository: string,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<{ issues: GitHubIssue[]; hasNext: boolean }>;
+  updateIssue?(
+    repository: string,
+    number: number,
+    title: string,
+    body: string,
+    signal?: AbortSignal,
+  ): Promise<GitHubIssue>;
   getPull?(
     repository: string,
     number: number,
@@ -272,6 +281,36 @@ export function createGitHub(
     };
   }
   return {
+    async openIssues(repository, page, signal) {
+      const result = await request(
+        repository,
+        `/issues?state=open&sort=updated&direction=desc&per_page=20&page=${page}`,
+        'GET',
+        undefined,
+        signal,
+      );
+      if (!Array.isArray(result.data))
+        throw new GitHubFailure('GitHub returned an invalid issue list.');
+      return {
+        issues: result.data
+          .filter((i: any) => !i.pull_request && i.state === 'open')
+          .map(detailedIssue),
+        hasNext: result.hasNext,
+      };
+    },
+    async updateIssue(repository, number, title, body, signal) {
+      return detailedIssue(
+        (
+          await request(
+            repository,
+            `/issues/${number}`,
+            'PATCH',
+            { title, body },
+            signal,
+          )
+        ).data,
+      );
+    },
     async getPull(repository, number, signal) {
       const { data } = await request(
         repository,

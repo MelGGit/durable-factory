@@ -8,17 +8,22 @@ import { simulationAdapter } from '../../apps/server/src/workflow.js';
 import { until } from '../fixtures/chat.js';
 
 async function openDetails(page: Page, name = 'Run') {
-  const tab = page.getByRole('tab', { name, exact: true });
   if (
     (page.viewportSize()?.width ?? 1280) < 1200 &&
     !(await page
-      .getByRole('dialog', { name: 'Implementation details', exact: true })
+      .getByRole('dialog', { name: 'Run information', exact: true })
       .isVisible())
   )
     await page
-      .getByRole('button', { name: 'Show details', exact: true })
+      .getByRole('button', { name: 'Run information', exact: true })
       .click();
-  await tab.click();
+  if (name === 'Details') {
+    for (const summary of await page.locator('.page-card > summary').all())
+      if (
+        await summary.evaluate((el) => !el.parentElement!.hasAttribute('open'))
+      )
+        await summary.click();
+  }
 }
 
 test(
@@ -55,7 +60,9 @@ test(
       page.on('pageerror', (e) => errors.push(e.message));
       await page.goto(`${s.service.url}/?conversation=${conversationId}`);
       await page.getByRole('button', { name: 'Start simulated run' }).click();
-      await page.getByRole('tab', { name: 'Run', exact: true }).waitFor();
+      await page
+        .getByRole('region', { name: 'Run progress', exact: true })
+        .waitFor();
       assert.match(page.url(), /\/\?conversation=/);
       await page.getByRole('navigation', { name: /sessions$/ }).waitFor();
       await page
@@ -106,7 +113,7 @@ test(
         .waitFor();
       await page
         .getByRole('button', {
-          name: 'Close implementation details',
+          name: 'Close run information',
           exact: true,
         })
         .click();

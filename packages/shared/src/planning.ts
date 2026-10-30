@@ -19,7 +19,20 @@ export interface IssueLink {
   number: number;
   url: string;
 }
+export interface ProjectIssue extends IssueLink {
+  title: string;
+  body: string;
+  updatedAt: string;
+  state: 'open' | 'closed';
+}
+export type ProjectIssueSummary = Omit<ProjectIssue, 'body'>;
+export interface ProjectIssuesResponse {
+  issues: ProjectIssueSummary[];
+  hasNext: boolean;
+}
 export interface IssueOperation {
+  kind?: 'create' | 'update';
+  sourceIssue?: ProjectIssue;
   id: string;
   requestId: string;
   repository: RepositoryRegistration;
@@ -35,6 +48,7 @@ export interface IssueOperation {
   issue?: IssueLink;
 }
 export interface PlanningState {
+  sourceIssue?: ProjectIssue;
   startAuthorization?: { requestId: string };
   runId?: string;
   repository: RepositoryRegistration;

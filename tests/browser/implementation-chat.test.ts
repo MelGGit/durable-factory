@@ -139,6 +139,11 @@ test(
       await page.waitForURL(`**/?conversation=${planning}`);
       assert.equal(await page.locator('.implementation-events').count(), 0);
       assert.equal(
+        await page.locator('.page-cards').count(),
+        0,
+        'Run cards clear when returning to planning',
+      );
+      assert.equal(
         await page.getByText('Development update 124', { exact: true }).count(),
         0,
       );
@@ -148,7 +153,7 @@ test(
         await page.getByLabel('Message', { exact: true }).inputValue(),
         'Draft implementation guidance',
       );
-      await page.getByRole('tab', { name: 'Ticket', exact: true }).click();
+      await page.locator('[data-card-id="run-ticket"] > summary').click();
       await page
         .getByRole('heading', { name: 'Acceptance criteria', exact: true })
         .waitFor();
@@ -417,6 +422,157 @@ test(
       await card
         .getByText('Complete output stays loaded', { exact: true })
         .waitFor();
+    } finally {
+      await browser.close();
+      await fixture.close();
+    }
+  },
+);
+
+test(
+  'run information uses independent page cards, survives live updates, and clears across navigation',
+  { timeout: 30000 },
+  async () => {
+    const adapter = simulationAdapter(),
+      execute = adapter.execute;
+    adapter.execute = (run, attempt, signal) =>
+      attempt.stage === 'developer'
+        ? new Promise(() => {})
+        : execute(run, attempt, signal);
+    const fixture = await workflowFixture(adapter);
+    const browser = await chromium.launch({
+      headless: true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    });
+    try {
+      const admitted = await fixture.client.startRun(
+        await fixture.issue(),
+        'page-cards',
+      );
+      const run = await until(
+        () => fixture.client.run(admitted.id),
+        (r) => r.stage === 'developer',
+      );
+      const page = await browser.newPage({
+        viewport: { width: 1440, height: 1000 },
+      });
+      page.setDefaultTimeout(7000);
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await page.goto(
+        `${fixture.service.url}/?conversation=${run.developerConversationId}`,
+      );
+      await page
+        .getByRole('region', { name: 'Run progress', exact: true })
+        .waitFor();
+      assert.equal(
+        await page
+          .locator('.implementation-sidebar, .run-sidebar-tabs')
+          .count(),
+        0,
+      );
+      const conversation = await page
+        .getByRole('region', { name: 'Conversation', exact: true })
+        .boundingBox();
+      const cards = await page
+        .getByRole('region', { name: 'Run information', exact: true })
+        .boundingBox();
+      assert.ok(
+        conversation && cards && cards.x >= conversation.x + conversation.width,
+      );
+      const ticket = page.locator('[data-card-id="run-ticket"]');
+      await ticket.locator(':scope > summary').click();
+      await ticket
+        .getByRole('heading', { name: 'Acceptance criteria', exact: true })
+        .waitFor();
+      await page
+        .getByRole('button', { name: 'Pause run', exact: true })
+        .click();
+      await page
+        .getByRole('button', { name: 'Resume run', exact: true })
+        .waitFor();
+      assert.equal(
+        await ticket.getAttribute('open'),
+        '',
+        'Expanded cards survive live run updates',
+      );
+      const transcriptBefore = await page
+        .locator('.transcript')
+        .evaluate((el) => el.scrollTop);
+      await page
+        .locator('.page-cards')
+        .evaluate((el) => (el.scrollTop = el.scrollHeight));
+      assert.equal(
+        await page.locator('.transcript').evaluate((el) => el.scrollTop),
+        transcriptBefore,
+      );
+      assert.ok(
+        await page.locator('.page-cards').evaluate((el) => el.scrollTop > 0),
+      );
+      await mkdir('test-results', { recursive: true });
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme });
+        for (const width of [1440, 1200, 1024, 390, 320]) {
+          await page.setViewportSize({ width, height: 844 });
+          if (width < 1200) {
+            const trigger = page.getByRole('button', {
+              name: 'Run information',
+              exact: true,
+            });
+            await trigger.click();
+            await page
+              .getByRole('dialog', { name: 'Run information', exact: true })
+              .waitFor();
+          }
+          assert.equal(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth > innerWidth,
+            ),
+            false,
+          );
+          const overflow = await page
+            .locator('.page-cards')
+            .evaluate((el) => el.scrollWidth > el.clientWidth);
+          assert.equal(overflow, false, `${colorScheme}, ${width}px`);
+          if (width === 1440 || width === 390) {
+            await page
+              .locator('.page-cards')
+              .evaluate((el) => (el.scrollTop = 0));
+            await page.screenshot({
+              path: `test-results/run-information-${colorScheme}-${width}.png`,
+            });
+          }
+          if (width < 1200) {
+            await page.keyboard.press('Escape');
+            assert.ok(
+              await page
+                .getByRole('button', { name: 'Run information', exact: true })
+                .evaluate((el) => el === document.activeElement),
+            );
+          }
+        }
+      }
+      await page.goto(`${fixture.service.url}/settings`);
+      await page
+        .getByRole('heading', { name: 'Appearance', exact: true })
+        .waitFor();
+      assert.equal(await page.locator('.page-cards').count(), 0);
+      assert.equal(
+        await page
+          .getByRole('button', { name: 'Run information', exact: true })
+          .count(),
+        0,
+      );
+      await page.goBack();
+      await page
+        .getByRole('button', { name: 'Run information', exact: true })
+        .click();
+      await page
+        .getByRole('region', { name: 'Run progress', exact: true })
+        .waitFor();
+      assert.deepEqual(errors, []);
     } finally {
       await browser.close();
       await fixture.close();

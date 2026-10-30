@@ -6,17 +6,22 @@ import { resolve } from 'node:path';
 import { realFixture } from '../fixtures/real.js';
 import { until } from '../fixtures/chat.js';
 async function openDetails(page: Page, name = 'Details') {
-  const tab = page.getByRole('tab', { name, exact: true });
   if (
     (page.viewportSize()?.width ?? 1280) < 1200 &&
     !(await page
-      .getByRole('dialog', { name: 'Implementation details', exact: true })
+      .getByRole('dialog', { name: 'Run information', exact: true })
       .isVisible())
   )
     await page
-      .getByRole('button', { name: 'Show details', exact: true })
+      .getByRole('button', { name: 'Run information', exact: true })
       .click();
-  await tab.click();
+  if (name === 'Details') {
+    for (const summary of await page.locator('.page-card > summary').all())
+      if (
+        await summary.evaluate((el) => !el.parentElement!.hasAttribute('open'))
+      )
+        await summary.click();
+  }
 }
 
 test(
@@ -161,7 +166,7 @@ test(
         (s) => !s.runs.length,
         15000,
       );
-      await page.getByLabel('Run inspector').waitFor({ state: 'detached' });
+      await page.locator('.page-cards').waitFor({ state: 'detached' });
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

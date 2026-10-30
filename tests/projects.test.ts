@@ -151,7 +151,10 @@ test('project names, repositories and deletion are guarded', async () => {
   try {
     await configure(f.client);
     const a = await f.client.createProject('A');
-    await assert.rejects(f.client.createProject('A'), rejects('CONFLICT'));
+    const twin = await f.client.createProject('A');
+    assert.notEqual(twin.id, a.id);
+    assert.match(twin.id, /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+    await f.client.deleteProject(twin.id);
     await assert.rejects(
       f.client.createProject('  '),
       rejects('INVALID_INPUT'),

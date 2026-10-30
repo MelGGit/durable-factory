@@ -48,6 +48,8 @@ bun run start
 
 Open [http://127.0.0.1:4317](http://127.0.0.1:4317). Node serves both the API and built frontend. Startup is manual; stop with Ctrl+C. Do not run development and production against the same data directory at the same time. Sleeping or powering off the computer suspends execution until the service runs again.
 
+Home shows open GitHub issues under each project. **Start implementation** opens a run for the selected issue; an existing run is opened instead of duplicated. **Edit issue** opens a planning chat with the current issue as context. The planner presents the complete revision and asks for approval before updating the same GitHub issue. Changed issues must be reopened for review before an older edit can be saved. In simulation mode, the start action is labelled **Start simulated run**.
+
 ### Configure the first repository
 
 1. Save the target repository's absolute local path, GitHub `owner/repository`, and base branch.

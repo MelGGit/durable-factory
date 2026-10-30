@@ -11,7 +11,8 @@ import {
 } from '../../../packages/shared/src/index.js';
 import { markdown } from './markdown.js';
 import { conversationItems } from './transcript.js';
-import { CommandLog, Inspector } from './runs.js';
+import { CommandLog, useRunCards } from './runs.js';
+import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
 import { Tool } from './chat.js';
 const activity = new RunActivityClient();
@@ -304,7 +305,7 @@ export function ImplementationTranscript({
   );
 }
 
-export function RunSidebar({
+export function RunInformation({
   run,
   snapshot,
   onRun,
@@ -313,12 +314,13 @@ export function RunSidebar({
   snapshot: WorkflowSnapshot;
   onRun: (run: WorkflowRun) => void;
 }) {
-  const [tab, setTab] = useState('run'),
-    [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
+  const inspectionCards = useRunCards({ run, startMode: snapshot.mode, onRun });
   useEffect(() => {
+    if (['pr_ready', 'cancelled'].includes(run.status)) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [run.status]);
   const stages = ['setup', 'developer', 'checks', 'reviewer', 'publication'];
   const index = stages.indexOf(
     run.stage === 'publishing' ? 'publication' : run.stage,
@@ -328,138 +330,121 @@ export function RunSidebar({
       run.attempts.at(-1)?.finishedAt ??
       run.createdAt)
     : now;
-  return (
-    <section className="implementation-sidebar">
-      <div
-        className="run-sidebar-tabs"
-        role="tablist"
-        aria-label="Implementation details"
-      >
-        {['run', 'ticket', 'details'].map((name) => (
-          <button
-            key={name}
-            role="tab"
-            id={`run-tab-${name}`}
-            aria-controls={`run-panel-${name}`}
-            aria-selected={tab === name}
-            onClick={() => setTab(name)}
-          >
-            {name[0].toUpperCase() + name.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div
-        hidden={tab !== 'run'}
-        role="tabpanel"
-        id="run-panel-run"
-        aria-labelledby="run-tab-run"
-      >
-        <h2>Issue #{run.issue.number}</h2>
-        <p>
-          {run.mode === 'simulation' ? 'Simulation · ' : ''}
-          <RunStatusBadge status={run.status} />
-        </p>
-        <ol className="run-stepper" aria-label="Implementation stages">
-          {['Setup', 'Development', 'Checks', 'Review', 'PR'].map(
-            (label, i) => (
-              <li
-                key={label}
-                aria-current={i === index ? 'step' : undefined}
-                data-complete={i < index}
-              >
-                {label}
-              </li>
-            ),
-          )}
-        </ol>
-        <p>
-          Elapsed: {Math.max(0, Math.round((end - run.createdAt) / 1000))}s ·
-          includes pauses
-        </p>
-        {run.status === 'queued' && (
-          <p>
-            Queue position:{' '}
-            {
-              snapshot.runs.filter(
-                (r) => r.status === 'queued' && r.queueOrder <= run.queueOrder,
-              ).length
-            }
-          </p>
-        )}
-        {run.planningConversationId && (
-          <a href={`/?conversation=${run.planningConversationId}`}>
-            Open planning conversation
-          </a>
-        )}
-        <Inspector
-          key={run.id}
-          run={run}
-          startMode={snapshot.mode}
-          onRun={onRun}
-          view="run"
-        />
-        {run.publication?.result &&
-          (run.mode === 'real' ? (
-            <a href={run.publication.result}>Open pull request</a>
-          ) : (
-            <p role="status">{run.publication.result}</p>
-          ))}
-      </div>
-      <div
-        hidden={tab !== 'ticket'}
-        role="tabpanel"
-        id="run-panel-ticket"
-        aria-labelledby="run-tab-ticket"
-      >
-        <h2>{run.specification.title}</h2>
-        <a href={run.issue.url}>View issue #{run.issue.number}</a>
-        {[
-          ['Goal', run.specification.goal],
-          ['Scope', run.specification.scope],
-          ['Acceptance criteria', run.specification.acceptanceCriteria],
-          ['Validation', run.specification.validation],
-        ].map(([label, text]) => (
-          <section key={label}>
-            <h3>{label}</h3>
-            <div
-              className="markdown"
-              dangerouslySetInnerHTML={{ __html: markdown(text) }}
-            />
-          </section>
-        ))}
-        <h3>Regression proof</h3>
-        <p>
-          {run.specification.regression?.required
-            ? `Required: ${run.specification.regression.command}`
-            : run.specification.regression?.required === false
-              ? `Not required: ${run.specification.regression.reason}`
-              : 'Not specified'}
-        </p>
-        {run.specification.regression?.required && (
+  const seconds = Math.max(0, Math.round((end - run.createdAt) / 1000));
+  const elapsed =
+    seconds < 60
+      ? `${seconds}s`
+      : seconds < 3600
+        ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+        : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  usePageCards(
+    [
+      {
+        id: 'run-progress',
+        title: 'Run progress',
+        actions: <RunStatusBadge status={run.status} />,
+        content: (
           <>
-            <p>
-              Test paths: {run.specification.regression.testPaths.join(', ')}
-            </p>
-            <p>
-              Expected failure: {run.specification.regression.expectedFailure}
-            </p>
+            <div className="run-progress-meta">
+              <span>
+                {run.mode === 'simulation' ? 'Simulation' : 'Real execution'}
+              </span>
+              <span title="Includes pauses and recovery">
+                {elapsed} elapsed
+              </span>
+            </div>
+            <ol className="run-stepper" aria-label="Implementation stages">
+              {['Setup', 'Develop', 'Checks', 'Review', 'PR'].map(
+                (label, i) => (
+                  <li
+                    key={label}
+                    aria-current={i === index ? 'step' : undefined}
+                    data-complete={i < index}
+                  >
+                    {label}
+                  </li>
+                ),
+              )}
+            </ol>
+            {run.status === 'queued' && (
+              <p>
+                Queue position:{' '}
+                {
+                  snapshot.runs.filter(
+                    (r) =>
+                      r.status === 'queued' && r.queueOrder <= run.queueOrder,
+                  ).length
+                }
+              </p>
+            )}
+            <div className="run-links">
+              <a href={run.issue.url}>View issue #{run.issue.number}</a>
+              {run.planningConversationId && (
+                <a href={`/?conversation=${run.planningConversationId}`}>
+                  Open planning conversation
+                </a>
+              )}
+              {run.publication?.result &&
+                (run.mode === 'real' ? (
+                  <a href={run.publication.result}>Open pull request</a>
+                ) : (
+                  <p role="status">{run.publication.result}</p>
+                ))}
+              {run.publication && !run.publication.result && (
+                <p role="status">Publication: {run.publication.state}</p>
+              )}
+            </div>
           </>
-        )}
-      </div>
-      <div
-        hidden={tab !== 'details'}
-        role="tabpanel"
-        id="run-panel-details"
-        aria-labelledby="run-tab-details"
-      >
-        <Inspector
-          key={run.id}
-          run={run}
-          startMode={snapshot.mode}
-          onRun={onRun}
-          view="details"
-        />
-      </div>
-    </section>
+        ),
+      },
+      inspectionCards[0],
+      {
+        id: 'run-ticket',
+        title: 'Ticket',
+        collapsible: true,
+        content: (
+          <>
+            <h3>{run.specification.title}</h3>
+            {[
+              ['Goal', run.specification.goal],
+              ['Scope', run.specification.scope],
+              ['Acceptance criteria', run.specification.acceptanceCriteria],
+              ['Validation', run.specification.validation],
+            ].map(([label, text]) => (
+              <section key={label}>
+                <h3>{label}</h3>
+                <div
+                  className="markdown"
+                  dangerouslySetInnerHTML={{ __html: markdown(text) }}
+                />
+              </section>
+            ))}
+            <h3>Regression proof</h3>
+            <p>
+              {run.specification.regression?.required
+                ? `Required: ${run.specification.regression.command}`
+                : run.specification.regression?.required === false
+                  ? `Not required: ${run.specification.regression.reason}`
+                  : 'Not specified'}
+            </p>
+            {run.specification.regression?.required && (
+              <>
+                <p>
+                  Test paths:{' '}
+                  {run.specification.regression.testPaths.join(', ')}
+                </p>
+                <p>
+                  Expected failure:{' '}
+                  {run.specification.regression.expectedFailure}
+                </p>
+              </>
+            )}
+          </>
+        ),
+      },
+      ...inspectionCards.slice(1),
+    ],
+    'Run information',
   );
+  return null;
 }

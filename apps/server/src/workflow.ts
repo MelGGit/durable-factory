@@ -654,7 +654,7 @@ export class WorkflowService {
       : undefined;
     if (prior) {
       body.newRun = true;
-      if (prior.mode === 'simulation')
+      if (prior.mode === 'simulation' && prior.planningConversationId)
         body.conversationId = prior.planningConversationId;
       else body.issueNumber = prior.issue.number;
     }
@@ -696,7 +696,10 @@ export class WorkflowService {
     if (receipt) {
       if (receipt.payload !== payload)
         conflict('Operation ID already belongs to another command.');
-      return this.get(receipt.runId);
+      const recorded = await this.get(receipt.runId);
+      if (recorded.projectId !== projectId)
+        conflict('Operation ID already belongs to another project.');
+      return recorded;
     }
     if (
       prior &&
@@ -751,7 +754,9 @@ export class WorkflowService {
     }
     signal?.throwIfAborted();
     const remoteIssue =
-      issueNumber && this.adapter.issue
+      issueNumber &&
+      this.adapter.issue &&
+      (body.issueNumber || this.adapter.mode === 'real')
         ? await this.adapter.issue(
             capturedSettings.repository.github,
             issueNumber,
@@ -779,6 +784,11 @@ export class WorkflowService {
       if (receipt) {
         if (receipt.payload !== payload)
           conflict('Operation ID already belongs to another command.');
+        if (
+          (state.runs[receipt.runId]?.projectId ?? DEFAULT_PROJECT_ID) !==
+          projectId
+        )
+          conflict('Operation ID already belongs to another project.');
         return receipt.runId;
       }
       await assertNotDeleting(tx, body.conversationId, body.sourceRunId);

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { PageCard } from './hooks/use-page-cards.js';
 import {
   WorkflowClient,
   runTimeline,
@@ -162,28 +163,24 @@ export function CommandLog({
     </details>
   );
 }
-export function Inspector({
+export function useRunCards({
   run,
   onRun,
   startMode,
-  view = 'all',
 }: {
-  view?: 'all' | 'run' | 'details';
   startMode: WorkflowSnapshot['mode'];
   run: WorkflowRun;
   onRun: (run: WorkflowRun) => void;
-}) {
+}): PageCard[] {
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
-    [answer, setAnswer] = useState(''),
-    [guidance, setGuidance] = useState('');
+    [answer, setAnswer] = useState('');
   const [inspection, setInspection] = useState<RunInspection>();
   const [inspectionError, setInspectionError] = useState('');
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     setInspection(undefined);
-    if (view === 'run') return;
     const refresh = async () => {
       try {
         const value = await client.inspection(run.id);
@@ -202,7 +199,7 @@ export function Inspector({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [run.id, view]);
+  }, [run.id]);
   const [operation, setOperation] = useState<
     | {
         key: string;
@@ -272,103 +269,13 @@ export function Inspector({
   const ended = ['pr_ready', 'cancelled'].includes(run.status);
   const publishing =
     run.publicationLocked || run.stage === 'publishing' || ended;
-  return (
-    <article
-      className="run-inspector"
-      aria-label={view === 'run' ? 'Run controls' : 'Run inspector'}
-    >
-      {error && <p role="alert">{error}</p>}
-      {view !== 'run' && (
+  return [
+    {
+      id: 'run-controls',
+      title: 'Run controls',
+      content: (
         <>
-          <h2>{run.specification.title}</h2>
-          <p>
-            <strong>
-              {run.mode === 'simulation' ? 'Simulation' : 'Real execution'}
-            </strong>{' '}
-            · Issue #{run.issue.number} · {run.status} · {run.stage}
-          </p>
-          <p>
-            Repairs: {run.repairCount} / {run.repairLimit} · Configuration
-            revision: {run.configurationRevision} ·{' '}
-            {run.quiescent ? 'Work stopped' : 'Execution held'}
-          </p>
-          <p className="run-identity">
-            Run: {run.id}
-            <br />
-            Source: {run.source}
-            <br />
-            Base: {run.base}
-          </p>
-          {run.cleanup && (
-            <p role="status">
-              Cleanup {run.cleanup.state}: {run.cleanup.message}
-            </p>
-          )}
-          <section aria-label="Live run inspection">
-            <h3>Models and usage</h3>
-            {Object.entries(run.configuration.roles).map(([role, model]) => (
-              <p key={role}>
-                {role}: {model.provider} / {model.model}
-              </p>
-            ))}
-            {inspectionError && <p role="status">{inspectionError}</p>}
-            {inspection?.conversations.map((c) => (
-              <div key={c.id}>
-                <p>
-                  {c.role} conversation {c.id}:{' '}
-                  {c.usage.messages
-                    ? `Reported tokens: ${c.usage.input} input · ${c.usage.output} output · ${c.usage.cacheRead} cache read · ${c.usage.cacheWrite} cache write${c.usage.partial ? ' (partial history)' : ''}`
-                    : 'Token usage unavailable.'}
-                </p>
-                <p>
-                  {c.usage.estimatedCost === undefined
-                    ? 'Cost estimate unavailable.'
-                    : `Available cost estimates (USD): $${c.usage.estimatedCost.toFixed(4)}`}
-                </p>
-                {c.tools.map((t) => (
-                  <p key={t.id}>
-                    Active tool: {t.name} · {t.status}
-                  </p>
-                ))}
-              </div>
-            ))}
-            <p>
-              Subscription token usage does not represent per-token billing.
-            </p>
-            <h3>Active commands and checks</h3>
-            {inspection?.commands.length ? (
-              inspection.commands.map((c) => (
-                <div key={c.id}>
-                  <p>
-                    <code>{c.command}</code> · {c.state}
-                  </p>
-                  <CommandLog runId={run.id} commandId={c.id} />
-                </div>
-              ))
-            ) : (
-              <p>
-                {inspection
-                  ? 'No active commands.'
-                  : 'Loading active commands…'}
-              </p>
-            )}
-            <h3>Recovery events</h3>
-            {run.attempts.some((a) => a.recoveryCount) ? (
-              run.attempts
-                .filter((a) => a.recoveryCount)
-                .map((a) => (
-                  <p key={a.id}>
-                    {a.stage}: recovered {a.recoveryCount} time(s). {a.message}
-                  </p>
-                ))
-            ) : (
-              <p>No recovered attempts.</p>
-            )}
-          </section>
-        </>
-      )}
-      {view !== 'details' && (
-        <>
+          {error && <p role="alert">{error}</p>}
           <div className="run-controls">
             {!ended &&
               !['pausing', 'cancelling', 'termination_blocker'].includes(
@@ -489,49 +396,6 @@ export function Inspector({
               )}
             </section>
           ))}
-        </>
-      )}
-      {view !== 'run' && (
-        <>
-          {view === 'all' && !publishing && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                setBusy(true);
-                void chat
-                  .send(
-                    run.developerConversationId,
-                    guidance,
-                    crypto.randomUUID(),
-                  )
-                  .then(() => setGuidance(''))
-                  .catch((e) => setError(e.message))
-                  .finally(() => setBusy(false));
-              }}
-            >
-              <label>
-                Developer guidance
-                <textarea
-                  value={guidance}
-                  onChange={(e) => setGuidance(e.target.value)}
-                  required
-                />
-              </label>
-              <button disabled={busy}>Queue guidance</button>
-            </form>
-          )}
-          {run.workspace && (
-            <p>
-              Worktree: <code>{run.workspace.path}</code>
-              <br />
-              Branch: <code>{run.workspace.branch}</code>
-            </p>
-          )}
-          {run.publication?.result && run.mode === 'real' && (
-            <p>
-              <a href={run.publication.result}>Open pull request</a>
-            </p>
-          )}
           {run.mode === 'real' &&
             run.publicationLocked &&
             ['paused', 'needs_input'].includes(run.status) &&
@@ -540,29 +404,146 @@ export function Inspector({
                 Repeat checks and review
               </button>
             )}
-          <h3>Developer input</h3>
-          {run.inputs.length ? (
-            run.inputs.map((i) => (
-              <p key={i.requestId}>
-                {i.content} · {i.status}
-                {i.status === 'queued' && (
-                  <button
-                    disabled={busy}
-                    onClick={() => {
-                      void chat
-                        .withdraw(run.developerConversationId, i.submissionId)
-                        .catch((e) => setError(e.message));
-                    }}
-                  >
-                    Withdraw input
-                  </button>
-                )}
+        </>
+      ),
+    },
+    {
+      id: 'workspace',
+      title: run.workspace ? 'Workspace' : 'Run details',
+      collapsible: !run.workspace,
+      content: (
+        <>
+          {run.workspace && (
+            <p>
+              Worktree: <code>{run.workspace.path}</code>
+              <br />
+              Branch: <code>{run.workspace.branch}</code>
+            </p>
+          )}
+          <details open={!run.workspace}>
+            <summary>Run details</summary>
+            <p>
+              Repairs: {run.repairCount} / {run.repairLimit} · Configuration
+              revision: {run.configurationRevision} ·{' '}
+              {run.quiescent ? 'Work stopped' : 'Execution held'}
+            </p>
+            <p className="run-identity">
+              Run: {run.id}
+              <br />
+              Source: {run.source}
+              <br />
+              Base: {run.base}
+            </p>
+            {run.cleanup && (
+              <p role="status">
+                Cleanup {run.cleanup.state}: {run.cleanup.message}
               </p>
+            )}
+          </details>
+        </>
+      ),
+    },
+    {
+      id: 'active-commands',
+      title: 'Active commands',
+      content: (
+        <>
+          {inspection?.commands.length ? (
+            inspection.commands.map((c) => (
+              <div key={c.id}>
+                <p>
+                  <code>{c.command}</code> · {c.state}
+                </p>
+                <CommandLog runId={run.id} commandId={c.id} />
+              </div>
             ))
           ) : (
-            <p>No developer input.</p>
+            <p>
+              {inspection ? 'No active commands.' : 'Loading active commands…'}
+            </p>
           )}
-          <h3>Run timeline</h3>
+        </>
+      ),
+    },
+    {
+      id: 'models-usage',
+      title: 'Models and usage',
+      collapsible: true,
+      content: (
+        <section aria-label="Live run inspection">
+          {Object.entries(run.configuration.roles).map(([role, model]) => (
+            <p key={role}>
+              {role}: {model.provider} / {model.model}
+            </p>
+          ))}
+          {inspectionError && <p role="status">{inspectionError}</p>}
+          {inspection?.conversations.map((c) => (
+            <div key={c.id}>
+              <p>
+                {c.role} conversation {c.id}:{' '}
+                {c.usage.messages
+                  ? `Reported tokens: ${c.usage.input} input · ${c.usage.output} output · ${c.usage.cacheRead} cache read · ${c.usage.cacheWrite} cache write${c.usage.partial ? ' (partial history)' : ''}`
+                  : 'Token usage unavailable.'}
+              </p>
+              <p>
+                {c.usage.estimatedCost === undefined
+                  ? 'Cost estimate unavailable.'
+                  : `Available cost estimates (USD): $${c.usage.estimatedCost.toFixed(4)}`}
+              </p>
+              {c.tools.map((t) => (
+                <p key={t.id}>
+                  Active tool: {t.name} · {t.status}
+                </p>
+              ))}
+            </div>
+          ))}
+          <p>Subscription token usage does not represent per-token billing.</p>
+        </section>
+      ),
+    },
+    ...(run.inputs.length
+      ? [
+          {
+            id: 'developer-input',
+            title: 'Developer input',
+            collapsible: true,
+            content: (
+              <>
+                {run.inputs.length ? (
+                  run.inputs.map((i) => (
+                    <p key={i.requestId}>
+                      {i.content} · {i.status}
+                      {i.status === 'queued' && (
+                        <button
+                          disabled={busy}
+                          onClick={() => {
+                            void chat
+                              .withdraw(
+                                run.developerConversationId,
+                                i.submissionId,
+                              )
+                              .catch((e) => setError(e.message));
+                          }}
+                        >
+                          Withdraw input
+                        </button>
+                      )}
+                    </p>
+                  ))
+                ) : (
+                  <p>No developer input.</p>
+                )}
+              </>
+            ),
+          },
+        ]
+      : []),
+    {
+      id: 'run-timeline',
+      title: 'Run timeline',
+      collapsible: true,
+      content: (
+        <>
           <p>
             Elapsed times include pauses and recovery; they are not active
             execution time.
@@ -631,7 +612,27 @@ export function Inspector({
               );
             })}
           </ol>
-          <h3>Implementation reports</h3>
+          <h3>Recovery events</h3>
+          {run.attempts.some((a) => a.recoveryCount) ? (
+            run.attempts
+              .filter((a) => a.recoveryCount)
+              .map((a) => (
+                <p key={a.id}>
+                  {a.stage}: recovered {a.recoveryCount} time(s). {a.message}
+                </p>
+              ))
+          ) : (
+            <p>No recovered attempts.</p>
+          )}
+        </>
+      ),
+    },
+    {
+      id: 'implementation-reports',
+      title: 'Implementation reports',
+      collapsible: true,
+      content: (
+        <>
           {!run.implementations?.length && (
             <p>No structured implementation report available.</p>
           )}
@@ -659,7 +660,18 @@ export function Inspector({
               </p>
             </details>
           ))}
-          <h3>Evidence</h3>
+        </>
+      ),
+    },
+    {
+      id: 'evidence',
+      title: 'Evidence',
+      collapsible: true,
+      content: (
+        <>
+          {!run.evidence.length && !run.evidenceHistory?.length && (
+            <p>No validation evidence yet.</p>
+          )}
           {[...run.evidence, ...(run.evidenceHistory ?? [])].map((e) => (
             <details key={e.attemptId} id={`evidence-${e.attemptId}`}>
               <summary>
@@ -734,32 +746,30 @@ export function Inspector({
               ))}
             </section>
           )}
-          {run.publication && (
-            <p role="status">
-              {run.publication.result ??
-                `${run.mode === 'simulation' ? 'Simulated publication' : 'Publication'}: ${run.publication.state}`}
-            </p>
-          )}
-          <details>
-            <summary>
-              Captured commands, timeouts, models, and decisions
-            </summary>
-            <pre>
-              {JSON.stringify(
-                {
-                  setup: run.configuration.setupCommands,
-                  checks: run.configuration.requiredChecks,
-                  timeouts: run.configuration.timeouts,
-                  models: run.configuration.roles,
-                  decisions: run.decisions,
-                },
-                null,
-                2,
-              )}
-            </pre>
-          </details>
         </>
-      )}
-    </article>
-  );
+      ),
+    },
+    {
+      id: 'configuration',
+      title: 'Configuration',
+      collapsible: true,
+      content: (
+        <>
+          <pre>
+            {JSON.stringify(
+              {
+                setup: run.configuration.setupCommands,
+                checks: run.configuration.requiredChecks,
+                timeouts: run.configuration.timeouts,
+                models: run.configuration.roles,
+                decisions: run.decisions,
+              },
+              null,
+              2,
+            )}
+          </pre>
+        </>
+      ),
+    },
+  ];
 }

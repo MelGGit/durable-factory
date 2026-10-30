@@ -42,6 +42,7 @@ test(
               .querySelector('meta[name="theme-color"]')
               ?.getAttribute('content'),
             scheme: document.documentElement.style.colorScheme,
+            icon: document.querySelector('#app-icon')?.getAttribute('href'),
           };
         });
 
@@ -55,6 +56,7 @@ test(
         input: 'rgb(48, 48, 46)',
         meta: '#191919',
         scheme: 'dark',
+        icon: '/durable-factory-icon-dark-32.png?v=3',
       });
 
       await page.getByRole('radio', { name: 'Light' }).check();
@@ -66,6 +68,7 @@ test(
         input: 'rgb(255, 255, 255)',
         meta: '#faf9f5',
         scheme: 'light',
+        icon: '/durable-factory-icon-32.png?v=3',
       });
       await page.reload();
       await page.getByRole('heading', { name: 'Appearance' }).waitFor();
