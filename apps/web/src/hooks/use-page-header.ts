@@ -33,11 +33,16 @@ export function usePageHeader({
   if (selectedRun)
     return {
       title: selectedRun.specification.title,
+      tag: 'Implementation',
     };
   if (hasSelection && snapshot)
     return {
       title: snapshot.conversation.title,
-      tag: snapshot.conversation.role === 'planning' ? 'Planning' : undefined,
+      tag: snapshot.conversation.runId
+        ? 'Implementation'
+        : snapshot.conversation.role === 'planning'
+          ? 'Planning'
+          : undefined,
     };
   return { title: hasSelection ? '' : 'Home' };
 }

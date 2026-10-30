@@ -891,7 +891,7 @@ export function ChatApp() {
                 aria-label="Implementation"
                 title="Implementation"
               >
-                <Icon name="run" size={15} />
+                <Icon name="code" size={15} />
               </span>
             </button>
             {deletionControl(run.id, run.specification.title, true)}

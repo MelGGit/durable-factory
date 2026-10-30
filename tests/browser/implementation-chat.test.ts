@@ -535,6 +535,51 @@ test(
       assert.ok(
         conversation && cards && cards.x >= conversation.x + conversation.width,
       );
+      const checkImplementationStyle = async (sidebarVisible = true) => {
+        await page
+          .locator('.chat-header .mode-tag')
+          .getByText('Implementation', { exact: true })
+          .waitFor();
+        const colors = await page
+          .locator('[data-card-id="run-progress"]')
+          .evaluate((card) => {
+            const step = card.querySelector('[aria-current="step"]')!;
+            const badge = card.querySelector('.run-status-badge')!;
+            return {
+              step: getComputedStyle(step, '::before').backgroundColor,
+              text: getComputedStyle(card).color,
+              badge: getComputedStyle(badge).color,
+            };
+          });
+        assert.equal(
+          colors.step,
+          colors.text,
+          'current progress step uses neutral text color',
+        );
+        assert.equal(
+          colors.badge,
+          colors.text,
+          'progress status uses neutral text color',
+        );
+        if (sidebarVisible) {
+          const colors = await page
+            .locator('.chat-sidebar:visible')
+            .evaluate((sidebar) => ({
+              implementation: getComputedStyle(
+                sidebar.querySelector('.session-kind.implementation')!,
+              ).color,
+              planning: getComputedStyle(
+                sidebar.querySelector('.session-kind[aria-label="Planning"]')!,
+              ).color,
+            }));
+          assert.equal(
+            colors.implementation,
+            colors.planning,
+            'session icons share the same neutral color',
+          );
+        }
+      };
+      await checkImplementationStyle();
       const information = page.locator('.page-cards');
       assert.deepEqual(
         await information.locator('.page-card-heading h2').allTextContents(),
@@ -610,6 +655,7 @@ test(
               .getByRole('dialog', { name: 'Run information', exact: true })
               .waitFor();
           }
+          await checkImplementationStyle(width >= 760);
           if ((await configuration.getAttribute('open')) === null)
             await configuration.locator(':scope > summary').click();
           assert.equal(

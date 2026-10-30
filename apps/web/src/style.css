@@ -2230,9 +2230,6 @@ h3 {
   flex-shrink: 0;
   color: var(--text-muted);
 }
-.session-kind.implementation {
-  color: var(--accent);
-}
 .chat-sidebar nav .session-actions-trigger {
   width: 36px;
   height: 36px;
@@ -2949,7 +2946,11 @@ summary.page-card-heading::after {
   font-weight: 500;
 }
 .run-stepper [aria-current='step']::before {
-  background: var(--accent);
+  background: var(--text);
+}
+[data-card-id='run-progress'] .run-status-badge:not(.status-danger) {
+  color: var(--text);
+  background: var(--surface-2);
 }
 .run-links {
   display: flex;
