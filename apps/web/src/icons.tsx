@@ -9,6 +9,8 @@ export type IconName =
   | 'trash'
   | 'chat'
   | 'plan'
+  | 'sidebar-close'
+  | 'sidebar-open'
   | 'run';
 
 const paths: Record<IconName, React.ReactNode> = {
@@ -34,6 +36,18 @@ const paths: Record<IconName, React.ReactNode> = {
     </>
   ),
   run: <path d="m7 4 13 8-13 8z" />,
+  'sidebar-close': (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16m7-11-3 3 3 3" />
+    </>
+  ),
+  'sidebar-open': (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16m4-11 3 3-3 3" />
+    </>
+  ),
 };
 
 /** Decorative inline icon; the surrounding control carries the accessible name. */

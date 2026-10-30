@@ -13,6 +13,7 @@ import { Icon } from './icons.js';
 import { SessionActions } from './session-actions.js';
 import { PageHeader } from './page-header.js';
 import { PageWorkspace } from './page-cards.js';
+import { SidebarBrand, WorkspaceShell } from './workspace-shell.js';
 import { useConversationUrl, useRoute } from './hooks/use-route.js';
 import { usePageHeader } from './hooks/use-page-header.js';
 import { confirmLeave } from './hooks/use-unsaved-changes.js';
@@ -888,10 +889,12 @@ export function ChatApp() {
   const atHome = inChat && !selected;
   const sidebar = (
     <div className="chat-sidebar">
-      <a className="chat-brand" href="/">
-        <span className="brand-mark" aria-hidden="true" />
-        <strong>Durable Factory</strong>
-      </a>
+      {mobile && (
+        <SidebarBrand
+          open={navigationOpen}
+          onToggle={() => setNavigationOpen(false)}
+        />
+      )}
       <a
         className={`home-link ${atHome ? 'selected' : ''}`}
         href="/"
@@ -1004,8 +1007,19 @@ export function ChatApp() {
     </button>
   ) : null;
   return (
-    <div className="chat-shell">
-      {!mobile && <aside aria-label="Conversation navigation">{sidebar}</aside>}
+    <WorkspaceShell
+      mobile={mobile}
+      navigation={sidebar}
+      header={
+        <PageHeader
+          title={header.title}
+          tag={header.tag}
+          navigationOpen={navigationOpen}
+          onOpenNavigation={mobile ? () => setNavigationOpen(true) : undefined}
+          actions={route.kind === 'chat' ? ticketToggle : undefined}
+        />
+      }
+    >
       {mobile && (
         <Overlay
           open={navigationOpen}
@@ -1060,152 +1074,141 @@ export function ChatApp() {
           </button>
         </div>
       </Overlay>
-      <main className="chat-main">
-        <PageHeader
-          title={header.title}
-          tag={header.tag}
-          navigationOpen={navigationOpen}
-          onOpenNavigation={mobile ? () => setNavigationOpen(true) : undefined}
-          actions={route.kind === 'chat' ? ticketToggle : undefined}
-        />
-        <PageWorkspace disabled={inChat && Boolean(selectedDeletion)}>
-          {route.kind !== 'chat' ? (
-            <>
-              <div className="view-scroll">
-                {route.kind === 'settings' && (
-                  <Settings
-                    key="general"
-                    onChanged={() => reloadProjects()}
-                    onDeleted={() => selectConversation('')}
-                  />
-                )}
-                {route.kind === 'project-settings' && (
-                  <Settings
-                    key={route.projectId}
-                    projectId={route.projectId}
-                    onChanged={() => reloadProjects()}
-                    onDeleted={() => selectConversation('')}
-                  />
-                )}
-                {route.kind === 'add-project' && (
-                  <AddProject
-                    onCreated={() => {
-                      reloadProjects();
-                      selectConversation('');
-                    }}
-                    onCancel={() => selectConversation('')}
-                  />
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              {error && (
-                <div className="chat-error" role="alert">
-                  {error}
-                </div>
-              )}
-              {selectedDeletion && (
-                <p className="chat-error" role="status">
-                  {selectedDeletion.message}
-                </p>
-              )}
-              {!selected ? (
-                <Home
-                  projects={visibleProjects}
-                  conversations={conversations}
-                  runs={workflowSnapshot?.runs ?? []}
-                  deletions={deletions}
-                  onNew={(projectId) => void create(projectId)}
-                  onOpen={(id) => {
-                    void refresh().catch((e) => setError(e.message));
-                    selectConversation(id);
-                  }}
-                  onRun={updateRun}
-                  workflowMode={workflowSnapshot?.mode ?? 'disabled'}
+      <PageWorkspace disabled={inChat && Boolean(selectedDeletion)}>
+        {route.kind !== 'chat' ? (
+          <>
+            <div className="view-scroll">
+              {route.kind === 'settings' && (
+                <Settings
+                  key="general"
+                  onChanged={() => reloadProjects()}
+                  onDeleted={() => selectConversation('')}
                 />
-              ) : (
-                <>
-                  {selectedRun && workflowSnapshot && (
-                    <RunInformation
-                      key={selectedRun.id}
-                      run={selectedRun}
-                      snapshot={workflowSnapshot}
-                      onRun={updateRun}
-                    />
-                  )}
-                  <div
-                    inert={Boolean(selectedDeletion)}
-                    className={`chat-workspace ${desktop && ticketOpen && hasTicket ? 'with-ticket' : ''}`}
+              )}
+              {route.kind === 'project-settings' && (
+                <Settings
+                  key={route.projectId}
+                  projectId={route.projectId}
+                  onChanged={() => reloadProjects()}
+                  onDeleted={() => selectConversation('')}
+                />
+              )}
+              {route.kind === 'add-project' && (
+                <AddProject
+                  onCreated={() => {
+                    reloadProjects();
+                    selectConversation('');
+                  }}
+                  onCancel={() => selectConversation('')}
+                />
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {error && (
+              <div className="chat-error" role="alert">
+                {error}
+              </div>
+            )}
+            {selectedDeletion && (
+              <p className="chat-error" role="status">
+                {selectedDeletion.message}
+              </p>
+            )}
+            {!selected ? (
+              <Home
+                projects={visibleProjects}
+                conversations={conversations}
+                runs={workflowSnapshot?.runs ?? []}
+                deletions={deletions}
+                onNew={(projectId) => void create(projectId)}
+                onOpen={(id) => {
+                  void refresh().catch((e) => setError(e.message));
+                  selectConversation(id);
+                }}
+                onRun={updateRun}
+                workflowMode={workflowSnapshot?.mode ?? 'disabled'}
+              />
+            ) : (
+              <>
+                {selectedRun && workflowSnapshot && (
+                  <RunInformation
+                    key={selectedRun.id}
+                    run={selectedRun}
+                    snapshot={workflowSnapshot}
+                    onRun={updateRun}
+                  />
+                )}
+                <div
+                  inert={Boolean(selectedDeletion)}
+                  className={`chat-workspace ${desktop && ticketOpen && hasTicket ? 'with-ticket' : ''}`}
+                >
+                  <section
+                    key={selected}
+                    className={`chat-conversation${emptyPlanning ? ' empty-planning' : ''}`}
+                    aria-label="Conversation"
+                    data-connection={connection}
+                    data-execution={snapshot?.execution ?? 'idle'}
+                    data-activity={
+                      activityConnected ? 'connected' : 'reconnecting'
+                    }
                   >
-                    <section
-                      key={selected}
-                      className={`chat-conversation${emptyPlanning ? ' empty-planning' : ''}`}
-                      aria-label="Conversation"
-                      data-connection={connection}
-                      data-execution={snapshot?.execution ?? 'idle'}
-                      data-activity={
-                        activityConnected ? 'connected' : 'reconnecting'
-                      }
+                    <div
+                      className="transcript"
+                      ref={scroll}
+                      onScroll={() => {
+                        const element = scroll.current!;
+                        follow.current =
+                          element.scrollHeight -
+                            element.scrollTop -
+                            element.clientHeight <
+                          80;
+                        setFollowing(follow.current);
+                      }}
+                      style={{ overflowAnchor: 'none' }}
+                      aria-label="Conversation transcript"
+                      tabIndex={0}
                     >
-                      <div
-                        className="transcript"
-                        ref={scroll}
-                        onScroll={() => {
-                          const element = scroll.current!;
-                          follow.current =
-                            element.scrollHeight -
-                              element.scrollTop -
-                              element.clientHeight <
-                            80;
-                          setFollowing(follow.current);
-                        }}
-                        style={{ overflowAnchor: 'none' }}
-                        aria-label="Conversation transcript"
-                        tabIndex={0}
-                      >
-                        {!selectedRun && cursor && (
-                          <button
-                            className="secondary older-button"
-                            disabled={loadingHistory}
-                            type="button"
-                            onClick={() => void older()}
-                          >
-                            Load older messages
-                          </button>
-                        )}
-                        {selectedRun ? (
-                          <ImplementationTranscript
-                            key={selectedRun.id}
-                            run={selectedRun}
-                            onChange={() =>
-                              setActivityVersion((value) => value + 1)
-                            }
-                            onConversation={(value) => {
-                              if (
-                                value.conversation.id !==
-                                current.current.selected
-                              )
-                                return;
-                              setSnapshot({
-                                ...value,
-                                entries: [],
-                                tools: [],
-                                partial: '',
-                              });
-                            }}
-                            onConnection={(connected) => {
-                              setActivityConnected(connected);
-                              setConnection(
-                                connected ? 'connected' : 'disconnected',
-                              );
-                            }}
-                          />
-                        ) : (
-                          conversationItems(
-                            visibleEntries,
-                            snapshot?.tools,
-                          ).map((item) => {
+                      {!selectedRun && cursor && (
+                        <button
+                          className="secondary older-button"
+                          disabled={loadingHistory}
+                          type="button"
+                          onClick={() => void older()}
+                        >
+                          Load older messages
+                        </button>
+                      )}
+                      {selectedRun ? (
+                        <ImplementationTranscript
+                          key={selectedRun.id}
+                          run={selectedRun}
+                          onChange={() =>
+                            setActivityVersion((value) => value + 1)
+                          }
+                          onConversation={(value) => {
+                            if (
+                              value.conversation.id !== current.current.selected
+                            )
+                              return;
+                            setSnapshot({
+                              ...value,
+                              entries: [],
+                              tools: [],
+                              partial: '',
+                            });
+                          }}
+                          onConnection={(connected) => {
+                            setActivityConnected(connected);
+                            setConnection(
+                              connected ? 'connected' : 'disconnected',
+                            );
+                          }}
+                        />
+                      ) : (
+                        conversationItems(visibleEntries, snapshot?.tools).map(
+                          (item) => {
                             if (item.kind === 'tool')
                               return (
                                 <Tool
@@ -1264,298 +1267,297 @@ export function ChatApp() {
                                 )}
                               </article>
                             );
-                          })
-                        )}
-                        {!selectedRun &&
-                          !snapshot?.conversation.runId &&
-                          snapshot?.partial && (
-                            <article
-                              className="message assistant-message"
-                              data-conversation-item="partial"
-                            >
-                              <div className="message-author">
-                                {label} · Responding
-                              </div>
-                              <div
-                                className="message-text markdown"
-                                dangerouslySetInnerHTML={{
-                                  __html: markdown(snapshot.partial),
-                                }}
-                              />
-                            </article>
-                          )}
-                        {!selectedRun &&
-                          snapshot?.execution !== 'idle' &&
-                          snapshot &&
-                          !snapshot.partial && (
-                            <div className="agent-activity" role="status">
-                              <span aria-hidden="true">◌</span>
-                              {label} ·{' '}
-                              {snapshot.execution === 'interrupting'
-                                ? 'Stopping…'
-                                : 'Working…'}
-                            </div>
-                          )}
-                        {!emptyPlanning &&
-                          !selectedRun &&
-                          !entries.length &&
-                          !snapshot?.partial && (
-                            <p className="transcript-hint">
-                              Describe the feature you want to build and any
-                              constraints.
-                            </p>
-                          )}
-                      </div>
-                      {!following && (
-                        <div className="jump-row">
-                          <button
-                            type="button"
-                            className="secondary"
-                            onClick={() => {
-                              follow.current = true;
-                              setFollowing(true);
-                              if (scroll.current)
-                                scroll.current.scrollTop =
-                                  scroll.current.scrollHeight;
-                            }}
-                          >
-                            Jump to latest ↓
-                          </button>
-                        </div>
+                          },
+                        )
                       )}
-                      <div className="composer-area">
-                        {emptyPlanning && (
-                          <div className="chat-welcome">
-                            <h2>What feature would you like to plan?</h2>
-                            <p>
-                              Describe the feature, who it’s for, and what
-                              success looks like.
-                            </p>
-                            {!local.drafts[selected]?.trim() && (
-                              <div
-                                className="starter-prompts"
-                                aria-label="Conversation starters"
-                              >
-                                {[
-                                  [
-                                    'Plan a feature',
-                                    'I’d like to plan a new feature: ',
-                                  ],
-                                  [
-                                    'Define requirements',
-                                    'Help me define the requirements for this feature: ',
-                                  ],
-                                  [
-                                    'Break down a feature',
-                                    'Help me break this feature into implementation steps: ',
-                                  ],
-                                ].map(([prompt, draft]) => (
-                                  <button
-                                    type="button"
-                                    className="secondary"
-                                    key={prompt}
-                                    onClick={() => {
-                                      persist((previous) => ({
-                                        ...previous,
-                                        drafts: {
-                                          ...previous.drafts,
-                                          [selected]: draft,
-                                        },
-                                      }));
-                                      document
-                                        .getElementById('chat-message')
-                                        ?.focus();
-                                    }}
-                                  >
-                                    {prompt}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
+                      {!selectedRun &&
+                        !snapshot?.conversation.runId &&
+                        snapshot?.partial && (
+                          <article
+                            className="message assistant-message"
+                            data-conversation-item="partial"
+                          >
+                            <div className="message-author">
+                              {label} · Responding
+                            </div>
+                            <div
+                              className="message-text markdown"
+                              dangerouslySetInnerHTML={{
+                                __html: markdown(snapshot.partial),
+                              }}
+                            />
+                          </article>
+                        )}
+                      {!selectedRun &&
+                        snapshot?.execution !== 'idle' &&
+                        snapshot &&
+                        !snapshot.partial && (
+                          <div className="agent-activity" role="status">
+                            <span aria-hidden="true">◌</span>
+                            {label} ·{' '}
+                            {snapshot.execution === 'interrupting'
+                              ? 'Stopping…'
+                              : 'Working…'}
                           </div>
                         )}
-                        <div
-                          className="submission-list"
-                          aria-label="Submission status"
+                      {!emptyPlanning &&
+                        !selectedRun &&
+                        !entries.length &&
+                        !snapshot?.partial && (
+                          <p className="transcript-hint">
+                            Describe the feature you want to build and any
+                            constraints.
+                          </p>
+                        )}
+                    </div>
+                    {!following && (
+                      <div className="jump-row">
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => {
+                            follow.current = true;
+                            setFollowing(true);
+                            if (scroll.current)
+                              scroll.current.scrollTop =
+                                scroll.current.scrollHeight;
+                          }}
                         >
-                          {snapshot?.submissions
-                            .filter((item) => item.status !== 'completed')
-                            .map((item) => (
-                              <div key={item.id || item.requestId}>
-                                <span className="submission-text">
-                                  {item.content}
-                                </span>
-                                <strong>{item.status}</strong>
-                                {item.reason && <small>{item.reason}</small>}
-                                {item.status === 'queued' && (
-                                  <button
-                                    className="text-button"
-                                    type="button"
-                                    onClick={() =>
-                                      void action(() =>
-                                        client.withdraw(selected, item.id),
-                                      )
-                                    }
-                                  >
-                                    Withdraw
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                          {pending.map((item) => (
-                            <div key={item.requestId}>
+                          Jump to latest ↓
+                        </button>
+                      </div>
+                    )}
+                    <div className="composer-area">
+                      {emptyPlanning && (
+                        <div className="chat-welcome">
+                          <h2>What feature would you like to plan?</h2>
+                          <p>
+                            Describe the feature, who it’s for, and what success
+                            looks like.
+                          </p>
+                          {!local.drafts[selected]?.trim() && (
+                            <div
+                              className="starter-prompts"
+                              aria-label="Conversation starters"
+                            >
+                              {[
+                                [
+                                  'Plan a feature',
+                                  'I’d like to plan a new feature: ',
+                                ],
+                                [
+                                  'Define requirements',
+                                  'Help me define the requirements for this feature: ',
+                                ],
+                                [
+                                  'Break down a feature',
+                                  'Help me break this feature into implementation steps: ',
+                                ],
+                              ].map(([prompt, draft]) => (
+                                <button
+                                  type="button"
+                                  className="secondary"
+                                  key={prompt}
+                                  onClick={() => {
+                                    persist((previous) => ({
+                                      ...previous,
+                                      drafts: {
+                                        ...previous.drafts,
+                                        [selected]: draft,
+                                      },
+                                    }));
+                                    document
+                                      .getElementById('chat-message')
+                                      ?.focus();
+                                  }}
+                                >
+                                  {prompt}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div
+                        className="submission-list"
+                        aria-label="Submission status"
+                      >
+                        {snapshot?.submissions
+                          .filter((item) => item.status !== 'completed')
+                          .map((item) => (
+                            <div key={item.id || item.requestId}>
                               <span className="submission-text">
                                 {item.content}
                               </span>
-                              <strong>Awaiting acknowledgement</strong>
-                              <button
-                                className="text-button"
-                                type="button"
-                                onClick={() => void reconcile(item)}
-                              >
-                                Retry send
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                        {!snapshot ? (
-                          <p role="status">Connecting to the conversation…</p>
-                        ) : snapshot.conversation.role !== 'review' &&
-                          snapshot.workflow?.acceptsInput !== false ? (
-                          <form onSubmit={send} className="composer">
-                            <label className="sr-only" htmlFor="chat-message">
-                              Message
-                            </label>
-                            <textarea
-                              id="chat-message"
-                              placeholder={
-                                selectedRun
-                                  ? 'Guide the implementation or ask a question…'
-                                  : 'Describe the feature you want to plan…'
-                              }
-                              value={local.drafts[selected] ?? ''}
-                              onChange={(e) =>
-                                persist((previous) => ({
-                                  ...previous,
-                                  drafts: {
-                                    ...previous.drafts,
-                                    [selected]: e.target.value,
-                                  },
-                                }))
-                              }
-                              onKeyDown={(event) => {
-                                if (
-                                  event.key === 'Enter' &&
-                                  !event.shiftKey &&
-                                  !event.nativeEvent.isComposing &&
-                                  event.keyCode !== 229
-                                ) {
-                                  event.preventDefault();
-                                  event.currentTarget.form?.requestSubmit();
-                                }
-                              }}
-                              rows={2}
-                            />
-                            <div>
-                              <small>
-                                Enter to send · Shift + Enter for a new line
-                              </small>
-                              <div className="composer-actions">
-                                {interruptControl}
+                              <strong>{item.status}</strong>
+                              {item.reason && <small>{item.reason}</small>}
+                              {item.status === 'queued' && (
                                 <button
-                                  className="primary"
-                                  type="submit"
-                                  disabled={
-                                    !local.drafts[selected]?.trim() ||
-                                    snapshot?.execution === 'interrupting' ||
-                                    pending.length > 0
+                                  className="text-button"
+                                  type="button"
+                                  onClick={() =>
+                                    void action(() =>
+                                      client.withdraw(selected, item.id),
+                                    )
                                   }
                                 >
-                                  Send <Icon name="send" size={14} />
+                                  Withdraw
                                 </button>
-                              </div>
+                              )}
                             </div>
-                          </form>
-                        ) : (
-                          <p>
-                            Implementation input is closed for this
-                            conversation. Available controls are in Run
-                            information.
-                          </p>
-                        )}
-                        {snapshot?.workflow?.acceptsInput === false &&
-                          interruptControl}
-                        <p className="composer-footnote">
-                          Follow-ups queue while the agent works. Accepted work
-                          continues after you close this window.
+                          ))}
+                        {pending.map((item) => (
+                          <div key={item.requestId}>
+                            <span className="submission-text">
+                              {item.content}
+                            </span>
+                            <strong>Awaiting acknowledgement</strong>
+                            <button
+                              className="text-button"
+                              type="button"
+                              onClick={() => void reconcile(item)}
+                            >
+                              Retry send
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      {!snapshot ? (
+                        <p role="status">Connecting to the conversation…</p>
+                      ) : snapshot.conversation.role !== 'review' &&
+                        snapshot.workflow?.acceptsInput !== false ? (
+                        <form onSubmit={send} className="composer">
+                          <label className="sr-only" htmlFor="chat-message">
+                            Message
+                          </label>
+                          <textarea
+                            id="chat-message"
+                            placeholder={
+                              selectedRun
+                                ? 'Guide the implementation or ask a question…'
+                                : 'Describe the feature you want to plan…'
+                            }
+                            value={local.drafts[selected] ?? ''}
+                            onChange={(e) =>
+                              persist((previous) => ({
+                                ...previous,
+                                drafts: {
+                                  ...previous.drafts,
+                                  [selected]: e.target.value,
+                                },
+                              }))
+                            }
+                            onKeyDown={(event) => {
+                              if (
+                                event.key === 'Enter' &&
+                                !event.shiftKey &&
+                                !event.nativeEvent.isComposing &&
+                                event.keyCode !== 229
+                              ) {
+                                event.preventDefault();
+                                event.currentTarget.form?.requestSubmit();
+                              }
+                            }}
+                            rows={2}
+                          />
+                          <div>
+                            <small>
+                              Enter to send · Shift + Enter for a new line
+                            </small>
+                            <div className="composer-actions">
+                              {interruptControl}
+                              <button
+                                className="primary"
+                                type="submit"
+                                disabled={
+                                  !local.drafts[selected]?.trim() ||
+                                  snapshot?.execution === 'interrupting' ||
+                                  pending.length > 0
+                                }
+                              >
+                                Send <Icon name="send" size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        </form>
+                      ) : (
+                        <p>
+                          Implementation input is closed for this conversation.
+                          Available controls are in Run information.
                         </p>
-                      </div>
-                    </section>
-                    {desktop && hasTicket && (
-                      <aside
-                        hidden={!ticketOpen}
-                        className="ticket-panel"
-                        aria-label={'Saved ticket'}
-                      >
-                        <Ticket
-                          snapshot={snapshot!}
-                          selected={selected}
-                          onError={setError}
-                        />
-                        {!selectedRun &&
-                          workflowSnapshot?.runs
-                            .filter(
-                              (run) => run.planningConversationId === selected,
-                            )
-                            .map((run) => (
-                              <a
-                                className="linked-implementation"
-                                key={run.id}
-                                href={`/?conversation=${run.developerConversationId}`}
-                              >
-                                Open implementation · #{run.issue.number} ·{' '}
-                                {run.status}
-                              </a>
-                            ))}
-                      </aside>
-                    )}
-                  </div>
-                  {!desktop && hasTicket && (
-                    <Overlay
-                      open={ticketOverlay}
-                      label={'Saved ticket'}
-                      onClose={() => setTicketOverlay(false)}
+                      )}
+                      {snapshot?.workflow?.acceptsInput === false &&
+                        interruptControl}
+                      <p className="composer-footnote">
+                        Follow-ups queue while the agent works. Accepted work
+                        continues after you close this window.
+                      </p>
+                    </div>
+                  </section>
+                  {desktop && hasTicket && (
+                    <aside
+                      hidden={!ticketOpen}
+                      className="ticket-panel"
+                      aria-label={'Saved ticket'}
                     >
-                      <div inert={Boolean(selectedDeletion)}>
-                        <Ticket
-                          snapshot={snapshot!}
-                          selected={selected}
-                          onError={setError}
-                        />
-                        {!selectedRun &&
-                          workflowSnapshot?.runs
-                            .filter(
-                              (run) => run.planningConversationId === selected,
-                            )
-                            .map((run) => (
-                              <a
-                                className="linked-implementation"
-                                key={run.id}
-                                href={`/?conversation=${run.developerConversationId}`}
-                              >
-                                Open implementation · #{run.issue.number} ·{' '}
-                                {run.status}
-                              </a>
-                            ))}
-                      </div>
-                    </Overlay>
+                      <Ticket
+                        snapshot={snapshot!}
+                        selected={selected}
+                        onError={setError}
+                      />
+                      {!selectedRun &&
+                        workflowSnapshot?.runs
+                          .filter(
+                            (run) => run.planningConversationId === selected,
+                          )
+                          .map((run) => (
+                            <a
+                              className="linked-implementation"
+                              key={run.id}
+                              href={`/?conversation=${run.developerConversationId}`}
+                            >
+                              Open implementation · #{run.issue.number} ·{' '}
+                              {run.status}
+                            </a>
+                          ))}
+                    </aside>
                   )}
-                </>
-              )}
-            </>
-          )}
-        </PageWorkspace>
-      </main>
-    </div>
+                </div>
+                {!desktop && hasTicket && (
+                  <Overlay
+                    open={ticketOverlay}
+                    label={'Saved ticket'}
+                    onClose={() => setTicketOverlay(false)}
+                  >
+                    <div inert={Boolean(selectedDeletion)}>
+                      <Ticket
+                        snapshot={snapshot!}
+                        selected={selected}
+                        onError={setError}
+                      />
+                      {!selectedRun &&
+                        workflowSnapshot?.runs
+                          .filter(
+                            (run) => run.planningConversationId === selected,
+                          )
+                          .map((run) => (
+                            <a
+                              className="linked-implementation"
+                              key={run.id}
+                              href={`/?conversation=${run.developerConversationId}`}
+                            >
+                              Open implementation · #{run.issue.number} ·{' '}
+                              {run.status}
+                            </a>
+                          ))}
+                    </div>
+                  </Overlay>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </PageWorkspace>
+    </WorkspaceShell>
   );
 }
