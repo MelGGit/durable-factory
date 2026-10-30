@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
@@ -10,10 +11,31 @@ import { fixture, configure, until } from '../fixtures/chat.js';
 
 test(
   'browser chat restores drafts and pending sends, streams tools, survives browser and service restarts',
-  { timeout: 60000 },
+  { timeout: 120000 },
   async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'factory-chat-browser-'));
-    let service = await startService({ dataDir, port: 0, chat: fixture(100) });
+    // Build the current web sources so the test never depends on a stale dist.
+    const webDir = join(dataDir, 'web');
+    execFileSync('bun', ['run', 'build:shared'], { stdio: 'ignore' });
+    execFileSync(
+      'bun',
+      [
+        'run',
+        '--cwd',
+        'apps/web',
+        'build',
+        '--outDir',
+        webDir,
+        '--emptyOutDir',
+      ],
+      { stdio: 'ignore' },
+    );
+    let service = await startService({
+      dataDir,
+      port: 0,
+      webDir,
+      chat: fixture(100),
+    });
     const browser = await chromium.launch({
       headless: true,
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
@@ -119,7 +141,7 @@ test(
       await page
         .locator('.chat-conversation[data-connection="disconnected"]')
         .waitFor();
-      service = await startService({ dataDir, port, chat: fixture() });
+      service = await startService({ dataDir, port, webDir, chat: fixture() });
       await page
         .locator('.chat-conversation[data-connection="connected"]')
         .waitFor();
@@ -150,12 +172,43 @@ test(
           .count(),
         1,
       );
+      const input = page.getByLabel('Message', { exact: true });
+      const assertFixed = async () => {
+        assert.equal(
+          await input.evaluate((e) => getComputedStyle(e).resize),
+          'none',
+          'Chat input must not be user-resizable',
+        );
+      };
+      const sizeBefore = await input.boundingBox();
+      await assertFixed();
+      const box = sizeBefore!;
+      await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width - 3, box.y + box.height + 120);
+      await page.mouse.up();
+      assert.equal((await input.boundingBox())!.height, box.height);
+      const lines = Array.from({ length: 30 }, (_, i) => 'line ' + i).join(
+        '\n',
+      );
+      await input.fill(lines);
+      assert.equal(await input.inputValue(), lines);
+      assert.ok(await input.evaluate((e) => e.scrollHeight > e.clientHeight));
+      assert.equal(
+        await input.evaluate((e) => {
+          e.scrollTop = 40;
+          return e.scrollTop > 0;
+        }),
+        true,
+      );
+      await input.fill('');
       await mkdir(resolve('test-results'), { recursive: true });
       await page.screenshot({
         path: resolve('test-results/chat-desktop.png'),
         animations: 'disabled',
       });
       await page.setViewportSize({ width: 390, height: 844 });
+      await assertFixed();
       assert.ok(
         await page
           .locator('.composer')
