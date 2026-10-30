@@ -150,12 +150,43 @@ test(
           .count(),
         1,
       );
+      const input = page.getByLabel('Message', { exact: true });
+      const assertFixed = async () => {
+        assert.equal(
+          await input.evaluate((e) => getComputedStyle(e).resize),
+          'none',
+          'Chat input must not be user-resizable',
+        );
+      };
+      const sizeBefore = await input.boundingBox();
+      await assertFixed();
+      const box = sizeBefore!;
+      await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width - 3, box.y + box.height + 120);
+      await page.mouse.up();
+      assert.equal((await input.boundingBox())!.height, box.height);
+      const lines = Array.from({ length: 30 }, (_, i) => 'line ' + i).join(
+        '\n',
+      );
+      await input.fill(lines);
+      assert.equal(await input.inputValue(), lines);
+      assert.ok(await input.evaluate((e) => e.scrollHeight > e.clientHeight));
+      assert.equal(
+        await input.evaluate((e) => {
+          e.scrollTop = 40;
+          return e.scrollTop > 0;
+        }),
+        true,
+      );
+      await input.fill('');
       await mkdir(resolve('test-results'), { recursive: true });
       await page.screenshot({
         path: resolve('test-results/chat-desktop.png'),
         animations: 'disabled',
       });
       await page.setViewportSize({ width: 390, height: 844 });
+      await assertFixed();
       assert.ok(
         await page
           .locator('.composer')
