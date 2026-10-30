@@ -24,7 +24,6 @@ import { AddProject } from './add-project.js';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ApiError,
-  formatTicketBody,
   ChatClient,
   WorkflowClient,
   type DeletionOperation,
@@ -174,7 +173,7 @@ export function Tool({
     </details>
   );
 }
-function Ticket({
+function PlanningOperation({
   snapshot,
   selected,
   onError,
@@ -184,112 +183,43 @@ function Ticket({
   onError: (message: string) => void;
 }) {
   const planning = snapshot.planning;
-  if (!planning || (!planning.ticket && !planning.sourceIssue)) return null;
-  if (!planning.ticket && planning.sourceIssue)
-    return (
-      <section className="planning-ticket">
-        <div className="eyebrow">Editing existing issue</div>
-        <a href={planning.sourceIssue.url} target="_blank" rel="noreferrer">
-          View issue #{planning.sourceIssue.number}
-        </a>
-        <h2>{planning.sourceIssue.title}</h2>
-        <div
-          className="markdown"
-          dangerouslySetInnerHTML={{
-            __html: markdown(planning.sourceIssue.body),
-          }}
-        />
-        <p>
-          Describe the changes you want. The planner will ask for approval
-          before saving them to GitHub.
-        </p>
-      </section>
-    );
+  if (!planning?.operation) return null;
   return (
-    <section className="planning-ticket">
-      {planning.sourceIssue && (
-        <a href={planning.sourceIssue.url}>
-          Editing issue #{planning.sourceIssue.number}
+    <div role="status">
+      <p>
+        Issue:{' '}
+        {planning.operation.kind === 'update' &&
+        planning.operation.state === 'created'
+          ? 'updated'
+          : planning.operation.state}
+      </p>
+      {planning.operation.message && <p>{planning.operation.message}</p>}
+      {planning.operation.issue && (
+        <a href={planning.operation.issue.url} target="_blank" rel="noreferrer">
+          View issue #{planning.operation.issue.number}
         </a>
       )}
-      <div className="eyebrow">
-        Saved ticket · revision {planning.ticket!.revision}
-      </div>
-      {planning.operation && (
-        <div role="status">
-          <p>
-            Issue:{' '}
-            {planning.operation.kind === 'update' &&
-            planning.operation.state === 'created'
-              ? 'updated'
-              : planning.operation.state}
-          </p>
-          {planning.operation.message && <p>{planning.operation.message}</p>}
-          {planning.operation.issue && (
-            <a
-              href={planning.operation.issue.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View issue #{planning.operation.issue.number}
-            </a>
-          )}
-          {planning.operation.issue && <StartRun conversationId={selected!} />}
-          {['prepared', 'sending', 'uncertain', 'rejected', 'blocked'].includes(
-            planning.operation.state,
-          ) && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                void client
-                  .retryIssue(selected!)
-                  .catch((e) => onError(e.message));
-              }}
-            >
-              Retry{' '}
-              {planning.operation.state === 'rejected' ||
-              planning.operation.state === 'prepared'
-                ? planning.sourceIssue
-                  ? 'issue update'
-                  : 'issue creation'
-                : 'reconciliation'}
-            </button>
-          )}
-        </div>
+      {planning.operation.issue && <StartRun conversationId={selected} />}
+      {['prepared', 'sending', 'uncertain', 'rejected', 'blocked'].includes(
+        planning.operation.state,
+      ) && (
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => {
+            void client.retryIssue(selected).catch((e) => onError(e.message));
+          }}
+        >
+          Retry{' '}
+          {planning.operation.state === 'rejected' ||
+          planning.operation.state === 'prepared'
+            ? planning.sourceIssue
+              ? 'issue update'
+              : 'issue creation'
+            : 'reconciliation'}
+        </button>
       )}
-      <h2>{planning.ticket!.title}</h2>
-      {[
-        ['Goal', planning.ticket!.goal],
-        ['Scope', planning.ticket!.scope],
-        ['Acceptance criteria', planning.ticket!.acceptanceCriteria],
-        ['Validation', planning.ticket!.validation],
-        [
-          'Regression proof',
-          planning.ticket!.regression
-            ? planning.ticket!.regression.required
-              ? `Required. Command: ${planning.ticket!.regression.command}\nTest paths: ${planning.ticket!.regression.testPaths.join(', ')}\nExpected failure: ${planning.ticket!.regression.expectedFailure}`
-              : `Not required: ${planning.ticket!.regression.reason}`
-            : 'Unavailable in this legacy ticket.',
-        ],
-      ].map(([label, text]) => (
-        <section key={label}>
-          <h3>{label}</h3>
-          <p>{text}</p>
-        </section>
-      ))}
-      <details>
-        <summary>Complete proposed GitHub issue body</summary>
-        <pre>{formatTicketBody(planning.ticket!)}</pre>
-      </details>
-      {planning.proposal && !planning.operation && (
-        <p>
-          {planning.sourceIssue
-            ? `Should I update GitHub issue #${planning.sourceIssue.number}? Reply “yes” in chat, or describe changes.`
-            : 'Should I create this GitHub issue? Reply “yes” in chat, or describe changes.'}
-        </p>
-      )}
-    </section>
+    </div>
   );
 }
 
@@ -348,10 +278,7 @@ export function ChatApp() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const desktop = useMedia('(min-width: 1200px)');
   const mobile = useMedia('(max-width: 759px)');
-  const [ticketOpen, setTicketOpen] = useState(true);
-  const [ticketOverlay, setTicketOverlay] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [following, setFollowing] = useState(true);
   const label = agentLabel(snapshot?.conversation.role);
@@ -375,9 +302,6 @@ export function ChatApp() {
       operation.state !== 'completed' &&
       operation.conversationIds.includes(selected),
   );
-  const hasTicket =
-    !selectedRun &&
-    Boolean(snapshot?.planning?.ticket || snapshot?.planning?.sourceIssue);
   const header = usePageHeader({
     route,
     projects: visibleProjects,
@@ -496,7 +420,6 @@ export function ChatApp() {
         operation,
       ]);
       setDeleteTarget(undefined);
-      setTicketOverlay(false);
     } catch (error) {
       setDeleteError(
         error instanceof Error
@@ -561,7 +484,6 @@ export function ChatApp() {
     setError('');
     setLoadingHistory(false);
     setFollowing(true);
-    setTicketOverlay(false);
     follow.current = true;
     anchor.current = undefined;
     if (!selected) {
@@ -992,20 +914,6 @@ export function ChatApp() {
       </a>
     </div>
   );
-  const ticketToggle = hasTicket ? (
-    <button
-      type="button"
-      className="secondary ticket-toggle"
-      aria-expanded={desktop ? ticketOpen : ticketOverlay}
-      aria-haspopup={desktop ? undefined : 'dialog'}
-      disabled={Boolean(selectedDeletion)}
-      onClick={() =>
-        desktop ? setTicketOpen(!ticketOpen) : setTicketOverlay(true)
-      }
-    >
-      {desktop && ticketOpen ? 'Hide ticket' : 'Show ticket'}
-    </button>
-  ) : null;
   return (
     <WorkspaceShell
       mobile={mobile}
@@ -1016,7 +924,6 @@ export function ChatApp() {
           tag={header.tag}
           navigationOpen={navigationOpen}
           onOpenNavigation={mobile ? () => setNavigationOpen(true) : undefined}
-          actions={route.kind === 'chat' ? ticketToggle : undefined}
         />
       }
     >
@@ -1142,7 +1049,7 @@ export function ChatApp() {
                 )}
                 <div
                   inert={Boolean(selectedDeletion)}
-                  className={`chat-workspace ${desktop && ticketOpen && hasTicket ? 'with-ticket' : ''}`}
+                  className="chat-workspace"
                 >
                   <section
                     key={selected}
@@ -1309,6 +1216,29 @@ export function ChatApp() {
                             constraints.
                           </p>
                         )}
+                      {!selectedRun && snapshot && (
+                        <div inert={Boolean(selectedDeletion)}>
+                          <PlanningOperation
+                            snapshot={snapshot}
+                            selected={selected}
+                            onError={setError}
+                          />
+                          {workflowSnapshot?.runs
+                            .filter(
+                              (run) => run.planningConversationId === selected,
+                            )
+                            .map((run) => (
+                              <a
+                                className="linked-implementation"
+                                key={run.id}
+                                href={`/?conversation=${run.developerConversationId}`}
+                              >
+                                Open implementation · #{run.issue.number} ·{' '}
+                                {run.status}
+                              </a>
+                            ))}
+                        </div>
+                      )}
                     </div>
                     {!following && (
                       <div className="jump-row">
@@ -1494,65 +1424,7 @@ export function ChatApp() {
                       </p>
                     </div>
                   </section>
-                  {desktop && hasTicket && (
-                    <aside
-                      hidden={!ticketOpen}
-                      className="ticket-panel"
-                      aria-label={'Saved ticket'}
-                    >
-                      <Ticket
-                        snapshot={snapshot!}
-                        selected={selected}
-                        onError={setError}
-                      />
-                      {!selectedRun &&
-                        workflowSnapshot?.runs
-                          .filter(
-                            (run) => run.planningConversationId === selected,
-                          )
-                          .map((run) => (
-                            <a
-                              className="linked-implementation"
-                              key={run.id}
-                              href={`/?conversation=${run.developerConversationId}`}
-                            >
-                              Open implementation · #{run.issue.number} ·{' '}
-                              {run.status}
-                            </a>
-                          ))}
-                    </aside>
-                  )}
                 </div>
-                {!desktop && hasTicket && (
-                  <Overlay
-                    open={ticketOverlay}
-                    label={'Saved ticket'}
-                    onClose={() => setTicketOverlay(false)}
-                  >
-                    <div inert={Boolean(selectedDeletion)}>
-                      <Ticket
-                        snapshot={snapshot!}
-                        selected={selected}
-                        onError={setError}
-                      />
-                      {!selectedRun &&
-                        workflowSnapshot?.runs
-                          .filter(
-                            (run) => run.planningConversationId === selected,
-                          )
-                          .map((run) => (
-                            <a
-                              className="linked-implementation"
-                              key={run.id}
-                              href={`/?conversation=${run.developerConversationId}`}
-                            >
-                              Open implementation · #{run.issue.number} ·{' '}
-                              {run.status}
-                            </a>
-                          ))}
-                    </div>
-                  </Overlay>
-                )}
               </>
             )}
           </>

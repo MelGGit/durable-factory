@@ -220,10 +220,10 @@ test(
 );
 
 test(
-  'ticket visibility keeps the header aligned with the conversation at every sidebar width',
+  'planning keeps the header aligned with the conversation at every sidebar width',
   { timeout: 30000 },
   async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'factory-ticket-header-'));
+    const dataDir = await mkdtemp(join(tmpdir(), 'factory-planning-header-'));
     const service = await startService({
       dataDir,
       port: 0,
@@ -239,8 +239,8 @@ test(
       const client = new ChatClient(service.url);
       await configure(client);
       const conversation = await client.createConversation(
-        'A long planning conversation title that must stay aligned and fit alongside the ticket toggle',
-        'ticket-header',
+        'A long planning conversation title that must stay aligned and fit in the conversation header',
+        'planning-header',
       );
       const page = await browser.newPage({
         viewport: { width: 1440, height: 900 },
@@ -249,18 +249,19 @@ test(
       await page.getByLabel('Message', { exact: true }).fill('plan');
       await page.getByRole('button', { name: /^Send/ }).click();
       await page
-        .getByRole('button', { name: 'Hide ticket', exact: true })
+        .getByText(
+          'Here is the saved plan. Should I create this GitHub issue?',
+          { exact: true },
+        )
         .waitFor();
 
       const branding = () => page.locator('.chat-brand').boundingBox();
       const initialBranding = await branding();
       const checkHeader = async () => {
         const layout = await page.evaluate(() => {
-          const [title, tag, actions, toggle, header, branding] = [
+          const [title, tag, header, branding] = [
             '.chat-header h1',
             '.mode-tag',
-            '.header-actions',
-            '.ticket-toggle',
             '.chat-header',
             '.sidebar-toggle',
           ].map((selector) =>
@@ -278,9 +279,6 @@ test(
             titleRight: title.right,
             tagLeft: tag.left,
             tagRight: tag.right,
-            actionsLeft: actions.left,
-            actionsRight: actions.right,
-            toggleWidth: toggle.width,
             headerHeight: header.height,
             contentLeft,
             closed,
@@ -290,14 +288,12 @@ test(
         if (!layout.closed || layout.contentLeft >= 272) {
           assert.ok(
             Math.abs(layout.titleLeft - layout.contentLeft) <= 1,
-            'title follows the conversation content when the ticket changes',
+            'title follows the conversation content as the sidebar changes',
           );
         }
         assert.ok(layout.titleLeft > layout.brandingRight);
         assert.ok(layout.titleRight <= layout.tagLeft);
-        assert.ok(layout.tagRight <= layout.actionsLeft);
-        assert.ok(layout.actionsRight <= 1440);
-        assert.equal(layout.toggleWidth, 104);
+        assert.ok(layout.tagRight <= 1440);
         assert.equal(layout.headerHeight, 48);
         assert.deepEqual(await branding(), initialBranding);
       };
@@ -314,16 +310,10 @@ test(
             .click();
         }
         await checkHeader();
-        await page
-          .getByRole('button', { name: 'Hide ticket', exact: true })
-          .click();
-        assert.equal(await page.locator('.ticket-panel').isVisible(), false);
-        await checkHeader();
-        await page
-          .getByRole('button', { name: 'Show ticket', exact: true })
-          .click();
-        assert.equal(await page.locator('.ticket-panel').isVisible(), true);
-        await checkHeader();
+        assert.equal(
+          await page.locator('.ticket-panel, .ticket-toggle').count(),
+          0,
+        );
       }
     } finally {
       await browser.close();

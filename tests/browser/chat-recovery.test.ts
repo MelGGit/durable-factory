@@ -80,6 +80,16 @@ test(
             entry.text.includes('Offline reply: Legacy pending input'),
           ),
       );
+      await page1
+        .getByText('Offline reply: Legacy pending input', { exact: true })
+        .waitFor();
+      assert.equal(
+        await page1
+          .getByRole('button', { name: 'Load older messages' })
+          .count(),
+        0,
+        'a short chat has no older history to load',
+      );
       assert.equal(
         await page1.getByLabel('Message', { exact: true }).inputValue(),
         'Legacy A draft',

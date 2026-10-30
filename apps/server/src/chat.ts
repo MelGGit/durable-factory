@@ -1008,6 +1008,20 @@ export class ChatService {
       Buffer.byteLength(JSON.stringify(entries)) > 512 * 1024
     )
       entries.shift();
+    let olderCursor: string | undefined;
+    if (entries.length) {
+      // The live view can omit compacted history as well as entries cut by the
+      // snapshot limits. Only advertise pagination if an earlier entry exists.
+      const earlier = await (
+        await this.conversation(id)
+      ).entries(
+        { maxEntryId: (Number(entries[0].id) - 1) as EntryId },
+        1,
+        undefined,
+        context,
+      );
+      if (earlier.items.length) olderCursor = this.cursor(id, entries[0].id);
+    }
     const active = submissions.filter((item) =>
       ['queued', 'running', 'acknowledged'].includes(item.status),
     );
@@ -1063,9 +1077,7 @@ export class ChatService {
           : live?.run
             ? 'running'
             : 'idle',
-      ...(entries.length
-        ? { olderCursor: this.cursor(id, entries[0].id) }
-        : {}),
+      ...(olderCursor ? { olderCursor } : {}),
     };
   }
   async stream(

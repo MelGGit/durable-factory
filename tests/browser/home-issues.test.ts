@@ -85,10 +85,8 @@ test(
       await page.getByLabel('Message', { exact: true }).fill('plan');
       await page.getByRole('button', { name: /^Send/ }).click();
       await page
-        .getByText(
-          'Should I update GitHub issue #1? Reply “yes” in chat, or describe changes.',
-          { exact: true },
-        )
+        .locator('.tool-card summary strong')
+        .getByText('propose_issue', { exact: true })
         .waitFor();
       await page.getByLabel('Message', { exact: true }).fill('update it');
       await page.getByRole('button', { name: /^Send/ }).click();

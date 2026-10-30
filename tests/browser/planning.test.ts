@@ -11,7 +11,7 @@ import { configure } from '../fixtures/chat.js';
 import { FakeGitHub, planningFixture } from '../fixtures/planning.js';
 
 test(
-  'browser presents the saved proposal, accepts chat approval, restores issue link, and validates GitHub',
+  'browser keeps planning in chat without ticket panels, accepts approval, and restores issue controls',
   { timeout: 60000 },
   async () => {
     const directory = await mkdtemp(
@@ -58,26 +58,35 @@ test(
       await page.getByLabel('Message', { exact: true }).fill('plan');
       await page.getByRole('button', { name: /^Send/ }).click();
       await page
-        .getByText('Saved ticket · revision 1', { exact: true })
-        .waitFor();
-      await page
-        .getByRole('heading', { name: 'Regression proof', exact: true })
-        .waitFor();
-      await page
-        .getByText('AC-1: Results link to matching files', { exact: true })
-        .waitFor();
-      await page
-        .getByText('Complete proposed GitHub issue body', { exact: true })
-        .click();
-      await page
-        .locator('.planning-ticket pre')
-        .filter({ hasText: '## Regression proof' })
-        .waitFor();
-      await page
         .getByText(
-          'Should I create this GitHub issue? Reply “yes” in chat, or describe changes.',
+          'Here is the saved plan. Should I create this GitHub issue?',
           { exact: true },
         )
+        .waitFor();
+      const assertNoTicket = async () => {
+        assert.equal(
+          await page.locator('.ticket-panel, .planning-ticket').count(),
+          0,
+        );
+        assert.equal(
+          await page
+            .getByRole('button', { name: /^(Show|Hide) ticket$/ })
+            .count(),
+          0,
+        );
+        assert.equal(
+          await page.getByRole('dialog', { name: 'Saved ticket' }).count(),
+          0,
+        );
+      };
+      await assertNoTicket();
+      const proposal = page.locator('.tool-card').filter({
+        has: page.locator('summary strong', { hasText: 'propose_issue' }),
+      });
+      await proposal.locator('summary').click();
+      await proposal
+        .locator('pre')
+        .filter({ hasText: '## Regression proof' })
         .waitFor();
       assert.equal(github.calls, 0);
       await page.getByLabel('Message', { exact: true }).fill('yes');
@@ -87,13 +96,7 @@ test(
         .getByRole('button', { name: 'Retry reconciliation', exact: true })
         .click();
       await page.getByRole('link', { name: 'View issue #1' }).waitFor();
-      await page
-        .getByRole('button', { name: 'Hide ticket', exact: true })
-        .click();
-      assert.equal(await page.locator('.ticket-panel').isVisible(), false);
-      await page
-        .getByRole('button', { name: 'Show ticket', exact: true })
-        .click();
+      await assertNoTicket();
       assert.equal(github.calls, 1);
       await mkdir(resolve('test-results'), { recursive: true });
       await page.screenshot({
@@ -111,31 +114,8 @@ test(
       await page.reload();
       await page.getByRole('link', { name: 'View issue #1' }).waitFor();
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.locator('.ticket-panel').waitFor({ state: 'detached' });
-      assert.equal(
-        await page.getByRole('link', { name: 'View issue #1' }).isVisible(),
-        false,
-      );
-      const ticketTrigger = page.getByRole('button', {
-        name: 'Show ticket',
-        exact: true,
-      });
-      await ticketTrigger.click();
-      const dialog = page.getByRole('dialog', { name: 'Saved ticket' });
-      await dialog.getByRole('link', { name: 'View issue #1' }).waitFor();
-      await dialog.getByRole('button', { name: 'Close saved ticket' }).focus();
-      await page.keyboard.press('Shift+Tab');
-      assert.ok(
-        await dialog.evaluate((element) =>
-          element.contains(document.activeElement),
-        ),
-      );
-      await page.keyboard.press('Escape');
-      assert.ok(
-        await ticketTrigger.evaluate(
-          (element) => element === document.activeElement,
-        ),
-      );
+      await page.getByRole('link', { name: 'View issue #1' }).waitFor();
+      await assertNoTicket();
       await page
         .getByRole('button', { name: 'Conversations', exact: true })
         .click();
@@ -157,14 +137,11 @@ test(
         ),
       );
       await page.setViewportSize({ width: 1024, height: 900 });
-      await page
-        .getByRole('button', { name: 'Show ticket', exact: true })
-        .click();
+      await assertNoTicket();
       await page.screenshot({
         path: resolve('test-results/planning-tablet.png'),
         fullPage: true,
       });
-      await page.keyboard.press('Escape');
       await page.setViewportSize({ width: 320, height: 700 });
       assert.ok(
         await page.evaluate(

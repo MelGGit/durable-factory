@@ -381,7 +381,7 @@ test('missing provider credentials fail the submission without blocking inspecti
   }
 });
 
-test('history and reconnect snapshots preserve more than one page of messages', async () => {
+test('history cursors appear only when earlier entries exist and reconnect preserves pagination', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'factory-chat-pages-'));
   const service = await startService({ dataDir, port: 0, chat: fixture() });
   let stop: (() => void) | undefined;
@@ -398,12 +398,21 @@ test('history and reconnect snapshots preserve more than one page of messages', 
       (value) => (latest = value),
       () => {},
     );
+    assert.equal(
+      (await service.chat!.activitySnapshot(conversation.id)).olderCursor,
+      undefined,
+    );
     for (let i = 0; i < 30; i++) {
       await client.submit(conversation.id, `Question ${i}`, `page-${i}`);
       await until(
         () => client.submission(conversation.id, `page-${i}`),
         (value) => value.status === 'completed',
       );
+      if (i === 0 || i === 23) {
+        const snapshot = await service.chat!.activitySnapshot(conversation.id);
+        assert.ok(snapshot.entries.length > 0 && snapshot.entries.length < 50);
+        assert.equal(snapshot.olderCursor, undefined);
+      }
     }
     await until(
       async () => latest,

@@ -17,7 +17,6 @@
   --font-ui: 14px;
   --font-label: 12px;
   --conversation-width: 760px;
-  --ticket-width: 300px;
   --page-cards-width: 352px;
   --bg: #faf9f5;
   --surface: #ffffff;
@@ -584,9 +583,6 @@ h3 {
   flex: 1;
   min-height: 0;
 }
-.chat-workspace.with-ticket {
-  grid-template-columns: minmax(0, 1fr) var(--ticket-width);
-}
 .chat-conversation {
   display: flex;
   flex-direction: column;
@@ -860,55 +856,6 @@ h3 {
   display: block;
   margin: 0 auto 22px;
 }
-.ticket-panel {
-  overflow: auto;
-  border-left: 1px solid var(--line);
-  background: var(--surface-2);
-  min-width: 0;
-}
-.planning-ticket {
-  padding: 24px 20px;
-  overflow-wrap: anywhere;
-}
-.planning-ticket .eyebrow {
-  font-size: 12px;
-  letter-spacing: 0.8px;
-  line-height: 1.6;
-}
-.planning-ticket h2 {
-  font-size: 19px;
-  margin: 18px 0;
-  line-height: 1.4;
-  font-weight: 500;
-}
-.planning-ticket h3 {
-  font-size: 12px;
-  margin: 22px 0 7px;
-  color: var(--text-muted);
-}
-.planning-ticket p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 7px 0;
-  font-size: var(--font-body);
-  line-height: 1.6;
-}
-.planning-ticket summary {
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.planning-ticket details {
-  margin: 20px 0;
-}
-.planning-ticket a {
-  color: var(--green);
-  text-decoration: underline;
-}
-.planning-ticket button {
-  max-width: 100%;
-  white-space: normal;
-}
 .chat-overlay {
   color: inherit;
   background: var(--paper);
@@ -959,7 +906,6 @@ h3 {
   .chat-header h1 {
     font-size: 18px;
   }
-  .ticket-toggle,
   .navigation-toggle {
     padding: 9px 10px;
     font-size: 12px;
@@ -1107,14 +1053,6 @@ h3 {
   padding: 8px 0;
   overflow-wrap: anywhere;
 }
-.planning-ticket pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.planning-ticket section p {
-  white-space: pre-wrap;
-}
-
 /* Planning and implementation share navigation, while retaining independent transcripts. */
 .implementation-events {
   min-width: 0;
@@ -1804,12 +1742,6 @@ h3 {
   color: var(--danger);
 }
 
-/* Ticket and run panels */
-.ticket-panel {
-  background: var(--bg);
-  border-left: 1px solid var(--border);
-}
-
 @media (max-width: 759px) {
   .chat-header {
     flex-wrap: wrap;
@@ -1965,9 +1897,6 @@ h3 {
 .desktop-shell:has(.with-page-cards) {
   --header-cards-width: var(--page-cards-width);
 }
-.desktop-shell:has(.with-ticket) {
-  --header-ticket-width: var(--ticket-width);
-}
 .desktop-shell:has(.chat-workspace) .chat-header {
   padding-left: max(
     var(--header-min-inset, 24px),
@@ -1975,14 +1904,11 @@ h3 {
     calc(
       (
           100vw - var(--sidebar-width) - var(--header-cards-width, 0px) -
-            var(--header-ticket-width, 0px) - var(--conversation-width)
+            var(--conversation-width)
         ) /
         2
     )
   );
-}
-.desktop-shell .ticket-toggle {
-  min-width: 104px;
 }
 .desktop-shell:has(.view) .chat-header {
   padding-left: max(
