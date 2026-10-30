@@ -41,6 +41,8 @@ export async function realFixture(
     assessments?: CriterionAssessment[];
     regression?: RegressionRequirement;
     proofTest?: string;
+    extraFile?: string;
+    reviewScope?: { withinTicket: boolean; outOfScope: string[] };
     issueBody?: string;
   } = {},
 ) {
@@ -131,6 +133,18 @@ export async function realFixture(
             path: 'generated/result.txt',
           });
         if (
+          options.extraFile &&
+          !results.some(
+            (r) =>
+              r.toolName === 'worktree_write' &&
+              JSON.stringify(r).includes(options.extraFile!),
+          )
+        )
+          return call('worktree_write', {
+            path: options.extraFile,
+            content: 'extra\n',
+          });
+        if (
           options.proofTest &&
           !results.some(
             (r) =>
@@ -170,6 +184,7 @@ export async function realFixture(
             validation: ['Required checks run by the service.'],
             concerns: [],
             reviewerNotes: 'Inspect the value and generated result.',
+            outOfScope: [],
           });
         }
         await options.afterImplementation?.();
@@ -196,8 +211,15 @@ export async function realFixture(
           !results.some((r) => r.toolName === 'submit_review')
         )
           return call('submit_review', {
-            verdict: 'pass',
+            verdict:
+              options.reviewScope?.withinTicket === false
+                ? 'needs_input'
+                : 'pass',
             findings: [],
+            scope: options.reviewScope ?? {
+              withinTicket: true,
+              outOfScope: [],
+            },
             assessments: options.assessments ?? [
               {
                 id: 'AC-1',
@@ -247,8 +269,10 @@ export async function realFixture(
         ...ticket,
         ...(options.regression ? { regression: options.regression } : {}),
         title: 'Implement value',
-        goal: 'Update the value and generated result.',
-        acceptanceCriteria: 'AC-1: Update the value and generated result.',
+        scope:
+          'The scripted agent may also write effect.txt, tool-boundary.txt and regression.test.cjs.',
+        goal: 'Update value.txt and generated/result.txt.',
+        acceptanceCriteria: 'AC-1: Update value.txt and generated/result.txt.',
         revision: 0,
       }),
     updatedAt: '2026-10-22T00:00:00Z',

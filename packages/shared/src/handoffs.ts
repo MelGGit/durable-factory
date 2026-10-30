@@ -26,6 +26,8 @@ export interface ImplementationReport {
   validation: string[];
   concerns: string[];
   reviewerNotes: string;
+  /** Changes beyond the ticket, each one approved by the user. Empty when none. */
+  outOfScope?: string[];
 }
 export interface CriterionAssessment {
   id: string;
@@ -210,6 +212,68 @@ export function validateImplementation(
     throw new Error(
       `Changed files must exactly match the candidate diff: ${JSON.stringify(changed)}.`,
     );
+}
+const FILE_EXTENSION =
+  /\.(?:[cm]?[jt]sx?|css|scss|json|md|txt|html|ya?ml|toml|lock|sh|py|go|rs|java|rb|sql)$/i;
+/** Repository paths and file names a ticket mentions anywhere in its text. */
+export function namedPaths(ticket: Ticket) {
+  const text = [
+    ticket.goal,
+    ticket.scope,
+    ticket.acceptanceCriteria,
+    ticket.validation,
+  ].join('\n');
+  // Approved test paths are exact, so they need no guessing from prose.
+  const found = new Set<string>(
+    ticket.regression?.required ? ticket.regression.testPaths : [],
+  );
+  for (const [match] of text.matchAll(
+    /[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)+\/?|[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.[A-Za-z]{1,5}\b/g,
+  )) {
+    // A sentence's closing period or comma is not part of the path.
+    const token = match.replace(/[.,;:-]+$/, '');
+    if (token.includes('/') || FILE_EXTENSION.test(token)) found.add(token);
+  }
+  return [...found];
+}
+/**
+ * Changed files the ticket never names. Only meaningful when the ticket names
+ * files at all; a ticket without any leaves scope to the agents and reviewer.
+ */
+export function unnamedFiles(ticket: Ticket, changed: string[]) {
+  const named = namedPaths(ticket);
+  if (!named.length) return [];
+  return changed.filter(
+    (file) =>
+      !named.some((path) =>
+        path.includes('/')
+          ? file === path ||
+            file.startsWith(path.endsWith('/') ? path : `${path}/`)
+          : file === path || file.endsWith(`/${path}`),
+      ),
+  );
+}
+/**
+ * Why a report may not go forward: changes beyond the ticket need the user's
+ * answer first. `approved` is true once the user has answered a developer
+ * question, because that is how an extra is approved.
+ */
+export function scopeProblem(
+  report: Pick<ImplementationReport, 'outOfScope'>,
+  ticket: Ticket,
+  changed: string[],
+  approved: boolean,
+) {
+  const declared = report.outOfScope ?? [];
+  const unnamed = unnamedFiles(ticket, changed);
+  const undeclared = unnamed.filter(
+    (file) => !declared.some((entry) => entry.includes(file)),
+  );
+  if (undeclared.length)
+    return `These files are not named in the ticket: ${undeclared.join(', ')}. Revert them, or call workflow_question to ask the user and list them in outOfScope once approved.`;
+  if (declared.length && !approved)
+    return `Out-of-scope changes need the user's approval before they are made: ${declared.join('; ')}. Revert them, or call workflow_question to ask and wait for the answer.`;
+  return undefined;
 }
 export function validateAssessments(
   assessments: CriterionAssessment[],

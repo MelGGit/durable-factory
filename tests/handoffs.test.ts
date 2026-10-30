@@ -6,6 +6,9 @@ import {
   formatTicketBody,
   parseIssueTicket,
   validateImplementation,
+  namedPaths,
+  unnamedFiles,
+  scopeProblem,
   validateAssessments,
   pullRequestBody,
   runTimeline,
@@ -321,4 +324,43 @@ test('criterion count limits agree across planning, parsing, implementation and 
     () => parseIssueTicket(oversized.title, formatTicketBody(oversized)),
     /at most 100/,
   );
+});
+
+test('files the ticket never names are flagged, and extras need the user before they are made', () => {
+  const named = {
+    ...ticket,
+    scope: 'Change `.composer textarea` in apps/web/src/style.css.',
+    regression: {
+      required: true as const,
+      command: 'node --test tests/browser/chat.test.ts',
+      testPaths: ['tests/browser/chat.test.ts'],
+      expectedFailure: 'x',
+    },
+  };
+  assert.ok(namedPaths(named).includes('apps/web/src/style.css'));
+  assert.deepEqual(
+    unnamedFiles(named, [
+      'apps/web/src/style.css',
+      'tests/browser/chat.test.ts',
+    ]),
+    [],
+  );
+  const extra = ['apps/web/src/style.css', 'package.json'];
+  assert.deepEqual(unnamedFiles(named, extra), ['package.json']);
+  // Undeclared extras are refused outright, even after the user answered something.
+  assert.match(scopeProblem({}, named, extra, true)!, /package\.json/);
+  // Declared extras are refused until the user approved them.
+  const declared = { outOfScope: ['package.json: add a test script'] };
+  assert.match(scopeProblem(declared, named, extra, false)!, /approval/);
+  assert.equal(scopeProblem(declared, named, extra, true), undefined);
+  // A ticket that names no files leaves scope to the agents and the reviewer.
+  const unnamedTicket = {
+    ...ticket,
+    goal: 'Find saved work',
+    scope: 'Search',
+    acceptanceCriteria: 'AC-1: Results link to matches',
+    validation: 'Run the offline tests',
+    regression: { required: false as const, reason: 'New capability.' },
+  };
+  assert.deepEqual(unnamedFiles(unnamedTicket, ['anything.ts']), []);
 });

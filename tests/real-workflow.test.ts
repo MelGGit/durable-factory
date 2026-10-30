@@ -142,6 +142,48 @@ test('a passing regression proof still runs the required checks', async () => {
     await rm(marker, { force: true });
   }
 });
+test('a change to a file the ticket never names pauses before any check runs', async () => {
+  const f = await realFixture({ extraFile: 'notes.md' });
+  try {
+    const started = await f.client.startIssue(7, 'extra-file-start');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => r.status === 'needs_input',
+      30000,
+    );
+    assert.equal(run.stage, 'developer');
+    assert.equal(
+      run.attempts.some((a) => a.stage === 'checks'),
+      false,
+    );
+    assert.equal(f.creates, 0);
+  } finally {
+    await f.close();
+  }
+});
+test('a reviewer who finds changes beyond the ticket asks the user instead of passing', async () => {
+  const f = await realFixture({
+    reviewScope: {
+      withinTicket: false,
+      outOfScope: ['Raised a timeout the ticket never mentions'],
+    },
+  });
+  try {
+    const started = await f.client.startIssue(7, 'review-scope-start');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => r.status === 'needs_input',
+      30000,
+    );
+    assert.equal(run.stage, 'reviewer');
+    const question = run.interventions.find((i) => i.state === 'pending')!;
+    assert.match(question.question, /beyond the ticket/);
+    assert.match(question.question, /Raised a timeout/);
+    assert.equal(f.creates, 0);
+  } finally {
+    await f.close();
+  }
+});
 test('unstructured reviewer prose cannot publish', async () => {
   const f = await realFixture({ malformedReview: true });
   try {
