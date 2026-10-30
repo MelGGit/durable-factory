@@ -1,5 +1,4 @@
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { chromium } from '@playwright/test';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
@@ -11,31 +10,10 @@ import { fixture, configure, until } from '../fixtures/chat.js';
 
 test(
   'browser chat restores drafts and pending sends, streams tools, survives browser and service restarts',
-  { timeout: 120000 },
+  { timeout: 60000 },
   async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'factory-chat-browser-'));
-    // Build the current web sources so the test never depends on a stale dist.
-    const webDir = join(dataDir, 'web');
-    execFileSync('bun', ['run', 'build:shared'], { stdio: 'ignore' });
-    execFileSync(
-      'bun',
-      [
-        'run',
-        '--cwd',
-        'apps/web',
-        'build',
-        '--outDir',
-        webDir,
-        '--emptyOutDir',
-      ],
-      { stdio: 'ignore' },
-    );
-    let service = await startService({
-      dataDir,
-      port: 0,
-      webDir,
-      chat: fixture(100),
-    });
+    let service = await startService({ dataDir, port: 0, chat: fixture(100) });
     const browser = await chromium.launch({
       headless: true,
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
@@ -141,7 +119,7 @@ test(
       await page
         .locator('.chat-conversation[data-connection="disconnected"]')
         .waitFor();
-      service = await startService({ dataDir, port, webDir, chat: fixture() });
+      service = await startService({ dataDir, port, chat: fixture() });
       await page
         .locator('.chat-conversation[data-connection="connected"]')
         .waitFor();
