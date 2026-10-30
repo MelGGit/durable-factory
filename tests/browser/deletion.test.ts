@@ -72,12 +72,8 @@ test(
       await dialog
         .getByRole('button', { name: 'Delete permanently', exact: true })
         .click();
-      await page
-        .getByRole('heading', { name: 'Start with a conversation.' })
-        .waitFor();
-      await second
-        .getByRole('heading', { name: 'Start with a conversation.' })
-        .waitFor();
+      await page.getByRole('heading', { name: 'Your workspace' }).waitFor();
+      await second.getByRole('heading', { name: 'Your workspace' }).waitFor();
       assert.equal(new URL(page.url()).searchParams.has('conversation'), false);
       assert.equal(
         new URL(second.url()).searchParams.has('conversation'),
@@ -91,9 +87,7 @@ test(
         null,
       );
       await page.reload();
-      await page
-        .getByRole('heading', { name: 'Start with a conversation.' })
-        .waitFor();
+      await page.getByRole('heading', { name: 'Your workspace' }).waitFor();
       assert.deepEqual(errors, []);
     } finally {
       await b.close();

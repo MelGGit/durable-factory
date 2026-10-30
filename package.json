@@ -18,9 +18,9 @@
     "build": "bun run check && bun run build:shared && bun run --cwd apps/web build && bun build apps/server/src/main.ts --target=node --packages=external --outfile=apps/server/dist/main.js",
     "start": "NODE_ENV=production node apps/server/dist/main.js",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test": "node --import tsx --test --test-force-exit --test-concurrency=1 tests/*.test.ts",
     "diagnose": "node --import tsx scripts/diagnose.ts",
-    "test:browser": "node --import tsx --test tests/browser/*.test.ts",
+    "test:browser": "node --import tsx --test --test-force-exit tests/browser/*.test.ts",
     "format:check": "prettier --check apps packages scripts tests package.json tsconfig.json .prettierrc.json",
     "format": "prettier --write apps packages scripts tests package.json tsconfig.json .prettierrc.json"
   },

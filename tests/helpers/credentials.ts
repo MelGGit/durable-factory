@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { after } from 'node:test';
 import {
   PrivateCredentials as ProductionCredentials,
   type CredentialVault,
@@ -63,13 +64,31 @@ export class PrivateCredentials extends ProductionCredentials {
     super(dataDir, vault);
   }
 }
-export function startService(options: ServiceOptions) {
+type Service = Awaited<ReturnType<typeof productionService>>;
+const started = new Set<Service>();
+let registered = false;
+// A test that fails before its own cleanup (for example when the browser cannot
+// launch) would otherwise leave this listening socket holding the process open.
+// close() is idempotent, so closing everything again here is always safe.
+// Registered on first use: non-test importers, like the terminal login worker,
+// must not start a test runner just by importing this module.
+function closeLeftovers() {
+  if (registered) return;
+  registered = true;
+  after(async () => {
+    await Promise.allSettled([...started].map((service) => service.close()));
+  });
+}
+export async function startService(options: ServiceOptions) {
   if (!options.dataDir)
     throw new Error('Tests require an explicit disposable data directory');
-  return productionService({
+  const service = await productionService({
     ...options,
     credentialVault: options.credentialVault ?? new FileVault(options.dataDir),
   });
+  closeLeftovers();
+  started.add(service);
+  return service;
 }
 export function runDiagnostic(args: string[]) {
   const directory = process.env.DURABLE_FACTORY_DATA_DIR;

@@ -82,3 +82,30 @@ test('a rapidly detached child remains accounted for after its parent exits', as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('the supervisor inventory does not accumulate its own inspection helpers', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'factory-process-'));
+  const config = await openConfiguration(directory);
+  const processes = new ProcessSupervisor(config.harness, directory);
+  try {
+    const result = await processes.run({
+      id: 'run-attempt-inventory',
+      runId: 'run',
+      attemptId: 'attempt',
+      cwd: directory,
+      command: 'sleep 3',
+      timeout: 10,
+      cancellation: 1,
+    });
+    assert.equal(result.exitCode, 0);
+    // One scan every 100ms for 3s used to record every exited `ps` helper (60+).
+    const [record] = await processes.records('run');
+    assert.ok(
+      record.descendants.length < 10,
+      String(record.descendants.length),
+    );
+  } finally {
+    await config.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -12,6 +12,25 @@ import {
 import { configure, until } from './chat.js';
 import { FakeGitHub, planningFixture } from './planning.js';
 
+/**
+ * The service copies the adapter it is given, so a test that swaps a method
+ * afterwards would otherwise change nothing. Each method looks the current
+ * implementation up on the original adapter at call time.
+ */
+function liveAdapter(adapter: WorkflowAdapter): WorkflowAdapter {
+  return new Proxy(adapter, {
+    get(target, key) {
+      const value = Reflect.get(target, key);
+      return typeof value === 'function'
+        ? (...args: unknown[]) =>
+            (
+              Reflect.get(target, key) as (...values: unknown[]) => unknown
+            ).apply(target, args)
+        : value;
+    },
+  });
+}
+
 export async function workflowFixture(
   adapter: WorkflowAdapter = simulationAdapter(),
   clock?: WorkflowClock,
@@ -27,7 +46,7 @@ export async function workflowFixture(
     dataDir,
     chat: planningFixture(),
     github,
-    workflow: { adapter, clock },
+    workflow: { adapter: liveAdapter(adapter), clock },
   });
   const chat = new ChatClient(service.url);
   await configure(chat);
@@ -81,7 +100,7 @@ export async function workflowFixture(
         chat: planningFixture(),
         github,
         ...(enabled
-          ? { workflow: { adapter, clock } }
+          ? { workflow: { adapter: liveAdapter(adapter), clock } }
           : { workflowMode: 'disabled' as const }),
       });
       client = new WorkflowClient(service.url);

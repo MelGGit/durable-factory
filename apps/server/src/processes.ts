@@ -78,16 +78,28 @@ export async function processTable(owner?: string) {
 // The supervisor cannot execute anything until durable authorization reaches its IPC channel.
 // Disconnect is fail-closed: terminate its process group and all observed descendants.
 const supervisorSource = String.raw`
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 let authorized = false, stopping = false, child, code, timer, owner;
 const known = new Map();
 function emit(message, done) {if(!process.connected)return;try{process.send(message,()=>done?.());}catch{}}
 process.on('SIGTERM', () => {});
+const helpers = new Set();
+// The scan's own ps processes live in this process group; they must never be tracked.
+function ps(args, maxBuffer) {
+  const r = spawnSync('ps', args, {encoding:'utf8', timeout:2000, maxBuffer});
+  if (r.pid) helpers.add(r.pid);
+  if (r.error || r.status !== 0) throw r.error ?? Error('inspection');
+  return r.stdout;
+}
 function scan() {
-  const lines = execFileSync('ps', ['-axo','pid=,ppid=,pgid=,stat=,lstart='], {encoding:'utf8', timeout:2000}).trim().split('\n');
-  const marked = new Set(owner ? execFileSync('ps',['eww','-axo','pid=,command='],{encoding:'utf8',timeout:2000,maxBuffer:32*1024*1024}).split('\n').filter(l=>l.includes('DURABLE_FACTORY_PROCESS_OWNER='+owner)).map(l=>+l.trim().split(/\s+/)[0]) : []);
-  const rows = lines.map(l => {const m=l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/); if(!m)throw Error('inspection'); return {pid:+m[1],parent:+m[2],group:+m[3],started:m[5],zombie:m[4].includes('Z')};});
+  helpers.clear();
+  const lines = ps(['-axo','pid=,ppid=,pgid=,stat=,lstart=']).trim().split('\n');
+  const marked = new Set(owner ? ps(['eww','-axo','pid=,command='],32*1024*1024).split('\n').filter(l=>l.includes('DURABLE_FACTORY_PROCESS_OWNER='+owner)).map(l=>+l.trim().split(/\s+/)[0]) : []);
+  const rows = lines.map(l => {const m=l.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/); if(!m)throw Error('inspection'); return {pid:+m[1],parent:+m[2],group:+m[3],started:m[5],zombie:m[4].includes('Z')};}).filter(p=>!helpers.has(p.pid));
   let changed=true; while(changed) {changed=false; for(const p of rows) if(p.pid!==process.pid && !known.has(p.pid) && (marked.has(p.pid) || p.group===process.pid || p.parent===process.pid || known.has(p.parent))) {known.set(p.pid,p); changed=true;}}
+  // Exited processes cannot be signalled or become parents; keeping them only grows every inventory.
+  const alive = new Set(rows.filter(p=>!p.zombie).map(p=>p.pid));
+  for (const pid of known.keys()) if (!alive.has(pid)) known.delete(pid);
   return rows.filter(p=> {if(p.zombie || p.pid===process.pid || !(p.group===process.pid || known.get(p.pid)?.started===p.started))return false;try{process.kill(p.pid,0);return true;}catch{return false;}});
 }
 function killAll(signal) { let rows; try { rows=scan(); } catch { return false; } for(const p of rows) try {process.kill(p.pid,signal);}catch(e){if(e.code!=='ESRCH')return false;} return true; }
