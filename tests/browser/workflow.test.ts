@@ -27,7 +27,7 @@ async function openDetails(page: Page, name = 'Run') {
 }
 
 test(
-  'browser starts labelled simulation, restores question after restart, answers, and inspects evidence on desktop/mobile',
+  'browser starts labelled simulation, restores question after restart, answers, and keeps run controls accessible on desktop/mobile',
   { timeout: 60000 },
   async () => {
     const adapter = simulationAdapter();

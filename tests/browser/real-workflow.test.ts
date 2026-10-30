@@ -25,7 +25,7 @@ async function openDetails(page: Page, name = 'Details') {
 }
 
 test(
-  'browser starts a real issue, shows its workspace and verified PR, and preserves responsive inspection',
+  'browser starts a real issue, shows readable run details and its verified PR across viewports',
   { timeout: 60000 },
   async () => {
     const fixture = await realFixture({
@@ -61,23 +61,17 @@ test(
       );
       await openDetails(page);
       await page
-        .getByRole('heading', { name: 'Run timeline', exact: true })
+        .getByRole('region', { name: 'Run progress', exact: true })
         .waitFor();
-      await page.getByRole('list', { name: 'Run timeline' }).waitFor();
-      await page
-        .getByRole('heading', { name: 'Implementation reports', exact: true })
-        .waitFor();
-      await page
-        .locator('summary')
-        .filter({ hasText: 'Current implementation' })
-        .waitFor();
-      await page
-        .locator('summary')
-        .filter({ hasText: 'reviewer: passed' })
-        .click();
-      await page
-        .getByRole('heading', { name: 'AC-1: met', exact: true })
-        .waitFor();
+      assert.deepEqual(
+        await page.locator('.page-card-heading h2').allTextContents(),
+        ['Run progress', 'Run controls', 'Models', 'Usage', 'Configuration'],
+      );
+      assert.ok(
+        run.evidence.some(
+          (evidence) => evidence.kind === 'reviewer' && evidence.passed,
+        ),
+      );
       assert.match(run.publication!.payload!.body, /Acceptance criteria/);
       await page
         .getByRole('link', { name: 'Open pull request', exact: true })
@@ -90,16 +84,15 @@ test(
           .getAttribute('href'),
         'https://github.com/example/project/pull/9',
       );
-      await openDetails(page);
-      await page
-        .locator('summary')
-        .filter({ hasText: 'checks: passed' })
-        .click();
-      await page
-        .locator('details')
-        .filter({ hasText: 'checks: passed' })
-        .locator('.command-output > summary')
-        .click();
+      const check = page
+        .locator('.implementation-events .run-event')
+        .filter({
+          has: page.getByText(run.configuration.requiredChecks[0], {
+            exact: true,
+          }),
+        })
+        .last();
+      await check.locator('.command-output > summary').click();
       await page.getByText('Required gate passed', { exact: true }).waitFor();
       await mkdir(resolve('test-results'), { recursive: true });
       await page.screenshot({
@@ -110,15 +103,6 @@ test(
       await openDetails(page);
       await page.screenshot({
         path: resolve('test-results/real-workflow-mobile.png'),
-        fullPage: false,
-      });
-      await openDetails(page);
-      await page
-        .locator('summary')
-        .filter({ hasText: 'checks: passed' })
-        .scrollIntoViewIfNeeded();
-      await page.screenshot({
-        path: resolve('test-results/real-workflow-mobile-evidence.png'),
         fullPage: false,
       });
       assert.equal(
@@ -133,19 +117,14 @@ test(
         ),
       );
       assert.deepEqual(errors, []);
+      await page.getByRole('heading', { name: 'Usage', exact: true }).waitFor();
       await page
-        .getByRole('heading', { name: 'Models and usage', exact: true })
-        .waitFor();
-      await page
-        .getByText(/Reported tokens:/)
-        .first()
+        .getByRole('heading', { name: 'Reported tokens', exact: true })
         .waitFor();
       await page.reload();
       await openDetails(page);
-      await page.getByRole('list', { name: 'Run timeline' }).waitFor();
       await page
-        .locator('summary')
-        .filter({ hasText: 'Current implementation' })
+        .getByRole('heading', { name: 'Models', exact: true })
         .waitFor();
       await page
         .getByRole('link', { name: 'Open pull request', exact: true })
@@ -176,7 +155,7 @@ test(
 );
 
 test(
-  'browser clarifies incomplete issues, explicitly adopts proof requirements and inspects regression output',
+  'browser clarifies incomplete issues, explicitly adopts proof requirements and preserves compact run details',
   { timeout: 60000 },
   async () => {
     const { formatTicketBody } = await import(
@@ -232,30 +211,22 @@ test(
       await page
         .getByRole('link', { name: 'Open pull request', exact: true })
         .waitFor();
-      await openDetails(page);
-      await page
-        .locator('summary')
-        .filter({ hasText: 'checks: passed' })
-        .click();
-      await page
-        .getByText(/^Regression proof: Regression demonstrated:/)
-        .waitFor();
-      await page
-        .getByRole('region', { name: 'Regression proof resources' })
-        .waitFor();
-      await page
-        .locator('summary')
-        .filter({ hasText: 'Base snapshot · removed' })
-        .click();
-      await page
-        .getByRole('region', { name: 'Regression proof resources' })
-        .locator('.command-output > summary')
-        .first()
-        .click();
-      await page.getByText('REGRESSION', { exact: true }).waitFor();
+      const completed = await f.client.run(started.id);
+      const proof = completed.evidence.find(
+        (evidence) => evidence.kind === 'checks',
+      )?.regression;
+      assert.match(proof?.message ?? '', /Regression demonstrated:/);
+      assert.ok(
+        completed.proofWorkspaces?.every(
+          (resource) => resource.state === 'removed',
+        ),
+      );
+      assert.equal(await page.locator('[data-card-id="evidence"]').count(), 0);
       await page.reload();
       await openDetails(page);
-      await page.getByRole('list', { name: 'Run timeline' }).waitFor();
+      await page
+        .getByRole('heading', { name: 'Models', exact: true })
+        .waitFor();
       assert.ok(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,

@@ -1,9 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   RunActivityClient,
-  WorkflowClient,
   mergeActivity,
-  runUpdatedAt,
   type RunActivityItem,
   type RunActivityPage,
   type WorkflowRun,
@@ -16,7 +14,6 @@ import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
 import { Tool } from './chat.js';
 const activity = new RunActivityClient();
-const workflow = new WorkflowClient();
 
 export function ImplementationTranscript({
   run,
@@ -397,52 +394,7 @@ export function RunInformation({
           </>
         ),
       },
-      inspectionCards[0],
-      {
-        id: 'run-ticket',
-        title: 'Ticket',
-        collapsible: true,
-        content: (
-          <>
-            <h3>{run.specification.title}</h3>
-            {[
-              ['Goal', run.specification.goal],
-              ['Scope', run.specification.scope],
-              ['Acceptance criteria', run.specification.acceptanceCriteria],
-              ['Validation', run.specification.validation],
-            ].map(([label, text]) => (
-              <section key={label}>
-                <h3>{label}</h3>
-                <div
-                  className="markdown"
-                  dangerouslySetInnerHTML={{ __html: markdown(text) }}
-                />
-              </section>
-            ))}
-            <h3>Regression proof</h3>
-            <p>
-              {run.specification.regression?.required
-                ? `Required: ${run.specification.regression.command}`
-                : run.specification.regression?.required === false
-                  ? `Not required: ${run.specification.regression.reason}`
-                  : 'Not specified'}
-            </p>
-            {run.specification.regression?.required && (
-              <>
-                <p>
-                  Test paths:{' '}
-                  {run.specification.regression.testPaths.join(', ')}
-                </p>
-                <p>
-                  Expected failure:{' '}
-                  {run.specification.regression.expectedFailure}
-                </p>
-              </>
-            )}
-          </>
-        ),
-      },
-      ...inspectionCards.slice(1),
+      ...inspectionCards,
     ],
     'Run information',
   );

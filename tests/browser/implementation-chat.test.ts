@@ -153,10 +153,13 @@ test(
         await page.getByLabel('Message', { exact: true }).inputValue(),
         'Draft implementation guidance',
       );
-      await page.locator('[data-card-id="run-ticket"] > summary').click();
       await page
-        .getByRole('heading', { name: 'Acceptance criteria', exact: true })
+        .getByRole('heading', { name: 'Models', exact: true })
         .waitFor();
+      assert.equal(
+        await page.locator('[data-card-id="run-ticket"]').count(),
+        0,
+      );
       await page.reload();
       await page.getByText('Development update 124', { exact: true }).waitFor();
       assert.deepEqual(errors, []);
@@ -430,7 +433,7 @@ test(
 );
 
 test(
-  'run information uses independent page cards, survives live updates, and clears across navigation',
+  'run information shows readable models, usage and configuration, survives live updates, and fits all viewports',
   { timeout: 30000 },
   async () => {
     const adapter = simulationAdapter(),
@@ -461,6 +464,56 @@ test(
       page.setDefaultTimeout(7000);
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
+      await page.route(`**/runs/${run.id}/inspection`, (route) =>
+        route.fulfill({
+          json: {
+            commands: [],
+            conversations: [
+              {
+                id: 'development',
+                role: 'development',
+                tools: [],
+                usage: {
+                  input: 1200,
+                  output: 300,
+                  cacheRead: 600,
+                  cacheWrite: 10,
+                  messages: 2,
+                  estimatedCost: 0.0123,
+                  partial: false,
+                },
+              },
+              {
+                id: 'review',
+                role: 'review',
+                tools: [],
+                usage: {
+                  input: 800,
+                  output: 100,
+                  cacheRead: 200,
+                  cacheWrite: 0,
+                  messages: 1,
+                  estimatedCost: 0.0045,
+                  partial: false,
+                },
+              },
+              {
+                id: 'repair',
+                role: 'development',
+                tools: [],
+                usage: {
+                  input: 300,
+                  output: 50,
+                  cacheRead: 100,
+                  cacheWrite: 5,
+                  messages: 1,
+                  partial: true,
+                },
+              },
+            ],
+          },
+        }),
+      );
       await page.goto(
         `${fixture.service.url}/?conversation=${run.developerConversationId}`,
       );
@@ -482,11 +535,38 @@ test(
       assert.ok(
         conversation && cards && cards.x >= conversation.x + conversation.width,
       );
-      const ticket = page.locator('[data-card-id="run-ticket"]');
-      await ticket.locator(':scope > summary').click();
-      await ticket
-        .getByRole('heading', { name: 'Acceptance criteria', exact: true })
+      const information = page.locator('.page-cards');
+      assert.deepEqual(
+        await information.locator('.page-card-heading h2').allTextContents(),
+        ['Run progress', 'Run controls', 'Models', 'Usage', 'Configuration'],
+      );
+      const usage = page.getByRole('region', { name: 'Usage', exact: true });
+      await usage.getByText('2,300', { exact: true }).waitFor();
+      await usage.getByText('450', { exact: true }).waitFor();
+      await usage.getByText('900', { exact: true }).waitFor();
+      await usage.getByText('15', { exact: true }).waitFor();
+      await usage.getByText('1,500 in · 350 out', { exact: true }).waitFor();
+      await usage.getByText('$0.0168', { exact: true }).waitFor();
+      await usage
+        .getByText('Cost includes available estimates only.', { exact: true })
         .waitFor();
+      await usage
+        .getByText(
+          'Partial usage; some history or token counts are unavailable.',
+          { exact: true },
+        )
+        .waitFor();
+      await page
+        .getByRole('region', { name: 'Development model', exact: true })
+        .getByText('Requesty', { exact: true })
+        .waitFor();
+      const configuration = page.locator('[data-card-id="configuration"]');
+      await configuration.locator(':scope > summary').click();
+      await configuration
+        .getByRole('heading', { name: 'Required checks', exact: true })
+        .waitFor();
+      await configuration.getByText('fake test', { exact: true }).waitFor();
+      await configuration.getByText('2 min', { exact: true }).waitFor();
       await page
         .getByRole('button', { name: 'Pause run', exact: true })
         .click();
@@ -494,7 +574,7 @@ test(
         .getByRole('button', { name: 'Resume run', exact: true })
         .waitFor();
       assert.equal(
-        await ticket.getAttribute('open'),
+        await configuration.getAttribute('open'),
         '',
         'Expanded cards survive live run updates',
       );
@@ -514,6 +594,10 @@ test(
       await mkdir('test-results', { recursive: true });
       for (const colorScheme of ['light', 'dark'] as const) {
         await page.emulateMedia({ colorScheme });
+        await page.evaluate((theme) => {
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+        }, colorScheme);
         for (const width of [1440, 1200, 1024, 390, 320]) {
           await page.setViewportSize({ width, height: 844 });
           if (width < 1200) {
@@ -526,6 +610,8 @@ test(
               .getByRole('dialog', { name: 'Run information', exact: true })
               .waitFor();
           }
+          if ((await configuration.getAttribute('open')) === null)
+            await configuration.locator(':scope > summary').click();
           assert.equal(
             await page.evaluate(
               () => document.documentElement.scrollWidth > innerWidth,
@@ -537,11 +623,18 @@ test(
             .evaluate((el) => el.scrollWidth > el.clientWidth);
           assert.equal(overflow, false, `${colorScheme}, ${width}px`);
           if (width === 1440 || width === 390) {
-            await page
-              .locator('.page-cards')
-              .evaluate((el) => (el.scrollTop = 0));
+            const cardsScroll = page.locator(
+              width < 1200 ? '.page-cards-overlay' : '.page-cards',
+            );
+            await cardsScroll.evaluate((el) => (el.scrollTop = 0));
             await page.screenshot({
               path: `test-results/run-information-${colorScheme}-${width}.png`,
+            });
+            await cardsScroll.evaluate(
+              (el) => (el.scrollTop = el.scrollHeight),
+            );
+            await page.screenshot({
+              path: `test-results/run-details-${colorScheme}-${width}.png`,
             });
           }
           if (width < 1200) {

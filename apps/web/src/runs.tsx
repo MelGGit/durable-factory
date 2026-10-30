@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { PageCard } from './hooks/use-page-cards.js';
+import { RunModels, RunUsage, RunConfiguration } from './run-details.js';
 import {
   WorkflowClient,
-  runTimeline,
-  currentImplementation,
   ChatClient,
   type WorkflowSnapshot,
   type WorkflowRun,
@@ -408,98 +407,20 @@ export function useRunCards({
       ),
     },
     {
-      id: 'workspace',
-      title: run.workspace ? 'Workspace' : 'Run details',
-      collapsible: !run.workspace,
-      content: (
-        <>
-          {run.workspace && (
-            <p>
-              Worktree: <code>{run.workspace.path}</code>
-              <br />
-              Branch: <code>{run.workspace.branch}</code>
-            </p>
-          )}
-          <details open={!run.workspace}>
-            <summary>Run details</summary>
-            <p>
-              Repairs: {run.repairCount} / {run.repairLimit} · Configuration
-              revision: {run.configurationRevision} ·{' '}
-              {run.quiescent ? 'Work stopped' : 'Execution held'}
-            </p>
-            <p className="run-identity">
-              Run: {run.id}
-              <br />
-              Source: {run.source}
-              <br />
-              Base: {run.base}
-            </p>
-            {run.cleanup && (
-              <p role="status">
-                Cleanup {run.cleanup.state}: {run.cleanup.message}
-              </p>
-            )}
-          </details>
-        </>
-      ),
+      id: 'models',
+      title: 'Models',
+      content: <RunModels run={run} />,
     },
     {
-      id: 'active-commands',
-      title: 'Active commands',
-      content: (
-        <>
-          {inspection?.commands.length ? (
-            inspection.commands.map((c) => (
-              <div key={c.id}>
-                <p>
-                  <code>{c.command}</code> · {c.state}
-                </p>
-                <CommandLog runId={run.id} commandId={c.id} />
-              </div>
-            ))
-          ) : (
-            <p>
-              {inspection ? 'No active commands.' : 'Loading active commands…'}
-            </p>
-          )}
-        </>
-      ),
+      id: 'usage',
+      title: 'Usage',
+      content: <RunUsage inspection={inspection} error={inspectionError} />,
     },
     {
-      id: 'models-usage',
-      title: 'Models and usage',
+      id: 'configuration',
+      title: 'Configuration',
       collapsible: true,
-      content: (
-        <section aria-label="Live run inspection">
-          {Object.entries(run.configuration.roles).map(([role, model]) => (
-            <p key={role}>
-              {role}: {model.provider} / {model.model}
-            </p>
-          ))}
-          {inspectionError && <p role="status">{inspectionError}</p>}
-          {inspection?.conversations.map((c) => (
-            <div key={c.id}>
-              <p>
-                {c.role} conversation {c.id}:{' '}
-                {c.usage.messages
-                  ? `Reported tokens: ${c.usage.input} input · ${c.usage.output} output · ${c.usage.cacheRead} cache read · ${c.usage.cacheWrite} cache write${c.usage.partial ? ' (partial history)' : ''}`
-                  : 'Token usage unavailable.'}
-              </p>
-              <p>
-                {c.usage.estimatedCost === undefined
-                  ? 'Cost estimate unavailable.'
-                  : `Available cost estimates (USD): $${c.usage.estimatedCost.toFixed(4)}`}
-              </p>
-              {c.tools.map((t) => (
-                <p key={t.id}>
-                  Active tool: {t.name} · {t.status}
-                </p>
-              ))}
-            </div>
-          ))}
-          <p>Subscription token usage does not represent per-token billing.</p>
-        </section>
-      ),
+      content: <RunConfiguration run={run} />,
     },
     ...(run.inputs.length
       ? [
@@ -538,238 +459,5 @@ export function useRunCards({
           },
         ]
       : []),
-    {
-      id: 'run-timeline',
-      title: 'Run timeline',
-      collapsible: true,
-      content: (
-        <>
-          <p>
-            Elapsed times include pauses and recovery; they are not active
-            execution time.
-          </p>
-          <ol className="run-timeline" aria-label="Run timeline">
-            {runTimeline(run).map((event) => {
-              const attempt = run.attempts.find(
-                (a) => a.id === event.attemptId,
-              );
-              return (
-                <li key={event.id} id={`attempt-${event.id}`}>
-                  <strong>
-                    {event.actor} · {event.title}
-                  </strong>
-                  <p>
-                    <time dateTime={new Date(event.at).toISOString()}>
-                      {new Date(event.at).toLocaleString()}
-                    </time>
-                    {attempt &&
-                      ` · Elapsed: ${Math.max(0, Math.round(((attempt.finishedAt ?? Date.now()) - attempt.startedAt) / 1000))} s`}
-                  </p>
-                  {event.detail && <p>{event.detail}</p>}
-                  {event.conversationId && (
-                    <a href={`/?conversation=${event.conversationId}`}>
-                      Open{' '}
-                      {attempt?.stage === 'reviewer' ? 'reviewer' : 'developer'}{' '}
-                      conversation
-                    </a>
-                  )}
-                  {attempt?.repairCauses?.map((id) => (
-                    <p key={id}>
-                      <a href={`#evidence-${id}`}>
-                        Repair cause:{' '}
-                        {run.attempts.find((a) => a.id === id)?.stage ?? id}
-                      </a>
-                    </p>
-                  ))}
-                  {run.proofWorkspaces?.some((p) =>
-                    p.id.includes(event.attemptId ?? 'missing-attempt'),
-                  ) && (
-                    <p>
-                      <a href="#proof-resources">Regression command output</a>
-                    </p>
-                  )}
-                  {run.implementations?.some(
-                    (r) => r.attemptId === event.attemptId,
-                  ) && (
-                    <p>
-                      <a
-                        href={`#report-${run.implementations?.findLast((r) => r.attemptId === event.attemptId)?.id ?? event.attemptId}`}
-                      >
-                        Implementation report
-                      </a>
-                    </p>
-                  )}
-                  {[...run.evidence, ...(run.evidenceHistory ?? [])].some(
-                    (e) => e.attemptId === event.attemptId,
-                  ) && (
-                    <p>
-                      <a href={`#evidence-${event.attemptId}`}>
-                        Validation evidence and command output
-                      </a>
-                    </p>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-          <h3>Recovery events</h3>
-          {run.attempts.some((a) => a.recoveryCount) ? (
-            run.attempts
-              .filter((a) => a.recoveryCount)
-              .map((a) => (
-                <p key={a.id}>
-                  {a.stage}: recovered {a.recoveryCount} time(s). {a.message}
-                </p>
-              ))
-          ) : (
-            <p>No recovered attempts.</p>
-          )}
-        </>
-      ),
-    },
-    {
-      id: 'implementation-reports',
-      title: 'Implementation reports',
-      collapsible: true,
-      content: (
-        <>
-          {!run.implementations?.length && (
-            <p>No structured implementation report available.</p>
-          )}
-          {run.implementations?.map((report) => (
-            <details
-              key={report.id ?? report.attemptId}
-              id={`report-${report.id ?? report.attemptId}`}
-            >
-              <summary>
-                {report === currentImplementation(run)
-                  ? 'Current'
-                  : 'Superseded'}{' '}
-                implementation · {report.summary}
-              </summary>
-              <p>{report.reviewerNotes}</p>
-              <p>Criteria: {report.criteria.join(', ')}</p>
-              <p>Changed files: {report.changedFiles.join(', ')}</p>
-              <p>
-                Validation performed:{' '}
-                {report.validation.join('; ') || 'None reported.'}
-              </p>
-              <p>
-                Remaining concerns:{' '}
-                {report.concerns.join('; ') || 'None reported.'}
-              </p>
-            </details>
-          ))}
-        </>
-      ),
-    },
-    {
-      id: 'evidence',
-      title: 'Evidence',
-      collapsible: true,
-      content: (
-        <>
-          {!run.evidence.length && !run.evidenceHistory?.length && (
-            <p>No validation evidence yet.</p>
-          )}
-          {[...run.evidence, ...(run.evidenceHistory ?? [])].map((e) => (
-            <details key={e.attemptId} id={`evidence-${e.attemptId}`}>
-              <summary>
-                {e.kind}: {e.passed ? 'passed' : 'failed'} ·{' '}
-                {run.evidence.includes(e) ? 'Current' : 'Superseded'} ·
-                configuration {e.configurationRevision}
-              </summary>
-              <p>
-                {e.source} · {e.duration} ms elapsed
-              </p>
-              {e.commands && <pre>{e.commands.join('\n')}</pre>}
-              <pre>{e.output}</pre>
-              {e.kind === 'reviewer' && !e.assessments && (
-                <p>Criterion assessments unavailable in this legacy review.</p>
-              )}
-              {e.assessments?.map((a) => (
-                <section key={a.id}>
-                  <h4>
-                    {a.id}: {a.status.replaceAll('_', ' ')}
-                  </h4>
-                  <p>{a.explanation}</p>
-                  <p>
-                    {a.references
-                      .map((r) => `${r.path}${r.line ? ':' + r.line : ''}`)
-                      .join(', ')}
-                  </p>
-                </section>
-              ))}
-              {e.regression && <p>Regression proof: {e.regression.message}</p>}
-              {[...(e.results ?? []), ...(e.regression?.results ?? [])].map(
-                (result) => (
-                  <div key={result.artifact}>
-                    <p>
-                      {result.command} · exit {result.exitCode} ·{' '}
-                      {result.duration} ms
-                    </p>
-                    <CommandLog runId={run.id} commandId={result.artifact} />
-                  </div>
-                ),
-              )}
-            </details>
-          ))}
-          {!!run.proofWorkspaces?.length && (
-            <section
-              id="proof-resources"
-              aria-label="Regression proof resources"
-            >
-              <h3>Regression proof resources</h3>
-              {run.proofWorkspaces.map((resource) => (
-                <details key={resource.id}>
-                  <summary>
-                    {resource.id.endsWith('-base') ? 'Base' : 'Candidate'}{' '}
-                    snapshot · {resource.state}
-                  </summary>
-                  <p>{resource.root}</p>
-                  {resource.state !== 'removed' && (
-                    <p>
-                      Retained until quiescence and ownership/content checks
-                      allow cleanup. Interrupted snapshots with unverified
-                      content require inspection.
-                    </p>
-                  )}
-                  {resource.results?.map((result) => (
-                    <div key={result.artifact}>
-                      <p>
-                        {result.command} · exit {result.exitCode}
-                      </p>
-                      <CommandLog runId={run.id} commandId={result.artifact} />
-                    </div>
-                  ))}
-                </details>
-              ))}
-            </section>
-          )}
-        </>
-      ),
-    },
-    {
-      id: 'configuration',
-      title: 'Configuration',
-      collapsible: true,
-      content: (
-        <>
-          <pre>
-            {JSON.stringify(
-              {
-                setup: run.configuration.setupCommands,
-                checks: run.configuration.requiredChecks,
-                timeouts: run.configuration.timeouts,
-                models: run.configuration.roles,
-                decisions: run.decisions,
-              },
-              null,
-              2,
-            )}
-          </pre>
-        </>
-      ),
-    },
   ];
 }
