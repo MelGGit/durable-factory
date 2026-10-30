@@ -9,11 +9,11 @@ async function openDetails(page: Page, name = 'Details') {
   if (
     (page.viewportSize()?.width ?? 1280) < 1200 &&
     !(await page
-      .getByRole('dialog', { name: 'Run information', exact: true })
+      .getByRole('dialog', { name: 'Chat trails', exact: true })
       .isVisible())
   )
     await page
-      .getByRole('button', { name: 'Run information', exact: true })
+      .getByRole('button', { name: 'Show chat trails', exact: true })
       .click();
   if (name === 'Details') {
     for (const summary of await page.locator('.page-card > summary').all())
@@ -61,11 +61,11 @@ test(
       );
       await openDetails(page);
       await page
-        .getByRole('region', { name: 'Run progress', exact: true })
+        .getByRole('region', { name: 'Information', exact: true })
         .waitFor();
       assert.deepEqual(
         await page.locator('.page-card-heading h2').allTextContents(),
-        ['Run progress', 'Run controls', 'Models', 'Usage', 'Configuration'],
+        ['Information', 'Usage'],
       );
       assert.ok(
         run.evidence.some(
@@ -124,7 +124,7 @@ test(
       await page.reload();
       await openDetails(page);
       await page
-        .getByRole('heading', { name: 'Models', exact: true })
+        .getByRole('heading', { name: 'Information', exact: true })
         .waitFor();
       await page
         .getByRole('link', { name: 'Open pull request', exact: true })
@@ -181,10 +181,13 @@ test(
       await page.goto(
         `${f.service.url}/?conversation=${started.developerConversationId}`,
       );
-      await openDetails(page, 'Run');
-      await page
-        .getByRole('heading', { name: 'specification_contract', exact: true })
+      const question = page
+        .locator('.implementation-events')
+        .getByRole('article', { name: 'Implementation question', exact: true });
+      await question
+        .getByRole('button', { name: 'Adopt saved specification', exact: true })
         .waitFor();
+      assert.equal(await page.locator('.page-cards .run-question').count(), 0);
       const issue = f.github.getIssue;
       f.github.getIssue = async (...args) => ({
         ...(await issue(...args)),
@@ -202,12 +205,20 @@ test(
       await page
         .getByRole('button', { name: 'Adopt saved specification', exact: true })
         .click();
-      await page
-        .getByRole('heading', { name: 'specification_contract', exact: true })
+      await question
+        .getByRole('button', { name: 'Adopt saved specification', exact: true })
         .waitFor({ state: 'detached' });
       await page
+        .locator('.implementation-events')
+        .getByRole('article', { name: 'Resume implementation', exact: true })
         .getByRole('button', { name: 'Resume run', exact: true })
         .click();
+      await until(
+        () => f.client.run(started.id),
+        (run) => run.status === 'pr_ready',
+        30000,
+      );
+      await openDetails(page);
       await page
         .getByRole('link', { name: 'Open pull request', exact: true })
         .waitFor();
@@ -225,7 +236,7 @@ test(
       await page.reload();
       await openDetails(page);
       await page
-        .getByRole('heading', { name: 'Models', exact: true })
+        .getByRole('heading', { name: 'Information', exact: true })
         .waitFor();
       assert.ok(
         await page.evaluate(

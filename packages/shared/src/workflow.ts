@@ -90,6 +90,18 @@ export interface Intervention {
   conversationId: string;
   answer?: string;
 }
+/** Blockers cleared by an explicit control, never by a typed answer. */
+const BLOCKER_REASONS = [
+  'specification_contract',
+  'repair_exhausted',
+  'termination',
+  'uncertain',
+  'publication',
+  'adapter',
+];
+export function acceptsTypedAnswer(intervention: Pick<Intervention, 'reason'>) {
+  return !BLOCKER_REASONS.includes(intervention.reason);
+}
 export interface RunInput {
   at?: number;
   requestId: string;

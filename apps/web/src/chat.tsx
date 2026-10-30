@@ -12,7 +12,7 @@ import { Home } from './home.js';
 import { Icon } from './icons.js';
 import { SessionActions } from './session-actions.js';
 import { PageHeader } from './page-header.js';
-import { PageWorkspace } from './page-cards.js';
+import { PageCardsToggle, PageWorkspace } from './page-cards.js';
 import { SidebarBrand, WorkspaceShell } from './workspace-shell.js';
 import { useConversationUrl, useRoute } from './hooks/use-route.js';
 import { usePageHeader } from './hooks/use-page-header.js';
@@ -26,6 +26,8 @@ import {
   ApiError,
   ChatClient,
   WorkflowClient,
+  acceptsTypedAnswer,
+  type Intervention,
   type DeletionOperation,
   type WorkflowSnapshot,
   type WorkflowRun,
@@ -297,6 +299,23 @@ export function ChatApp() {
       run.developerConversationId === selected ||
       run.attempts.some((a) => a.conversationId === selected),
   );
+  // Blockers that need a button leave the composer alone; typed questions are
+  // answered from it when exactly one is open, so the reply lands in the chat.
+  const openQuestions =
+    selectedRun?.interventions.filter(
+      (question) =>
+        question.state === 'pending' && acceptsTypedAnswer(question),
+    ) ?? [];
+  const composerQuestion =
+    openQuestions.length === 1 &&
+    ['paused', 'needs_input'].includes(selectedRun!.status)
+      ? openQuestions[0]
+      : undefined;
+  const awaitingRunAnswer = openQuestions.length > 1;
+  const [answering, setAnswering] = useState(false);
+  const answerReceipt = useRef<
+    { key: string; id: string; revision: number } | undefined
+  >(undefined);
   const selectedDeletion = deletions.find(
     (operation) =>
       operation.state !== 'completed' &&
@@ -724,9 +743,14 @@ export function ChatApp() {
       snapshot.execution === 'interrupting' ||
       snapshot.conversation.role === 'review' ||
       snapshot.workflow?.acceptsInput === false ||
+      awaitingRunAnswer ||
       current.current.pending.some((item) => item.conversationId === selected)
     )
       return;
+    if (composerQuestion && selectedRun) {
+      void answerQuestion(selectedRun, composerQuestion, content);
+      return;
+    }
     const pending = {
       conversationId: selected,
       content,
@@ -737,6 +761,49 @@ export function ChatApp() {
       pending: [...previous.pending, pending],
     }));
     void reconcile(pending);
+  };
+  const answerQuestion = async (
+    run: WorkflowRun,
+    question: Intervention,
+    content: string,
+  ) => {
+    if (answering) return;
+    setAnswering(true);
+    // A retry of the same answer keeps its operation ID, so it cannot apply twice.
+    const key = `${question.id}:${question.revision}:${content}`;
+    const receipt =
+      answerReceipt.current?.key === key
+        ? answerReceipt.current
+        : { key, id: crypto.randomUUID(), revision: run.revision };
+    answerReceipt.current = receipt;
+    try {
+      updateRun(
+        await workflowClient.command(run.id, {
+          action: 'answer',
+          operationId: receipt.id,
+          expectedRevision: receipt.revision,
+          interventionId: question.id,
+          interventionRevision: question.revision,
+          answer: content,
+        }),
+      );
+      answerReceipt.current = undefined;
+      persist((previous) => ({
+        ...previous,
+        drafts: {
+          ...previous.drafts,
+          [selected]:
+            previous.drafts[selected] === content
+              ? ''
+              : previous.drafts[selected],
+        },
+      }));
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send the answer.');
+    } finally {
+      setAnswering(false);
+    }
   };
   const older = async () => {
     const view = activeView.current;
@@ -924,6 +991,9 @@ export function ChatApp() {
           tag={header.tag}
           navigationOpen={navigationOpen}
           onOpenNavigation={mobile ? () => setNavigationOpen(true) : undefined}
+          actions={
+            <PageCardsToggle disabled={inChat && Boolean(selectedDeletion)} />
+          }
         />
       }
     >
@@ -1091,6 +1161,7 @@ export function ChatApp() {
                         <ImplementationTranscript
                           key={selectedRun.id}
                           run={selectedRun}
+                          onRun={updateRun}
                           onChange={() =>
                             setActivityVersion((value) => value + 1)
                           }
@@ -1354,6 +1425,11 @@ export function ChatApp() {
                       </div>
                       {!snapshot ? (
                         <p role="status">Connecting to the conversation…</p>
+                      ) : awaitingRunAnswer ? (
+                        <p className="composer-footnote">
+                          Answer each open question above to continue the
+                          implementation.
+                        </p>
                       ) : snapshot.conversation.role !== 'review' &&
                         snapshot.workflow?.acceptsInput !== false ? (
                         <form onSubmit={send} className="composer">
@@ -1363,9 +1439,11 @@ export function ChatApp() {
                           <textarea
                             id="chat-message"
                             placeholder={
-                              selectedRun
-                                ? 'Guide the implementation or ask a question…'
-                                : 'Describe the feature you want to plan…'
+                              composerQuestion
+                                ? 'Reply to the question to continue…'
+                                : selectedRun
+                                  ? 'Guide the implementation or ask a question…'
+                                  : 'Describe the feature you want to plan…'
                             }
                             value={local.drafts[selected] ?? ''}
                             onChange={(e) =>
@@ -1402,6 +1480,7 @@ export function ChatApp() {
                                 disabled={
                                   !local.drafts[selected]?.trim() ||
                                   snapshot?.execution === 'interrupting' ||
+                                  answering ||
                                   pending.length > 0
                                 }
                               >
@@ -1413,15 +1492,18 @@ export function ChatApp() {
                       ) : (
                         <p>
                           Implementation input is closed for this conversation.
-                          Available controls are in Run information.
+                          Available controls are in Chat trails.
                         </p>
                       )}
                       {snapshot?.workflow?.acceptsInput === false &&
                         interruptControl}
-                      <p className="composer-footnote">
-                        Follow-ups queue while the agent works. Accepted work
-                        continues after you close this window.
-                      </p>
+                      {!awaitingRunAnswer && (
+                        <p className="composer-footnote">
+                          {composerQuestion
+                            ? 'Your reply answers the open question and resumes the run.'
+                            : 'Follow-ups queue while the agent works. Accepted work continues after you close this window.'}
+                        </p>
+                      )}
                     </div>
                   </section>
                 </div>

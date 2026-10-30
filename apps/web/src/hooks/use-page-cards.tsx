@@ -20,9 +20,17 @@ const RegistrationContext = createContext<{
   unregister: (owner: symbol) => void;
 } | null>(null);
 export const PageCardsContext = createContext<Registration | null>(null);
+export const PageCardsDisplayContext = createContext<{
+  desktopOpen: boolean;
+  setDesktopOpen: (open: boolean) => void;
+  overlayOpen: boolean;
+  setOverlayOpen: (open: boolean) => void;
+} | null>(null);
 
 export function PageCardsProvider({ children }: { children: React.ReactNode }) {
   const [registration, setRegistration] = useState<Registration | null>(null);
+  const [desktopOpen, setDesktopOpen] = useState(true);
+  const [overlayOpen, setOverlayOpen] = useState(false);
   // Keep registration independent of card updates so page content doesn't
   // render again just because the shared card area received its content.
   const actions = useMemo(
@@ -37,9 +45,13 @@ export function PageCardsProvider({ children }: { children: React.ReactNode }) {
   );
   return (
     <RegistrationContext.Provider value={actions}>
-      <PageCardsContext.Provider value={registration}>
-        {children}
-      </PageCardsContext.Provider>
+      <PageCardsDisplayContext.Provider
+        value={{ desktopOpen, setDesktopOpen, overlayOpen, setOverlayOpen }}
+      >
+        <PageCardsContext.Provider value={registration}>
+          {children}
+        </PageCardsContext.Provider>
+      </PageCardsDisplayContext.Provider>
     </RegistrationContext.Provider>
   );
 }

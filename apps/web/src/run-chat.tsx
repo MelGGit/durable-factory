@@ -9,9 +9,10 @@ import {
 } from '../../../packages/shared/src/index.js';
 import { markdown } from './markdown.js';
 import { conversationItems } from './transcript.js';
-import { CommandLog, useRunCards } from './runs.js';
+import { CommandLog, useRunDetails } from './runs.js';
 import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
+import { RunQuestion, RunResumePrompt } from './run-question.js';
 import { Tool } from './chat.js';
 const activity = new RunActivityClient();
 
@@ -20,11 +21,13 @@ export function ImplementationTranscript({
   onChange,
   onConnection,
   onConversation,
+  onRun,
 }: {
   run: WorkflowRun;
   onChange: () => void;
   onConnection: (connected: boolean) => void;
   onConversation: (value: NonNullable<RunActivityPage['conversation']>) => void;
+  onRun: (run: WorkflowRun) => void;
 }) {
   const [items, setItems] = useState<RunActivityItem[]>([]),
     [live, setLive] = useState<RunActivityPage['live']>([]);
@@ -171,6 +174,20 @@ export function ImplementationTranscript({
     ),
   );
   const renderedTools = new Set<string>();
+  const questions = run.interventions.filter(
+    (question) => question.state === 'pending',
+  );
+  const questionIds = new Set(
+    questions.map((question) => `timeline:question-${question.id}`),
+  );
+  // The attempt's own events repeat its final message, which is the question.
+  const repeatsQuestion = (item: RunActivityItem) =>
+    run.interventions.some(
+      (question) =>
+        question.attemptId !== undefined &&
+        item.attemptId === question.attemptId &&
+        item.detail === question.question,
+    );
   const renderTool = (
     tool: import('./transcript.js').PresentationTool,
     conversationId: string,
@@ -207,6 +224,21 @@ export function ImplementationTranscript({
       {error && <p role="alert">{error}</p>}
       {[
         ...items.flatMap((item) => {
+          if (questionIds.has(item.id)) return [];
+          const answered = run.interventions.find(
+            (question) =>
+              question.state === 'resolved' &&
+              item.id === `timeline:question-${question.id}`,
+          );
+          if (answered)
+            return [
+              <RunQuestion
+                key={item.id}
+                run={run}
+                question={answered}
+                onRun={onRun}
+              />,
+            ];
           if (item.entry) {
             const entry = item.entry;
             return [
@@ -249,6 +281,33 @@ export function ImplementationTranscript({
               ),
             ];
           }
+          if (
+            item.actor === 'human' &&
+            item.id.startsWith('timeline:decision-') &&
+            item.title === 'answer'
+          )
+            return [
+              <article
+                key={item.id}
+                className="message user-message"
+                data-conversation-item={item.id}
+              >
+                <div className="message-author">
+                  You
+                  {item.at !== undefined && (
+                    <time dateTime={new Date(item.at).toISOString()}>
+                      {new Date(item.at).toLocaleTimeString()}
+                    </time>
+                  )}
+                </div>
+                <div
+                  className="message-text markdown"
+                  dangerouslySetInnerHTML={{
+                    __html: markdown(item.detail ?? ''),
+                  }}
+                />
+              </article>,
+            ];
           return (
             <article
               key={item.id}
@@ -264,7 +323,7 @@ export function ImplementationTranscript({
                 )}
               </div>
               <strong>{item.title}</strong>
-              {item.detail && <p>{item.detail}</p>}
+              {item.detail && !repeatsQuestion(item) && <p>{item.detail}</p>}
               {item.command && (
                 <CommandLog
                   key={item.command.id}
@@ -297,7 +356,18 @@ export function ImplementationTranscript({
           ),
         ]),
       ]}
-      {!items.length && <p role="status">Loading implementation activity…</p>}
+      {questions.map((question) => (
+        <RunQuestion
+          key={question.id}
+          run={run}
+          question={question}
+          onRun={onRun}
+        />
+      ))}
+      <RunResumePrompt run={run} onRun={onRun} />
+      {!items.length && !questions.length && (
+        <p role="status">Loading implementation activity…</p>
+      )}
     </div>
   );
 }
@@ -312,7 +382,11 @@ export function RunInformation({
   onRun: (run: WorkflowRun) => void;
 }) {
   const [now, setNow] = useState(Date.now());
-  const inspectionCards = useRunCards({ run, startMode: snapshot.mode, onRun });
+  const { controls, cards } = useRunDetails({
+    run,
+    startMode: snapshot.mode,
+    onRun,
+  });
   useEffect(() => {
     if (['pr_ready', 'cancelled'].includes(run.status)) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -337,8 +411,8 @@ export function RunInformation({
   usePageCards(
     [
       {
-        id: 'run-progress',
-        title: 'Run progress',
+        id: 'run-information',
+        title: 'Information',
         actions: <RunStatusBadge status={run.status} />,
         content: (
           <>
@@ -391,12 +465,13 @@ export function RunInformation({
                 <p role="status">Publication: {run.publication.state}</p>
               )}
             </div>
+            <div className="run-information-controls">{controls}</div>
           </>
         ),
       },
-      ...inspectionCards,
+      ...cards,
     ],
-    'Run information',
+    'Chat trails',
   );
   return null;
 }

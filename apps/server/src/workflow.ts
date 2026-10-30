@@ -30,6 +30,7 @@ import {
   normalizeLineEndings,
   validateImplementation,
   validateAssessments,
+  acceptsTypedAnswer,
   type BoundImplementation,
   type CriterionAssessment,
   type RegressionEvidence,
@@ -1919,15 +1920,7 @@ export class WorkflowService {
             intervention.revision !== body.interventionRevision
           )
             conflict('Question changed or already answered.');
-          if (
-            [
-              'specification_contract',
-              'repair_exhausted',
-              'termination',
-              'uncertain',
-              'publication',
-            ].includes(intervention.reason)
-          )
+          if (!acceptsTypedAnswer(intervention))
             conflict(
               'Use the explicit continuation or reconciliation control for this blocker.',
             );

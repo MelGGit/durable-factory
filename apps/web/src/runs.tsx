@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { PageCard } from './hooks/use-page-cards.js';
-import { RunModels, RunUsage, RunConfiguration } from './run-details.js';
+import { RunUsage } from './run-details.js';
+import { useRunCommand } from './hooks/use-run-command.js';
 import {
   WorkflowClient,
   ChatClient,
   type WorkflowSnapshot,
   type WorkflowRun,
-  type RunAction,
   type RunInspection,
 } from '../../../packages/shared/src/index.js';
 const client = new WorkflowClient();
@@ -162,7 +162,7 @@ export function CommandLog({
     </details>
   );
 }
-export function useRunCards({
+export function useRunDetails({
   run,
   onRun,
   startMode,
@@ -170,10 +170,8 @@ export function useRunCards({
   startMode: WorkflowSnapshot['mode'];
   run: WorkflowRun;
   onRun: (run: WorkflowRun) => void;
-}): PageCard[] {
-  const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [answer, setAnswer] = useState('');
+}): { controls: React.ReactNode; cards: PageCard[] } {
+  const { error, setError, busy, setBusy, act } = useRunCommand(run, onRun);
   const [inspection, setInspection] = useState<RunInspection>();
   const [inspectionError, setInspectionError] = useState('');
   useEffect(() => {
@@ -199,265 +197,147 @@ export function useRunCards({
       clearTimeout(timer);
     };
   }, [run.id]);
-  const [operation, setOperation] = useState<
-    | {
-        key: string;
-        id: string;
-        revision: number;
-      }
-    | undefined
-  >(() => {
-    try {
-      return (
-        JSON.parse(
-          localStorage.getItem(`factory.runCommand.${run.id}`) ?? 'null',
-        ) ?? undefined
-      );
-    } catch {
-      return undefined;
-    }
-  });
-  const act = async (action: RunAction, extra = {}) => {
-    const key = JSON.stringify({ action, extra });
-    const receipt =
-      operation?.key === key
-        ? operation
-        : { key, id: crypto.randomUUID(), revision: run.revision };
-    setOperation(receipt);
-    try {
-      localStorage.setItem(
-        `factory.runCommand.${run.id}`,
-        JSON.stringify(receipt),
-      );
-    } catch {
-      /* Retain the in-memory receipt when browser storage is unavailable. */
-    }
-    setBusy(true);
-    setError('');
-    try {
-      onRun(
-        await client.command(run.id, {
-          action,
-          operationId: receipt.id,
-          expectedRevision: receipt.revision,
-          ...extra,
-        }),
-      );
-      setOperation(undefined);
-      try {
-        localStorage.removeItem(`factory.runCommand.${run.id}`);
-      } catch {
-        /* Already settled. */
-      }
-      setAnswer('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to update run.');
-      if (e instanceof Error && 'code' in e && e.code === 'CONFLICT') {
-        setOperation(undefined);
-        try {
-          localStorage.removeItem(`factory.runCommand.${run.id}`);
-        } catch {
-          /* Already settled. */
-        }
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
   const pending = run.interventions.filter((i) => i.state === 'pending');
   const ended = ['pr_ready', 'cancelled'].includes(run.status);
   const publishing =
     run.publicationLocked || run.stage === 'publishing' || ended;
-  return [
-    {
-      id: 'run-controls',
-      title: 'Run controls',
-      content: (
-        <>
-          {error && <p role="alert">{error}</p>}
-          <div className="run-controls">
-            {!ended &&
-              !['pausing', 'cancelling', 'termination_blocker'].includes(
-                run.status,
-              ) && (
-                <button disabled={busy} onClick={() => void act('cancel')}>
-                  Cancel run
-                </button>
-              )}
-            {['running', 'queued'].includes(run.status) && (
-              <button disabled={busy} onClick={() => void act('pause')}>
-                Pause run
+  return {
+    controls: (
+      <>
+        {error && <p role="alert">{error}</p>}
+        <div className="run-controls">
+          {!ended &&
+            !['pausing', 'cancelling', 'termination_blocker'].includes(
+              run.status,
+            ) && (
+              <button disabled={busy} onClick={() => void act('cancel')}>
+                Cancel run
               </button>
             )}
-            {['paused', 'needs_input'].includes(run.status) &&
-              !pending.length && (
-                <button disabled={busy} onClick={() => void act('resume')}>
-                  Resume run
-                </button>
-              )}
-            {run.status === 'termination_blocker' ||
-            pending.some((i) =>
-              ['uncertain', 'publication'].includes(i.reason),
-            ) ? (
-              <button disabled={busy} onClick={() => void act('reconcile')}>
-                Reconcile run
+          {['running', 'queued'].includes(run.status) && (
+            <button disabled={busy} onClick={() => void act('pause')}>
+              Pause run
+            </button>
+          )}
+          {['paused', 'needs_input'].includes(run.status) &&
+            !pending.length && (
+              <button disabled={busy} onClick={() => void act('resume')}>
+                Resume run
               </button>
-            ) : null}
-            {!publishing &&
-              ['paused', 'needs_input', 'queued'].includes(run.status) && (
-                <>
-                  <button
-                    disabled={busy}
-                    onClick={() => void act('adopt_configuration')}
-                  >
-                    Adopt saved configuration
-                  </button>
+            )}
+          {!pending.length && run.status === 'termination_blocker' ? (
+            <button disabled={busy} onClick={() => void act('reconcile')}>
+              Reconcile run
+            </button>
+          ) : null}
+          {!publishing &&
+            ['paused', 'needs_input', 'queued'].includes(run.status) && (
+              <>
+                <button
+                  disabled={busy}
+                  onClick={() => void act('adopt_configuration')}
+                >
+                  Adopt saved configuration
+                </button>
+                {!pending.some(
+                  (question) => question.reason === 'specification_contract',
+                ) && (
                   <button
                     disabled={busy}
                     onClick={() => void act('adopt_specification')}
                   >
                     Adopt saved specification
                   </button>
-                </>
-              )}
-            {ended && (
-              <button
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  setError('');
-                  void (async () => {
-                    try {
-                      const key = `factory.workflow.newRun.${run.id}`;
-                      const operationId =
-                        localStorage.getItem(key) ?? crypto.randomUUID();
-                      localStorage.setItem(key, operationId);
-                      const admitted = await client.newRun(run.id, operationId);
-                      if (localStorage.getItem(key) === operationId)
-                        localStorage.removeItem(key);
-                      onRun(admitted);
-                    } catch (error) {
-                      setError(
-                        error instanceof Error
-                          ? error.message
-                          : 'Unable to start a new run.',
-                      );
-                    } finally {
-                      setBusy(false);
-                    }
-                  })();
-                }}
-              >
-                {startMode === 'simulation'
-                  ? 'Start explicit new simulated run'
-                  : 'Start explicit new run'}
-              </button>
-            )}
-          </div>
-          {pending.map((q) => (
-            <section className="run-question" key={q.id}>
-              <h3>{q.reason}</h3>
-              <p>{q.question}</p>
-              {q.reason === 'repair_exhausted' ? (
-                <button disabled={busy} onClick={() => void act('continue')}>
-                  Authorize one additional repair
-                </button>
-              ) : (
-                ![
-                  'termination',
-                  'uncertain',
-                  'publication',
-                  'adapter',
-                  'specification_contract',
-                ].includes(q.reason) && (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void act('answer', {
-                        interventionId: q.id,
-                        interventionRevision: q.revision,
-                        answer,
-                      });
-                    }}
-                  >
-                    <label>
-                      Answer
-                      <textarea
-                        value={answer}
-                        onChange={(e) => setAnswer(e.target.value)}
-                        required
-                        maxLength={16000}
-                      />
-                    </label>
-                    <button disabled={busy}>Answer and resume</button>
-                  </form>
-                )
-              )}
-            </section>
-          ))}
-          {run.mode === 'real' &&
-            run.publicationLocked &&
-            ['paused', 'needs_input'].includes(run.status) &&
-            !run.publication?.pushed && (
-              <button disabled={busy} onClick={() => void act('revalidate')}>
-                Repeat checks and review
-              </button>
-            )}
-        </>
-      ),
-    },
-    {
-      id: 'models',
-      title: 'Models',
-      content: <RunModels run={run} />,
-    },
-    {
-      id: 'usage',
-      title: 'Usage',
-      content: <RunUsage inspection={inspection} error={inspectionError} />,
-    },
-    {
-      id: 'configuration',
-      title: 'Configuration',
-      collapsible: true,
-      content: <RunConfiguration run={run} />,
-    },
-    ...(run.inputs.length
-      ? [
-          {
-            id: 'developer-input',
-            title: 'Developer input',
-            collapsible: true,
-            content: (
-              <>
-                {run.inputs.length ? (
-                  run.inputs.map((i) => (
-                    <p key={i.requestId}>
-                      {i.content} · {i.status}
-                      {i.status === 'queued' && (
-                        <button
-                          disabled={busy}
-                          onClick={() => {
-                            void chat
-                              .withdraw(
-                                run.developerConversationId,
-                                i.submissionId,
-                              )
-                              .catch((e) => setError(e.message));
-                          }}
-                        >
-                          Withdraw input
-                        </button>
-                      )}
-                    </p>
-                  ))
-                ) : (
-                  <p>No developer input.</p>
                 )}
               </>
-            ),
-          },
-        ]
-      : []),
-  ];
+            )}
+          {ended && (
+            <button
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                setError('');
+                void (async () => {
+                  try {
+                    const key = `factory.workflow.newRun.${run.id}`;
+                    const operationId =
+                      localStorage.getItem(key) ?? crypto.randomUUID();
+                    localStorage.setItem(key, operationId);
+                    const admitted = await client.newRun(run.id, operationId);
+                    if (localStorage.getItem(key) === operationId)
+                      localStorage.removeItem(key);
+                    onRun(admitted);
+                  } catch (error) {
+                    setError(
+                      error instanceof Error
+                        ? error.message
+                        : 'Unable to start a new run.',
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                })();
+              }}
+            >
+              {startMode === 'simulation'
+                ? 'Start explicit new simulated run'
+                : 'Start explicit new run'}
+            </button>
+          )}
+        </div>
+        {run.mode === 'real' &&
+          run.publicationLocked &&
+          ['paused', 'needs_input'].includes(run.status) &&
+          !run.publication?.pushed && (
+            <button disabled={busy} onClick={() => void act('revalidate')}>
+              Repeat checks and review
+            </button>
+          )}
+      </>
+    ),
+    cards: [
+      {
+        id: 'usage',
+        title: 'Usage',
+        content: <RunUsage inspection={inspection} error={inspectionError} />,
+      },
+      ...(run.inputs.length
+        ? [
+            {
+              id: 'developer-input',
+              title: 'Developer input',
+              collapsible: true,
+              content: (
+                <>
+                  {run.inputs.length ? (
+                    run.inputs.map((i) => (
+                      <p key={i.requestId}>
+                        {i.content} · {i.status}
+                        {i.status === 'queued' && (
+                          <button
+                            disabled={busy}
+                            onClick={() => {
+                              void chat
+                                .withdraw(
+                                  run.developerConversationId,
+                                  i.submissionId,
+                                )
+                                .catch((e) => setError(e.message));
+                            }}
+                          >
+                            Withdraw input
+                          </button>
+                        )}
+                      </p>
+                    ))
+                  ) : (
+                    <p>No developer input.</p>
+                  )}
+                </>
+              ),
+            },
+          ]
+        : []),
+    ],
+  };
 }

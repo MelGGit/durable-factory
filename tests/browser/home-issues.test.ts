@@ -102,7 +102,7 @@ test(
         })
         .click();
       await page
-        .getByRole('region', { name: 'Run progress', exact: true })
+        .getByRole('region', { name: 'Information', exact: true })
         .waitFor();
       const run = (await fixture.workflow(fixture.beta.id).workflow()).runs[0];
       assert.equal(run.projectId, fixture.beta.id);
@@ -119,7 +119,7 @@ test(
         })
         .click();
       await page
-        .getByRole('region', { name: 'Run progress', exact: true })
+        .getByRole('region', { name: 'Information', exact: true })
         .waitFor();
       assert.equal(
         (await fixture.workflow(fixture.beta.id).workflow()).runs.length,

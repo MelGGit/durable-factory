@@ -9,6 +9,7 @@ export type IconName =
   | 'trash'
   | 'chat'
   | 'code'
+  | 'list'
   | 'plan'
   | 'sidebar-close'
   | 'sidebar-open'
@@ -32,6 +33,14 @@ const paths: Record<IconName, React.ReactNode> = {
   trash: <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />,
   chat: <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />,
   code: <path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16" />,
+  list: (
+    <>
+      <circle cx="4" cy="6" r="1" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="12" r="1" fill="currentColor" stroke="none" />
+      <circle cx="4" cy="18" r="1" fill="currentColor" stroke="none" />
+      <path d="M9 6h12M9 12h12M9 18h12" />
+    </>
+  ),
   plan: (
     <>
       <path d="M7 3h7l4 4v14H7zM14 3v5h4M10 12h5M10 16h5" />

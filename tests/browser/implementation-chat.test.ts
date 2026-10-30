@@ -154,7 +154,7 @@ test(
         'Draft implementation guidance',
       );
       await page
-        .getByRole('heading', { name: 'Models', exact: true })
+        .getByRole('heading', { name: 'Information', exact: true })
         .waitFor();
       assert.equal(
         await page.locator('[data-card-id="run-ticket"]').count(),
@@ -433,7 +433,7 @@ test(
 );
 
 test(
-  'run information shows readable models, usage and configuration, survives live updates, and fits all viewports',
+  'header toggles information and usage cards, run controls stay inside information, and all viewports fit',
   { timeout: 30000 },
   async () => {
     const adapter = simulationAdapter(),
@@ -518,7 +518,7 @@ test(
         `${fixture.service.url}/?conversation=${run.developerConversationId}`,
       );
       await page
-        .getByRole('region', { name: 'Run progress', exact: true })
+        .getByRole('region', { name: 'Information', exact: true })
         .waitFor();
       assert.equal(
         await page
@@ -530,7 +530,7 @@ test(
         .getByRole('region', { name: 'Conversation', exact: true })
         .boundingBox();
       const cards = await page
-        .getByRole('region', { name: 'Run information', exact: true })
+        .getByRole('region', { name: 'Chat trails', exact: true })
         .boundingBox();
       assert.ok(
         conversation && cards && cards.x >= conversation.x + conversation.width,
@@ -541,7 +541,7 @@ test(
           .getByText('Implementation', { exact: true })
           .waitFor();
         const colors = await page
-          .locator('[data-card-id="run-progress"]')
+          .locator('[data-card-id="run-information"]')
           .evaluate((card) => {
             const step = card.querySelector('[aria-current="step"]')!;
             const badge = card.querySelector('.run-status-badge')!;
@@ -583,7 +583,7 @@ test(
       const information = page.locator('.page-cards');
       assert.deepEqual(
         await information.locator('.page-card-heading h2').allTextContents(),
-        ['Run progress', 'Run controls', 'Models', 'Usage', 'Configuration'],
+        ['Information', 'Usage'],
       );
       const usage = page.getByRole('region', { name: 'Usage', exact: true });
       await usage.getByText('2,300', { exact: true }).waitFor();
@@ -601,40 +601,78 @@ test(
           { exact: true },
         )
         .waitFor();
-      await page
-        .getByRole('region', { name: 'Development model', exact: true })
-        .getByText('Requesty', { exact: true })
+      const informationCard = page.getByRole('region', {
+        name: 'Information',
+        exact: true,
+      });
+      await informationCard
+        .getByRole('button', { name: 'Pause run', exact: true })
         .waitFor();
-      const configuration = page.locator('[data-card-id="configuration"]');
-      await configuration.locator(':scope > summary').click();
-      await configuration
-        .getByRole('heading', { name: 'Required checks', exact: true })
-        .waitFor();
-      await configuration.getByText('fake test', { exact: true }).waitFor();
-      await configuration.getByText('2 min', { exact: true }).waitFor();
+      assert.equal(
+        await page
+          .locator(
+            '[data-card-id="models"], [data-card-id="configuration"], [data-card-id="run-controls"]',
+          )
+          .count(),
+        0,
+      );
       await page
         .getByRole('button', { name: 'Pause run', exact: true })
         .click();
       await page
         .getByRole('button', { name: 'Resume run', exact: true })
         .waitFor();
-      assert.equal(
-        await configuration.getAttribute('open'),
-        '',
-        'Expanded cards survive live run updates',
-      );
-      const transcriptBefore = await page
-        .locator('.transcript')
-        .evaluate((el) => el.scrollTop);
+      const chatGeometry = () =>
+        page.evaluate(() => ({
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          elements: [
+            '.chat-conversation',
+            '.composer-area',
+            '.chat-header h1',
+          ].map((selector) => {
+            const { x, y, width, height } = document
+              .querySelector(selector)!
+              .getBoundingClientRect();
+            return { x, y, width, height };
+          }),
+        }));
+      const geometryBefore = await chatGeometry();
       await page
-        .locator('.page-cards')
-        .evaluate((el) => (el.scrollTop = el.scrollHeight));
-      assert.equal(
-        await page.locator('.transcript').evaluate((el) => el.scrollTop),
-        transcriptBefore,
+        .locator('.chat-header')
+        .getByRole('button', { name: 'Hide chat trails', exact: true })
+        .click();
+      assert.equal(await page.locator('.page-cards').isVisible(), false);
+      assert.deepEqual(
+        await chatGeometry(),
+        geometryBefore,
+        'hiding chat trails preserves the viewport and chat layout',
       );
-      assert.ok(
-        await page.locator('.page-cards').evaluate((el) => el.scrollTop > 0),
+      assert.equal(
+        await page.locator('#page-information').getAttribute('inert'),
+        '',
+      );
+      assert.equal(
+        await page
+          .getByRole('button', { name: 'Show chat trails', exact: true })
+          .getAttribute('aria-expanded'),
+        'false',
+      );
+      await page
+        .getByRole('button', { name: 'Show chat trails', exact: true })
+        .click();
+      await informationCard
+        .getByRole('button', { name: 'Resume run', exact: true })
+        .waitFor();
+      assert.deepEqual(
+        await chatGeometry(),
+        geometryBefore,
+        'showing chat trails preserves the viewport and chat layout',
+      );
+      assert.equal(
+        await page
+          .getByRole('button', { name: 'Hide chat trails', exact: true })
+          .getAttribute('aria-expanded'),
+        'true',
       );
       await mkdir('test-results', { recursive: true });
       for (const colorScheme of ['light', 'dark'] as const) {
@@ -647,17 +685,15 @@ test(
           await page.setViewportSize({ width, height: 844 });
           if (width < 1200) {
             const trigger = page.getByRole('button', {
-              name: 'Run information',
+              name: 'Show chat trails',
               exact: true,
             });
             await trigger.click();
             await page
-              .getByRole('dialog', { name: 'Run information', exact: true })
+              .getByRole('dialog', { name: 'Chat trails', exact: true })
               .waitFor();
           }
           await checkImplementationStyle(width >= 760);
-          if ((await configuration.getAttribute('open')) === null)
-            await configuration.locator(':scope > summary').click();
           assert.equal(
             await page.evaluate(
               () => document.documentElement.scrollWidth > innerWidth,
@@ -687,7 +723,7 @@ test(
             await page.keyboard.press('Escape');
             assert.ok(
               await page
-                .getByRole('button', { name: 'Run information', exact: true })
+                .getByRole('button', { name: 'Show chat trails', exact: true })
                 .evaluate((el) => el === document.activeElement),
             );
           }
@@ -700,16 +736,16 @@ test(
       assert.equal(await page.locator('.page-cards').count(), 0);
       assert.equal(
         await page
-          .getByRole('button', { name: 'Run information', exact: true })
+          .getByRole('button', { name: 'Show chat trails', exact: true })
           .count(),
         0,
       );
       await page.goBack();
       await page
-        .getByRole('button', { name: 'Run information', exact: true })
+        .getByRole('button', { name: 'Show chat trails', exact: true })
         .click();
       await page
-        .getByRole('region', { name: 'Run progress', exact: true })
+        .getByRole('region', { name: 'Information', exact: true })
         .waitFor();
       assert.deepEqual(errors, []);
     } finally {
