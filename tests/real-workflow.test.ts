@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { until } from './fixtures/chat.js';
 import { realFixture } from './fixtures/real.js';
@@ -74,6 +77,69 @@ test('required check failures are evaluated after development and still block pu
     assert.equal(f.creates, 0);
   } finally {
     await f.close();
+  }
+});
+const proofRequirement = {
+  required: true as const,
+  command: 'node regression.test.cjs',
+  testPaths: ['regression.test.cjs'],
+  expectedFailure: 'REGRESSION',
+};
+// Fails on the base with the expected signature; `ok` decides whether it also passes on the candidate.
+const proofTest = (ok: boolean) =>
+  `if(require('node:fs').readFileSync('value.txt','utf8')!=='implemented\\n'){console.error('REGRESSION');process.exit(1);}${ok ? '' : "console.error('BROKEN');process.exit(1);"}`;
+const markerCheck = (marker: string) =>
+  `node -e "require('node:fs').writeFileSync('${marker}','ran')"`;
+test('a failing regression proof skips the required checks', async () => {
+  const marker = join(tmpdir(), `factory-checks-ran-${randomUUID()}`);
+  const f = await realFixture({
+    regression: proofRequirement,
+    proofTest: proofTest(false),
+    checkCommand: markerCheck(marker),
+  });
+  try {
+    const started = await f.client.startIssue(7, 'failing-proof-start');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => r.status === 'needs_input',
+      30000,
+    );
+    const checks = [...run.evidence, ...(run.evidenceHistory ?? [])].find(
+      (e) => e.kind === 'checks',
+    )!;
+    assert.equal(checks.passed, false);
+    assert.equal(checks.results?.length ?? 0, 0);
+    assert.equal(checks.regression?.passed, false);
+    assert.equal(existsSync(marker), false);
+    assert.equal(f.creates, 0);
+  } finally {
+    await f.close();
+    await rm(marker, { force: true });
+  }
+});
+test('a passing regression proof still runs the required checks', async () => {
+  const marker = join(tmpdir(), `factory-checks-ran-${randomUUID()}`);
+  const f = await realFixture({
+    regression: proofRequirement,
+    proofTest: proofTest(true),
+    checkCommand: markerCheck(marker),
+  });
+  try {
+    const started = await f.client.startIssue(7, 'passing-proof-start');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => ['pr_ready', 'needs_input'].includes(r.status),
+      30000,
+    );
+    const checks = [...run.evidence, ...(run.evidenceHistory ?? [])].find(
+      (e) => e.kind === 'checks',
+    )!;
+    assert.equal(checks.regression?.passed, true);
+    assert.equal(checks.results?.length, 1);
+    assert.equal(existsSync(marker), true);
+  } finally {
+    await f.close();
+    await rm(marker, { force: true });
   }
 });
 test('unstructured reviewer prose cannot publish', async () => {

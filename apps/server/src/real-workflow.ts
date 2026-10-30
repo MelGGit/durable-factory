@@ -903,24 +903,8 @@ export class RealWorkflow {
         throw new Error('Mutating commands are not quiescent.');
       const before = await workspaces.candidate(run);
       const results: NonNullable<RunEvidence['results']> = [];
-      for (let i = 0; i < run.configuration.requiredChecks.length; i++) {
-        const result = await processes.run({
-          id: `${run.id}-${attempt.id}-${attempt.taskId}-check-${i}`,
-          runId: run.id,
-          attemptId: attempt.id,
-          cwd: workspaces.path(run),
-          command: run.configuration.requiredChecks[i],
-          timeout: run.configuration.timeouts.check,
-          cancellation: run.configuration.timeouts.cancellation,
-          signal,
-        });
-        results.push({
-          command: result.command,
-          exitCode: result.exitCode!,
-          duration: result.finishedAt! - result.startedAt,
-          artifact: result.id,
-        });
-      }
+      // The proof is cheap and the most likely step to need a repair. Run it
+      // first so a broken proof fails in seconds, not after the full suite.
       const regression =
         attempt.stage === 'checks' &&
         run.contractVersion === 2 &&
@@ -935,6 +919,25 @@ export class RealWorkflow {
               (change) => this.patch(run, attempt, change),
             )
           : undefined;
+      if (!regression || regression.passed)
+        for (let i = 0; i < run.configuration.requiredChecks.length; i++) {
+          const result = await processes.run({
+            id: `${run.id}-${attempt.id}-${attempt.taskId}-check-${i}`,
+            runId: run.id,
+            attemptId: attempt.id,
+            cwd: workspaces.path(run),
+            command: run.configuration.requiredChecks[i],
+            timeout: run.configuration.timeouts.check,
+            cancellation: run.configuration.timeouts.cancellation,
+            signal,
+          });
+          results.push({
+            command: result.command,
+            exitCode: result.exitCode!,
+            duration: result.finishedAt! - result.startedAt,
+            artifact: result.id,
+          });
+        }
       const after = await workspaces.candidate(run),
         passed =
           results.every((r) => r.exitCode === 0) &&
@@ -943,12 +946,16 @@ export class RealWorkflow {
         outcome: passed ? 'passed' : 'failed',
         message:
           before === after
-            ? results
-                .map(
+            ? [
+                ...results.map(
                   (result) =>
                     `${result.exitCode === 0 ? 'Passed' : 'Failed'}: ${result.command} (exit ${result.exitCode}, ${result.duration} ms)`,
-                )
-                .join('\n') + (regression ? `\n${regression.message}` : '')
+                ),
+                ...(regression ? [regression.message] : []),
+                ...(regression && !regression.passed
+                  ? ['Required checks were skipped until the proof passes.']
+                  : []),
+              ].join('\n')
             : 'Checks changed candidate content; validation must repeat.',
         results,
         ...(regression ? { regression } : {}),
