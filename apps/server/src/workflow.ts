@@ -2050,16 +2050,6 @@ export class WorkflowService {
       this.changed(state, run);
     });
   }
-  async adoptMergedHead(id: string, commit: string, tree: string) {
-    await this.transaction(async (state) => {
-      const run = state.runs[id];
-      if (!run?.publication || run.status !== 'pr_ready')
-        conflict('Only completed PR runs can be cleaned up.');
-      run.publication.commit = commit;
-      run.publication.tree = tree;
-      this.changed(state, run);
-    });
-  }
   async recover() {
     this.recovering = true;
     await this.transaction(async (state, tx) => {

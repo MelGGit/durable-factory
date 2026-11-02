@@ -73,7 +73,6 @@ import {
   purgeRunStorage,
   cleanupWorkspace,
   cleanupArtifacts,
-  mergedFollowUp,
 } from './cleanup.js';
 import { Workspaces } from './workspace.js';
 import {
@@ -1577,11 +1576,6 @@ export async function startService(options: ServiceOptions = {}) {
           pull.baseBranch !== run.repository.baseBranch
         )
           continue;
-        const followUp =
-          pull.head === run.publication.commit
-            ? undefined
-            : await mergedFollowUp(run, pull.head);
-        if (pull.head !== run.publication.commit && !followUp) continue;
         const issue = await github.getIssue!(
           run.repository.github,
           run.issue.number,
@@ -1594,14 +1588,6 @@ export async function startService(options: ServiceOptions = {}) {
         )
           continue;
         if (stopping) return;
-        if (followUp) {
-          await workflow.adoptMergedHead(
-            run.id,
-            followUp.commit,
-            followUp.tree,
-          );
-          Object.assign(run.publication, followUp);
-        }
         await workflow.cleanupState(run.id, {
           state: 'pending',
           message: 'PR merged and issue closed. Waiting for idle maintenance.',

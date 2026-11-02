@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { access, readFile, writeFile, chmod, rm } from 'node:fs/promises';
+import { access, readFile, writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { realFixture } from './fixtures/real.js';
 import { until } from './fixtures/chat.js';
@@ -140,7 +140,7 @@ test(
 );
 
 test(
-  'unmerged PRs, open issues and changed worktrees are retained; corrected blocked cleanup retries',
+  'unmerged PRs and open issues are retained; merged PR cleanup discards local edits',
   { timeout: 60000 },
   async () => {
     const f = await realFixture();
@@ -158,24 +158,12 @@ test(
         ...(await original(...args)),
         state: 'closed',
       });
-      const path = join(run.workspace!.path, 'value.txt');
-      const content = await readFile(path, 'utf8');
-      await writeFile(path, 'Unexpected user edit');
-      await until(
-        async () => {
-          await f.service.pollCompletedRuns();
-          return f.client.run(run.id);
-        },
-        (r) => r.cleanup?.state === 'blocked',
-        15000,
+      await writeFile(
+        join(run.workspace!.path, 'value.txt'),
+        'Unexpected user edit',
       );
-      assert.equal(await readFile(path, 'utf8'), 'Unexpected user edit');
-      assert.match(
-        (await f.client.run(run.id)).cleanup!.message,
-        /unexpected changes/,
-      );
-      await writeFile(path, content);
       await clean(f);
+      await assert.rejects(access(run.workspace!.path));
     } finally {
       await f.close();
     }
@@ -493,7 +481,7 @@ test(
 );
 
 test(
-  'cleanup preserves ignored files added or changed after publication',
+  'merged PR cleanup discards ignored files added or changed after publication',
   { timeout: 60000 },
   async () => {
     const check = `node -e "const f=require('node:fs'); f.mkdirSync('generated',{recursive:true}); f.writeFileSync('generated/cache.txt','disposable cache');"`;
@@ -513,22 +501,9 @@ test(
         ]),
         '',
       );
-      await f.service.pollCompletedRuns();
-      assert.equal((await f.client.run(run.id)).cleanup?.state, 'blocked');
-      assert.equal(await readFile(notes, 'utf8'), 'keep my new notes');
-      await rm(notes);
-      await writeFile(cache, 'keep my edited notes in this ignored file');
-      await f.service.pollCompletedRuns();
-      assert.match(
-        (await f.client.run(run.id)).cleanup!.message,
-        /Ignored files changed/,
-      );
-      assert.equal(
-        await readFile(cache, 'utf8'),
-        'keep my edited notes in this ignored file',
-      );
-      await writeFile(cache, 'disposable cache');
+      await writeFile(cache, 'edited cache');
       await clean(f);
+      await assert.rejects(access(run.workspace!.path));
     } finally {
       await f.close();
     }
@@ -536,7 +511,7 @@ test(
 );
 
 test(
-  'legacy runs without an ignored-file baseline keep ignored files until resolved',
+  'legacy runs without an ignored-file baseline are cleaned up once merged',
   { timeout: 60000 },
   async () => {
     const f = await realFixture();
@@ -549,14 +524,8 @@ test(
       const notes = join(run.workspace!.path, 'generated/legacy-notes.txt');
       await writeFile(notes, 'legacy notes');
       await merged(f);
-      await f.service.pollCompletedRuns();
-      assert.match(
-        (await f.client.run(run.id)).cleanup!.message,
-        /no saved cleanup baseline/,
-      );
-      assert.equal(await readFile(notes, 'utf8'), 'legacy notes');
-      await rm(notes);
       await clean(f);
+      await assert.rejects(access(run.workspace!.path));
     } finally {
       await f.close();
     }
