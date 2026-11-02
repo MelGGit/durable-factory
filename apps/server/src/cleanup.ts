@@ -380,6 +380,29 @@ export async function cleanupWorkspace(
   }
 }
 
+/**
+ * A merged PR may carry commits pushed after publication. They are on the base
+ * branch now, so the merged head can stand in for the published commit.
+ */
+export async function mergedFollowUp(run: WorkflowRun, head: string) {
+  const commit = run.publication?.commit;
+  if (!commit || !/^[0-9a-f]{40}$/.test(head)) return;
+  try {
+    await git(run.repository.path, [
+      'merge-base',
+      '--is-ancestor',
+      commit,
+      head,
+    ]);
+    const tree = (
+      await git(run.repository.path, ['rev-parse', `${head}^{tree}`])
+    ).trim();
+    return { commit: head, tree };
+  } catch {
+    return;
+  }
+}
+
 export async function cleanupArtifacts(
   dataDir: string,
   snapshot: Pick<CleanupSnapshot, 'commands' | 'conversations'>,

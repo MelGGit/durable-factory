@@ -73,6 +73,7 @@ import {
   purgeRunStorage,
   cleanupWorkspace,
   cleanupArtifacts,
+  mergedFollowUp,
 } from './cleanup.js';
 import { Workspaces } from './workspace.js';
 import {
@@ -1570,13 +1571,17 @@ export async function startService(options: ServiceOptions = {}) {
           pull.number !== run.publication.prNumber ||
           pull.state !== 'closed' ||
           pull.merged !== true ||
-          pull.head !== run.publication.commit ||
           pull.headRepository !== run.repository.github ||
           pull.headBranch !== run.workspace?.branch ||
           pull.baseRepository !== run.repository.github ||
           pull.baseBranch !== run.repository.baseBranch
         )
           continue;
+        const followUp =
+          pull.head === run.publication.commit
+            ? undefined
+            : await mergedFollowUp(run, pull.head);
+        if (pull.head !== run.publication.commit && !followUp) continue;
         const issue = await github.getIssue!(
           run.repository.github,
           run.issue.number,
@@ -1589,6 +1594,14 @@ export async function startService(options: ServiceOptions = {}) {
         )
           continue;
         if (stopping) return;
+        if (followUp) {
+          await workflow.adoptMergedHead(
+            run.id,
+            followUp.commit,
+            followUp.tree,
+          );
+          Object.assign(run.publication, followUp);
+        }
         await workflow.cleanupState(run.id, {
           state: 'pending',
           message: 'PR merged and issue closed. Waiting for idle maintenance.',
@@ -1642,7 +1655,8 @@ export async function startService(options: ServiceOptions = {}) {
               );
               for (const id of snapshot.conversations)
                 delete snapshot.documents['factory.conversations'].items[id];
-              await cleanupWorkspace(ownership!.dataDir, run, workspaces);
+              // The merged PR is the implementation; local leftovers are disposable.
+              await cleanupWorkspace(ownership!.dataDir, run, workspaces, true);
               await cleanupArtifacts(ownership!.dataDir, snapshot);
               purgeRunStorage(ownership!.dataDir, snapshot);
             },
