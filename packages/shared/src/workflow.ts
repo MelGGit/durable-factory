@@ -104,6 +104,18 @@ const BLOCKER_REASONS = [
 export function acceptsTypedAnswer(intervention: Pick<Intervention, 'reason'>) {
   return !BLOCKER_REASONS.includes(intervention.reason);
 }
+/** Whether the run's implementation chat takes follow-ups. */
+export function runAcceptsInput(
+  run: Pick<WorkflowRun, 'publicationLocked' | 'stage' | 'status'>,
+) {
+  return (
+    !run.publicationLocked &&
+    run.stage !== 'publishing' &&
+    !['pr_ready', 'cancelled', 'cancelling', 'termination_blocker'].includes(
+      run.status,
+    )
+  );
+}
 export interface RunInput {
   at?: number;
   requestId: string;

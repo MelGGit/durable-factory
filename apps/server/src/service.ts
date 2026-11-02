@@ -30,6 +30,7 @@ import {
   DEFAULT_PROJECT_ID,
   projectLabel,
   ApiError,
+  runAcceptsInput,
   type CredentialId,
   type SettingsResponse,
 } from '../../../packages/shared/src/index.js';
@@ -1096,15 +1097,7 @@ export async function startService(options: ServiceOptions = {}) {
               runId: run.id,
               status: run.status,
               stage: run.stage,
-              acceptsInput:
-                !run.publicationLocked &&
-                !['publishing'].includes(run.stage) &&
-                ![
-                  'pr_ready',
-                  'cancelled',
-                  'cancelling',
-                  'termination_blocker',
-                ].includes(run.status),
+              acceptsInput: runAcceptsInput(run),
             };
           },
           workflowWithdraw: () => workflow.refreshInputs(),

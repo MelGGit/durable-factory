@@ -27,6 +27,7 @@ import {
   ChatClient,
   WorkflowClient,
   acceptsTypedAnswer,
+  runAcceptsInput,
   type Intervention,
   type DeletionOperation,
   type WorkflowSnapshot,
@@ -305,6 +306,11 @@ export function ChatApp() {
       run.developerConversationId === selected ||
       run.attempts.some((a) => a.conversationId === selected),
   );
+  // The run snapshot and the activity stream update separately; whichever has
+  // seen input close wins, so a finished run never shows a composer.
+  const acceptsInput =
+    snapshot?.workflow?.acceptsInput !== false &&
+    (!selectedRun || runAcceptsInput(selectedRun));
   // Blockers that need a button leave the composer alone; typed questions are
   // answered from it when exactly one is open, so the reply lands in the chat.
   const openQuestions =
@@ -759,7 +765,7 @@ export function ChatApp() {
       !snapshot ||
       snapshot.execution === 'interrupting' ||
       snapshot.conversation.role === 'review' ||
-      snapshot.workflow?.acceptsInput === false ||
+      !acceptsInput ||
       awaitingRunAnswer ||
       current.current.pending.some((item) => item.conversationId === selected)
     )
@@ -1448,7 +1454,7 @@ export function ChatApp() {
                           implementation.
                         </p>
                       ) : snapshot.conversation.role !== 'review' &&
-                        snapshot.workflow?.acceptsInput !== false ? (
+                        acceptsInput ? (
                         <form onSubmit={send} className="composer">
                           <label className="sr-only" htmlFor="chat-message">
                             Message
@@ -1512,8 +1518,7 @@ export function ChatApp() {
                           Available controls are in Chat trails.
                         </p>
                       )}
-                      {snapshot?.workflow?.acceptsInput === false &&
-                        interruptControl}
+                      {snapshot && !acceptsInput && interruptControl}
                       {!awaitingRunAnswer && (
                         <p className="composer-footnote">
                           {composerQuestion
