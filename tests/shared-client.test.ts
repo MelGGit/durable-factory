@@ -129,6 +129,101 @@ test('watchRuns streams in Node with a token, and a reconnect says which state i
   }
 });
 
+test('watchProject delivers the deletions and conversations, scoped to its project, and reconnects with the state it holds', async () => {
+  const requests: { url?: string; held?: string }[] = [];
+  const server = createServer((req, res) => {
+    requests.push({
+      url: req.url,
+      held: req.headers['last-event-id'] as string,
+    });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    const revision = requests.length;
+    res.write(
+      `id: ${revision}\ndata: ${JSON.stringify({
+        ...frame(`stream-${revision}`, revision),
+        deletions: [{ id: `d${revision}` }],
+        conversations: [{ id: `c${revision}` }],
+      })}\n\n`,
+    );
+    if (revision === 1) res.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  const states: unknown[] = [];
+  const stop = new WorkflowClient(
+    `http://127.0.0.1:${port}`,
+    undefined,
+    'second',
+  ).watchProject(
+    (state) =>
+      states.push([
+        state.snapshot.revision,
+        state.deletions,
+        state.conversations,
+      ]),
+    () => undefined,
+  );
+  try {
+    const deadline = Date.now() + 5000;
+    while (states.length < 2 && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(states, [
+      [1, [{ id: 'd1' }], [{ id: 'c1' }]],
+      [2, [{ id: 'd2' }], [{ id: 'c2' }]],
+    ]);
+    assert.equal(requests[0].url, '/api/v1/projects/second/events');
+    assert.equal(requests[0].held, undefined);
+    assert.equal(requests[1].held, '1');
+  } finally {
+    stop();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+test('watchProject backs off while the service is not ready, then connects', async () => {
+  const times: number[] = [];
+  const server = createServer((_req, res) => {
+    times.push(Date.now());
+    if (times.length < 3) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: { code: 'NOT_READY', message: 'Not ready.' },
+        }),
+      );
+    } else
+      res
+        .writeHead(200, { 'Content-Type': 'text/event-stream' })
+        .write(
+          `id: 1\ndata: ${JSON.stringify({ ...frame('s', 1), deletions: [], conversations: [] })}\n\n`,
+        );
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as { port: number };
+  const errors: string[] = [];
+  const connection: boolean[] = [];
+  const stop = new WorkflowClient(`http://127.0.0.1:${port}`).watchProject(
+    () => undefined,
+    (connected) => connection.push(connected),
+    (error) => errors.push((error as ApiError).code),
+  );
+  try {
+    const deadline = Date.now() + 6000;
+    while (!connection.includes(true) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(errors, ['NOT_READY', 'NOT_READY']);
+    assert.equal(times.length, 3);
+    // Each wait is at least half of 1s, then 2s, so a failing service is not hammered.
+    assert.ok(times[1] - times[0] >= 450, `${times[1] - times[0]}ms`);
+    assert.ok(times[2] - times[1] >= 950, `${times[2] - times[1]}ms`);
+  } finally {
+    stop();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
 test('watchRuns reports a rejected token once and does not keep retrying', async () => {
   let count = 0;
   const server = createServer((_req, res) => {
