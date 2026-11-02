@@ -1,6 +1,6 @@
 import { Deletions, deleting, assertNotDeleting } from './deletion-state.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { writeSse } from './sse.js';
+import { responseSink, type StreamSink } from './sse.js';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -296,6 +296,12 @@ export function recordingTools(dataDir: string, tools: ToolRegistration[]) {
   });
 }
 
+/** Turns each frame into SSE text, and says when the stream is complete. */
+export type ChatEncode = (
+  frame: ChatFrame,
+) =>
+  | { payload: string; done?: boolean }
+  | Promise<{ payload: string; done?: boolean }>;
 export class ChatService {
   private titles: TitleService;
   private lines = new Map<string, Promise<unknown>>();
@@ -1080,14 +1086,18 @@ export class ChatService {
       ...(olderCursor ? { olderCursor } : {}),
     };
   }
-  async stream(
+  stream(
     id: string,
     res: ServerResponse,
-    encode: (
-      frame: ChatFrame,
-    ) =>
-      | { payload: string; done?: boolean }
-      | Promise<{ payload: string; done?: boolean }>,
+    encode: ChatEncode,
+    onStreamError?: () => string,
+  ) {
+    return this.streamTo(id, responseSink(res), encode, onStreamError);
+  }
+  async streamTo(
+    id: string,
+    sink: StreamSink,
+    encode: ChatEncode,
     onStreamError?: () => string,
   ) {
     const conversation = await this.conversation(id);
@@ -1109,16 +1119,14 @@ export class ChatService {
       : undefined;
     const streamId = randomUUID();
     let sequence = 0,
-      stopped = false,
-      writing = false;
+      stopped = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     const stop = async (graceful = false) => {
       if (stopped) return;
       stopped = true;
       clearInterval(heartbeat);
       this.streams.delete(stop);
-      res.end();
-      if (!graceful && res.writableLength > 0) res.destroy();
+      sink.end(graceful);
       await Promise.all([
         watch.stop(),
         requestsWatch?.stop(),
@@ -1129,28 +1137,18 @@ export class ChatService {
     };
     const fail = () => {
       if (stopped) return;
-      if (onStreamError && !res.destroyed) {
-        const payload = onStreamError();
-        if (res.writableLength + Buffer.byteLength(payload) <= 1024 * 1024)
-          res.write(payload);
-      }
+      if (onStreamError && !sink.closed()) sink.last(onStreamError());
       void stop(true);
     };
-    if (res.destroyed) {
+    if (sink.closed()) {
       await stop();
       return;
     }
     this.streams.add(stop);
-    res.once('close', () => {
+    sink.onClose(() => {
       void stop();
     });
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-store',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.flushHeaders();
+    sink.open();
     const send = async (
       view: ConversationView,
       type: 'snapshot' | 'update',
@@ -1167,14 +1165,7 @@ export class ChatService {
       const encoded = await encode(frame);
       const { payload } = encoded;
       if (stopped) return;
-      let written: boolean;
-      writing = true;
-      try {
-        written = await writeSse(res, payload);
-      } finally {
-        writing = false;
-      }
-      if (!written) {
+      if (!(await sink.write(payload))) {
         void stop();
         return;
       }
@@ -1184,9 +1175,7 @@ export class ChatService {
       await send(watch.value, 'snapshot');
       if (stopped) return;
       heartbeat = setInterval(() => {
-        if (writing) return;
-        if (res.writableLength + 16 > 1024 * 1024) void stop();
-        else res.write(': heartbeat\n\n');
+        if (!sink.heartbeat()) void stop();
       }, 15000);
       let delivery = Promise.resolve();
       const enqueue = (view: ConversationView) => {

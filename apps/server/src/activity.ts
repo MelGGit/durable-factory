@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { writeSse } from './sse.js';
+import { responseSink, type StreamSink } from './sse.js';
 import type { ServerResponse } from 'node:http';
 import {
   API_VERSION,
@@ -286,21 +286,29 @@ export class RunActivityService {
         : {}),
     };
   }
-  async stream(
+  stream(
     id: string,
     res: ServerResponse,
     encode: (frame: RunActivityFrame) => string,
   ) {
+    return this.streamTo(
+      id,
+      responseSink(
+        res,
+        { 'X-Content-Type-Options': 'nosniff' },
+        'event: heartbeat\ndata: {}\n\n',
+      ),
+      encode,
+    );
+  }
+  async streamTo(
+    id: string,
+    sink: StreamSink,
+    encode: (frame: RunActivityFrame) => string,
+  ) {
     const initial = await this.page(id);
-    if (res.destroyed) return;
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-store',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-      'X-Content-Type-Options': 'nosniff',
-    });
-    res.flushHeaders();
+    if (sink.closed()) return;
+    sink.open();
     const streamId = randomUUID();
     let sequence = 0,
       last = '',
@@ -312,15 +320,7 @@ export class RunActivityService {
       clearInterval(poll);
       clearInterval(heartbeat);
       this.streams.delete(close);
-      res.end();
-    };
-    const write = (text: string) => {
-      if (closed || busy) return;
-      if (res.writableLength + Buffer.byteLength(text) > 1048576) {
-        close();
-        return;
-      }
-      res.write(text);
+      sink.end(true);
     };
     const emit = async (snapshot: RunActivityPage) => {
       const value = JSON.stringify(snapshot);
@@ -333,7 +333,7 @@ export class RunActivityService {
         type: sequence === 1 ? 'snapshot' : 'update',
         snapshot,
       };
-      if (!(await writeSse(res, encode(frame)))) close();
+      if (!(await sink.write(encode(frame)))) close();
     };
     const poll = setInterval(() => {
       if (busy || closed) return;
@@ -347,11 +347,10 @@ export class RunActivityService {
       this.inflight.add(work);
       void work.finally(() => this.inflight.delete(work));
     }, 500);
-    const heartbeat = setInterval(
-      () => write('event: heartbeat\ndata: {}\n\n'),
-      15000,
-    );
-    res.on('close', close);
+    const heartbeat = setInterval(() => {
+      if (!closed && !sink.heartbeat()) close();
+    }, 15000);
+    sink.onClose(close);
     this.streams.add(close);
     busy = true;
     try {

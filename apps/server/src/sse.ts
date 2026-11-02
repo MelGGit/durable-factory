@@ -45,3 +45,68 @@ export async function writeSse(
   }
   return true;
 }
+
+/** Where a stream's text goes: a response of its own, or a channel of the
+ * project stream. */
+export interface StreamSink {
+  /** Whether the consumer is already gone. */
+  closed(): boolean;
+  open(): void;
+  /** False when the consumer is gone or too far behind. */
+  write(payload: string): Promise<boolean>;
+  /** Best-effort, never waits. False when the consumer is too far behind. */
+  heartbeat(): boolean;
+  /** A final payload, written only if it fits. */
+  last(payload: string): void;
+  end(graceful: boolean): void;
+  onClose(callback: () => void): void;
+}
+
+/** A stream that owns its response. */
+export function responseSink(
+  res: ServerResponse,
+  headers: Record<string, string> = {},
+  heartbeat = ': heartbeat\n\n',
+): StreamSink {
+  let writing = false;
+  return {
+    closed: () => res.destroyed,
+    open() {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-store',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        ...headers,
+      });
+      res.flushHeaders();
+    },
+    async write(payload) {
+      writing = true;
+      try {
+        return await writeSse(res, payload);
+      } finally {
+        writing = false;
+      }
+    },
+    heartbeat() {
+      if (writing || res.destroyed || res.writableEnded) return true;
+      if (res.writableLength + Buffer.byteLength(heartbeat) > 1024 * 1024)
+        return false;
+      res.write(heartbeat);
+      return true;
+    },
+    last(payload) {
+      if (
+        !res.destroyed &&
+        res.writableLength + Buffer.byteLength(payload) <= 1024 * 1024
+      )
+        res.write(payload);
+    },
+    end(graceful) {
+      res.end();
+      if (!graceful && res.writableLength > 0) res.destroy();
+    },
+    onClose: (callback) => void res.once('close', callback),
+  };
+}
