@@ -1,3 +1,4 @@
+import type { ChannelSource } from './events.js';
 import { FactoryClient, type Role } from './core.js';
 import type { AgUiEvent } from './ag-ui.js';
 import { activityFromAgUi, observeAgUi, viewFromEvents } from './ag-ui-view.js';
@@ -82,11 +83,12 @@ export class RunActivityClient extends FactoryClient {
     ) => unknown,
     onConnection: (connected: boolean) => void,
     onError: (error: Error) => void = () => {},
+    hub?: ChannelSource,
   ) {
     return observeAgUi({
       url: `${this.baseUrl}/api/v1/runs/${encodeURIComponent(id)}/activity/ag-ui/events`,
       threadId: id,
-      fetcher: this.fetcher,
+      fetcher: hub ? hub.channel(`activity:${id}`) : this.fetcher,
       project: activityFromAgUi,
       onView: (page, frame) => onPage(page, frame, frame.signal),
       onConnection: (state) => {

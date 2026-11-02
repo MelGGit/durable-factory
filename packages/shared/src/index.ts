@@ -8,3 +8,4 @@ export * from './ag-ui.js';
 export * from './ag-ui-view.js';
 
 export * from './deletion.js';
+export * from './events.js';

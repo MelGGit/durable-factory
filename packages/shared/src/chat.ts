@@ -1,3 +1,4 @@
+import type { ChannelSource } from './events.js';
 import type { DeletionOperation } from './deletion.js';
 import type { PlanningState } from './planning.js';
 import { HttpAgent } from '@ag-ui/client';
@@ -272,7 +273,8 @@ export class ChatClient extends FactoryClient {
     );
   }
   /** Observes a conversation as a standard AG-UI stream. Every (re)connection
-   * delivers a fresh `snapshot` frame, then `update` frames. */
+   * delivers a fresh `snapshot` frame, then `update` frames. With a hub, the
+   * stream shares its connection rather than opening one. */
   watch(
     id: string,
     onSnapshot: (
@@ -281,11 +283,12 @@ export class ChatClient extends FactoryClient {
     ) => unknown,
     onConnection: (state: ConnectionState) => void,
     onError: (error: Error) => void = () => {},
+    hub?: ChannelSource,
   ) {
     return observeAgUi({
       url: `${this.baseUrl}/api/v1/conversations/${encodeURIComponent(id)}/ag-ui/events`,
       threadId: id,
-      fetcher: this.fetcher,
+      fetcher: hub ? hub.channel(`chat:${id}`) : this.fetcher,
       project: conversationFromAgUi,
       onView: onSnapshot,
       onConnection,

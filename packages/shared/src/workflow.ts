@@ -272,6 +272,22 @@ export interface ProjectState {
   deletions: DeletionOperation[];
   conversations: ConversationSummary[];
 }
+/** What a project stream carries for a chat or run activity that a client
+ * subscribed it to. `data` is the AG-UI stream's text, verbatim. */
+export interface ChannelMessage {
+  channel: string;
+  data?: string;
+  end?: boolean;
+  error?: string;
+}
+/** What a client following channels needs of its project stream. */
+export interface ProjectHooks {
+  /** The connection opened, with the id the service gave this stream. */
+  open?(streamId: string | undefined): void;
+  channel?(message: ChannelMessage): void;
+  /** Bytes arrived, heartbeats included. */
+  alive?(): void;
+}
 export class WorkflowReducer {
   streamId = '';
   sequence = 0;
@@ -359,6 +375,7 @@ export class WorkflowClient extends FactoryClient {
     onState: (state: ProjectState) => void,
     onConnection: (connected: boolean) => void,
     onError: (error: Error) => void = () => {},
+    hooks?: ProjectHooks,
   ) {
     return this.watch<ProjectFrame>(
       '/events',
@@ -366,6 +383,15 @@ export class WorkflowClient extends FactoryClient {
         onState({ snapshot, deletions, conversations }),
       onConnection,
       onError,
+      hooks,
+    );
+  }
+  /** Replaces the chats and run activities that the open stream also carries. */
+  subscribe(streamId: string, channels: string[]) {
+    return this.mutation<{ channels: string[] }>(
+      `/events/${encodeURIComponent(streamId)}/subscriptions`,
+      'PUT',
+      { channels },
     );
   }
   private watch<Frame extends WorkflowFrame>(
@@ -373,6 +399,7 @@ export class WorkflowClient extends FactoryClient {
     onFrame: (frame: Frame) => void,
     onConnection: (connected: boolean) => void,
     onError: (error: Error) => void,
+    hooks?: ProjectHooks,
   ) {
     const reducer = new WorkflowReducer();
     const lifetime = new AbortController();
@@ -406,6 +433,9 @@ export class WorkflowClient extends FactoryClient {
           if (!response.body) throw new Error('Streaming is unavailable.');
           reader = response.body.getReader();
           retries = 0;
+          hooks?.open?.(
+            response.headers.get('X-Factory-Stream-Id') ?? undefined,
+          );
           onConnection(true);
           const decoder = new TextDecoder();
           let buffer = '';
@@ -413,6 +443,7 @@ export class WorkflowClient extends FactoryClient {
             const chunk = await reader.read();
             if (chunk.done) throw new Error('Workflow stream closed.');
             touch();
+            hooks?.alive?.();
             buffer = (
               buffer + decoder.decode(chunk.value, { stream: true })
             ).replace(/\r\n/g, '\n');
@@ -423,6 +454,15 @@ export class WorkflowClient extends FactoryClient {
               const event = buffer.slice(0, end);
               buffer = buffer.slice(end + 2);
               if (event.startsWith('event: heartbeat')) continue;
+              if (event.startsWith('event: channel')) {
+                const text = event
+                  .split('\n')
+                  .filter((line) => line.startsWith('data:'))
+                  .map((line) => line.slice(5).trimStart())
+                  .join('\n');
+                if (text) hooks?.channel?.(JSON.parse(text) as ChannelMessage);
+                continue;
+              }
               const lines = event.split('\n');
               const data = lines
                 .filter((line) => line.startsWith('data:'))

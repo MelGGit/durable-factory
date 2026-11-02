@@ -180,7 +180,9 @@ export class FactoryClient {
   protected scoped(path: string) {
     const bare = path.split('?')[0];
     return this.projectId &&
-      (projectPaths.has(bare) || /^\/issues\/\d+\/planning$/.test(bare))
+      (projectPaths.has(bare) ||
+        /^\/issues\/\d+\/planning$/.test(bare) ||
+        /^\/events\/[A-Za-z0-9-]+\/subscriptions$/.test(bare))
       ? `/projects/${encodeURIComponent(this.projectId)}${path}`
       : path;
   }
