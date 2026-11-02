@@ -341,12 +341,20 @@ export function ChatApp() {
     current.current = next;
     setLocal(next);
   };
+  const loadError = useRef('');
   const refresh = async () => {
     const result = await client.conversations();
     setConversations(result.conversations);
+    // A failed load is transient; clear it once the service answers again.
+    const stale = loadError.current;
+    loadError.current = '';
+    if (stale) setError((message) => (message === stale ? '' : message));
   };
   useEffect(() => {
-    void refresh().catch((e) => setError(e.message));
+    void refresh().catch((e) => {
+      loadError.current = e.message;
+      setError(e.message);
+    });
     const timer = setInterval(() => void refresh().catch(() => {}), 5000);
     return () => clearInterval(timer);
   }, []);
