@@ -165,6 +165,7 @@ const projectPaths = new Set([
   '/conversations',
   '/runs',
   '/runs/events',
+  '/events',
   '/github/validate',
   '/issues',
 ]);

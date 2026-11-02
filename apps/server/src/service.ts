@@ -294,7 +294,7 @@ export async function startService(options: ServiceOptions = {}) {
     // /projects/:id/<resource> addresses a resource of one project. Handlers
     // see the plain path, and the project the request is for.
     const scopedPath =
-      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|github\/validate|issues(?:\/\d+\/planning)?))$/.exec(
+      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|events|github\/validate|issues(?:\/\d+\/planning)?))$/.exec(
         url.pathname,
       );
     const scopedProject = scopedPath?.[1];
@@ -529,6 +529,27 @@ export async function startService(options: ServiceOptions = {}) {
           events: viewSnapshotEvents(activityView(snapshot)),
         });
       }
+      // One stream for everything the navigation shows, so the web app holds a
+      // single connection for it instead of polling each list.
+      if (path === '/api/v1/events' && req.method === 'GET')
+        return workflow.stream(
+          res,
+          lastEventId(req),
+          scopedProject && projectId,
+          {
+            read: async () => ({
+              deletions: Object.values(
+                (await configuration!.harness.snapshot(Deletions, context))
+                  ?.items ?? {},
+              ),
+              conversations: await chat!.list(scopedProject),
+            }),
+            watch: async (harness) => [
+              await harness.watchDoc(Deletions, context),
+              await harness.watchDoc(Catalog, context),
+            ],
+          },
+        );
       if (path === '/api/v1/runs/events' && req.method === 'GET')
         return workflow.stream(
           res,

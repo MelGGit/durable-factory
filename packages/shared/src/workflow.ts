@@ -10,6 +10,8 @@ import {
   responseError,
   type Settings,
 } from './core.js';
+import type { ConversationSummary } from './chat.js';
+import type { DeletionOperation } from './deletion.js';
 import type { RepositoryRegistration, Ticket, IssueLink } from './planning.js';
 export type RunStage =
   | 'setup'
@@ -247,6 +249,17 @@ export interface WorkflowFrame {
   type: 'snapshot' | 'update';
   snapshot: WorkflowSnapshot;
 }
+/** What `/events` sends: the workflow frame, and the rest of what the
+ * navigation shows. */
+export interface ProjectFrame extends WorkflowFrame {
+  deletions: DeletionOperation[];
+  conversations: ConversationSummary[];
+}
+export interface ProjectState {
+  snapshot: WorkflowSnapshot;
+  deletions: DeletionOperation[];
+  conversations: ConversationSummary[];
+}
 export class WorkflowReducer {
   streamId = '';
   sequence = 0;
@@ -321,6 +334,34 @@ export class WorkflowClient extends FactoryClient {
     onConnection: (connected: boolean) => void,
     onError: (error: Error) => void = () => {},
   ) {
+    return this.watch<WorkflowFrame>(
+      '/runs/events',
+      (frame) => onSnapshot(frame.snapshot),
+      onConnection,
+      onError,
+    );
+  }
+  /** Like `watchRuns`, with the deletions and conversations of the project,
+   * over the same single connection. */
+  watchProject(
+    onState: (state: ProjectState) => void,
+    onConnection: (connected: boolean) => void,
+    onError: (error: Error) => void = () => {},
+  ) {
+    return this.watch<ProjectFrame>(
+      '/events',
+      ({ snapshot, deletions, conversations }) =>
+        onState({ snapshot, deletions, conversations }),
+      onConnection,
+      onError,
+    );
+  }
+  private watch<Frame extends WorkflowFrame>(
+    path: string,
+    onFrame: (frame: Frame) => void,
+    onConnection: (connected: boolean) => void,
+    onError: (error: Error) => void,
+  ) {
     const reducer = new WorkflowReducer();
     const lifetime = new AbortController();
     let active: AbortController | undefined,
@@ -341,7 +382,7 @@ export class WorkflowClient extends FactoryClient {
           touch();
           const response = await this.fetcher.call(
             globalThis,
-            `${this.baseUrl}/api/v1${this.scoped('/runs/events')}`,
+            `${this.baseUrl}/api/v1${this.scoped(path)}`,
             {
               signal: active.signal,
               headers:
@@ -376,13 +417,14 @@ export class WorkflowClient extends FactoryClient {
                 .map((line) => line.slice(5).trimStart())
                 .join('\n');
               if (!data) continue;
-              if (reducer.apply(JSON.parse(data) as WorkflowFrame)) {
+              const frame = JSON.parse(data) as Frame;
+              if (reducer.apply(frame)) {
                 held =
                   lines
                     .find((line) => line.startsWith('id:'))
                     ?.slice(3)
                     .trim() ?? held;
-                onSnapshot(reducer.snapshot!);
+                onFrame(frame);
               }
             }
           }
@@ -410,7 +452,9 @@ export class WorkflowClient extends FactoryClient {
           wake = resolve;
           retry = setTimeout(
             resolve,
-            Math.min(30000, 1000 * 2 ** Math.min(retries++, 5)),
+            // Jitter keeps tabs that lost the service together from retrying together.
+            Math.min(30000, 1000 * 2 ** Math.min(retries++, 5)) *
+              (0.5 + Math.random() / 2),
           );
         });
       }

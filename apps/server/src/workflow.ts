@@ -47,6 +47,11 @@ import { context, Configuration, projectOf } from './storage.js';
 import { Planning } from './planning.js';
 import { createRunConversation, Requests, Catalog } from './chat.js';
 
+/** What `stream` needs of a document watch. */
+export interface StreamWatch {
+  start(onChange: () => Promise<void>): unknown;
+  stop(): unknown;
+}
 export const Workflow = defineDoc({
   kind: 'factory.workflow',
   scope: 'session',
@@ -2272,8 +2277,17 @@ export class WorkflowService {
   }
   /** `resume` is the version a reconnecting client already holds. The stored
    * revision does not cover what the adapter reports on each read, so the
-   * version also covers whether development is enabled and what it lacks. */
-  async stream(res: ServerResponse, resume?: string, projectId?: string) {
+   * version also covers whether development is enabled and what it lacks.
+   * `extra` adds more state to each frame, and the documents it depends on. */
+  async stream(
+    res: ServerResponse,
+    resume?: string,
+    projectId?: string,
+    extra?: {
+      read: () => Promise<Record<string, unknown>>;
+      watch: (harness: Harness) => Promise<(StreamWatch | undefined)[]>;
+    },
+  ) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
@@ -2288,14 +2302,22 @@ export class WorkflowService {
     let sequence = 0,
       closed = false,
       busy = false,
+      dirty = false,
       last = resume ?? '';
+    const watches = [
+      await this.harness.watchDoc(Workflow, context),
+      await this.harness.watchDoc(Configuration, context),
+      ...((await extra?.watch(this.harness)) ?? []),
+    ].filter((watch) => watch !== undefined);
     const close = () => {
       if (closed) return;
       closed = true;
-      clearInterval(poll);
+      clearInterval(fallback);
       clearInterval(heartbeat);
       this.streams.delete(close);
       res.end();
+      for (const watch of watches)
+        void Promise.resolve(watch.stop()).catch(() => {});
     };
     const write = (text: string) => {
       if (res.writableLength + Buffer.byteLength(text) > 1048576) {
@@ -2305,35 +2327,52 @@ export class WorkflowService {
       res.write(text);
     };
     const publish = async () => {
-      if (closed || busy) return;
+      if (closed) return;
+      // A change during a publish may be missed by its reads, so go again.
+      if (busy) {
+        dirty = true;
+        return;
+      }
       busy = true;
       try {
-        const snapshot = await this.snapshot(projectId);
-        const version = `${snapshot.revision}.${contentVersion(
-          JSON.stringify([
-            snapshot.enabled,
-            snapshot.mode,
-            snapshot.missingPrerequisites,
-          ]),
-        )}`;
-        if (!closed && version !== last) {
-          last = version;
-          write(
-            `id: ${version}\ndata: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot })}\n\n`,
-          );
-        }
+        do {
+          dirty = false;
+          const snapshot = await this.snapshot(projectId);
+          const more = await extra?.read();
+          const version = `${snapshot.revision}.${contentVersion(
+            JSON.stringify([
+              snapshot.enabled,
+              snapshot.mode,
+              snapshot.missingPrerequisites,
+              more,
+            ]),
+          )}`;
+          if (!closed && version !== last) {
+            last = version;
+            write(
+              `id: ${version}\ndata: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot, ...more })}\n\n`,
+            );
+          }
+        } while (dirty && !closed);
       } finally {
         busy = false;
       }
     };
-    const poll = setInterval(() => void publish().catch(close), 100);
+    // What the adapter reports does not live in a document, so it is the one
+    // part still read on a timer.
+    const fallback = setInterval(() => void publish().catch(close), 2000);
     const heartbeat = setInterval(
       () => write('event: heartbeat\ndata: {}\n\n'),
       15000,
     );
     res.on('close', close);
     this.streams.add(close);
-    await publish();
+    await publish().catch((error) => {
+      close();
+      throw error;
+    });
+    if (closed) return;
+    for (const watch of watches) watch.start(() => publish().catch(close));
   }
   async close() {
     this.closing = true;
