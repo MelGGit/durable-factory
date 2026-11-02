@@ -1,44 +1,43 @@
 import { useEffect, useState } from 'react';
 import {
-  ChatClient,
   WorkflowClient,
+  type ConversationSummary,
   type DeletionOperation,
   type WorkflowSnapshot,
 } from '../../../../packages/shared/src/index.js';
 
-const client = new ChatClient();
 const workflowClient = new WorkflowClient();
 
-/** Polls runs and pending deletions once a second. */
+/** Follows runs, pending deletions and conversations over one stream. Keep
+ * it to one: the browser allows few connections per origin, shared by tabs,
+ * and the selected chat needs its own. */
 export function useWorkflow() {
   const [workflowSnapshot, setWorkflowSnapshot] = useState<WorkflowSnapshot>();
   const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
-  useEffect(() => {
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    // Keep the browser's persistent connections available for the selected chat
-    // and its controls, including when several tabs share this origin.
-    const refreshRuns = async () => {
-      try {
-        const [value, deletionList] = await Promise.all([
-          workflowClient.workflow(abort.signal),
-          client.deletions(),
-        ]);
-        if (!abort.signal.aborted) {
-          setWorkflowSnapshot(value);
-          setDeletions(deletionList.operations);
-        }
-      } catch {
-        // Retain the last navigation snapshot and retry after transient outages.
-      } finally {
-        if (!abort.signal.aborted) timer = setTimeout(refreshRuns, 1000);
-      }
-    };
-    void refreshRuns();
-    return () => {
-      abort.abort();
-      clearTimeout(timer);
-    };
-  }, []);
-  return { workflowSnapshot, setWorkflowSnapshot, deletions, setDeletions };
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [streamError, setStreamError] = useState('');
+  useEffect(
+    () =>
+      workflowClient.watchProject(
+        (state) => {
+          setWorkflowSnapshot(state.snapshot);
+          setDeletions(state.deletions);
+          setConversations(state.conversations);
+        },
+        setConnected,
+        (error) => setStreamError(error.message),
+      ),
+    [],
+  );
+  return {
+    workflowSnapshot,
+    setWorkflowSnapshot,
+    deletions,
+    setDeletions,
+    conversations,
+    setConversations,
+    connected,
+    streamError,
+  };
 }

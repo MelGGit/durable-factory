@@ -37,7 +37,6 @@ import {
   type ProjectSummary,
   type ConnectionState,
   type ConversationSnapshot,
-  type ConversationSummary,
   type TranscriptEntry,
 } from '../../../packages/shared/src/index.js';
 import {
@@ -254,10 +253,17 @@ export function ChatApp() {
         ? { ...state, selected: '' }
         : state;
   });
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const { projects, visibleProjects, reloadProjects } = useProjects();
-  const { workflowSnapshot, setWorkflowSnapshot, deletions, setDeletions } =
-    useWorkflow();
+  const {
+    workflowSnapshot,
+    setWorkflowSnapshot,
+    deletions,
+    setDeletions,
+    conversations,
+    setConversations,
+    connected,
+    streamError,
+  } = useWorkflow();
   const [activityConnected, setActivityConnected] = useState(false);
   const [activityVersion, setActivityVersion] = useState(0);
   const [storedSnapshot, setSnapshot] = useState<ConversationSnapshot>();
@@ -342,22 +348,25 @@ export function ChatApp() {
     setLocal(next);
   };
   const loadError = useRef('');
-  const refresh = async () => {
-    const result = await client.conversations();
-    setConversations(result.conversations);
+  const clearLoadError = () => {
     // A failed load is transient; clear it once the service answers again.
     const stale = loadError.current;
     loadError.current = '';
     if (stale) setError((message) => (message === stale ? '' : message));
   };
+  const refresh = async () => {
+    const result = await client.conversations();
+    setConversations(result.conversations);
+    clearLoadError();
+  };
   useEffect(() => {
-    void refresh().catch((e) => {
-      loadError.current = e.message;
-      setError(e.message);
-    });
-    const timer = setInterval(() => void refresh().catch(() => {}), 5000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!streamError) return;
+    loadError.current = streamError;
+    setError(streamError);
+  }, [streamError]);
+  useEffect(() => {
+    if (connected) clearLoadError();
+  }, [connected]);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
       if (
