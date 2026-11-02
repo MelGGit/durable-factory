@@ -10,6 +10,7 @@ import {
 import { markdown } from './markdown.js';
 import { conversationItems } from './transcript.js';
 import { CommandLog, useRunDetails } from './runs.js';
+import { eventHub } from './hooks/use-workflow.js';
 import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
 import { RunQuestion, RunResumePrompt } from './run-question.js';
@@ -96,6 +97,7 @@ export function ImplementationTranscript({
       (e) => {
         if (active) setError(e.message);
       },
+      eventHub,
     );
     return () => {
       active = false;

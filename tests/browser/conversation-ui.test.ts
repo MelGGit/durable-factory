@@ -26,7 +26,7 @@ async function installSnapshotStream(
   pushers.set(
     page,
     await installAgUiStream(page, {
-      match: '/ag-ui/events',
+      channel: `chat:${initial.conversation.id}`,
       threadId: initial.conversation.id,
       view: conversationView,
       initial,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  EventHub,
   WorkflowClient,
   type ConversationSummary,
   type DeletionOperation,
@@ -7,10 +8,11 @@ import {
 } from '../../../../packages/shared/src/index.js';
 
 const workflowClient = new WorkflowClient();
+/** The tab's one long-lived connection. The browser allows few per origin,
+ * shared by tabs, so the open chat and run activity are carried on it too. */
+export const eventHub = new EventHub(workflowClient);
 
-/** Follows runs, pending deletions and conversations over one stream. Keep
- * it to one: the browser allows few connections per origin, shared by tabs,
- * and the selected chat needs its own. */
+/** Follows runs, pending deletions and conversations over the hub's stream. */
 export function useWorkflow() {
   const [workflowSnapshot, setWorkflowSnapshot] = useState<WorkflowSnapshot>();
   const [deletions, setDeletions] = useState<DeletionOperation[]>([]);
@@ -19,7 +21,7 @@ export function useWorkflow() {
   const [streamError, setStreamError] = useState('');
   useEffect(
     () =>
-      workflowClient.watchProject(
+      eventHub.watch(
         (state) => {
           setWorkflowSnapshot(state.snapshot);
           setDeletions(state.deletions);

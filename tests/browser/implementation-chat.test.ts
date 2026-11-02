@@ -330,7 +330,7 @@ test(
         ],
       };
       const emit = await installAgUiStream(page, {
-        match: '/activity/ag-ui/events',
+        channel: `activity:${run.id}`,
         threadId: run.id,
         view: activityView,
         initial,

@@ -18,7 +18,7 @@ import { useConversationUrl, useRoute } from './hooks/use-route.js';
 import { usePageHeader } from './hooks/use-page-header.js';
 import { confirmLeave } from './hooks/use-unsaved-changes.js';
 import { useProjects } from './hooks/use-projects.js';
-import { useWorkflow } from './hooks/use-workflow.js';
+import { eventHub, useWorkflow } from './hooks/use-workflow.js';
 import { Settings } from './settings.js';
 import { AddProject } from './add-project.js';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -622,6 +622,7 @@ export function ChatApp() {
       (e) => {
         if (isCurrent(view)) setError(e.message);
       },
+      eventHub,
     );
     return () => {
       view.abort.abort();
