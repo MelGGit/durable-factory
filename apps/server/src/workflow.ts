@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
-import { contentVersion } from './sse.js';
+import { contentVersion, writeSse } from './sse.js';
 import {
   defineDoc,
   defineTask,
@@ -2287,18 +2287,26 @@ export class WorkflowService {
       read: () => Promise<Record<string, unknown>>;
       watch: (harness: Harness) => Promise<(StreamWatch | undefined)[]>;
     },
+    /** Lets other streams share this connection, through its one writer. */
+    attach?: (
+      streamId: string,
+      write: (text: string) => Promise<boolean>,
+    ) => () => void,
   ) {
+    const streamId = randomUUID();
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
       'X-Content-Type-Options': 'nosniff',
+      // A resumed stream may send no frame, and a client that follows chats
+      // over it needs the id to subscribe them.
+      'X-Factory-Stream-Id': streamId,
     });
     // A resumed stream may have nothing to send for a while, and the client
     // cannot tell the connection is open until it sees the headers.
     res.flushHeaders();
-    const streamId = randomUUID();
     let sequence = 0,
       closed = false,
       busy = false,
@@ -2316,15 +2324,25 @@ export class WorkflowService {
       clearInterval(heartbeat);
       this.streams.delete(close);
       res.end();
+      detach?.();
       for (const watch of watches)
         void Promise.resolve(watch.stop()).catch(() => {});
     };
+    // One writer, so a channel's payload is never split by another frame.
+    let queue: Promise<unknown> = Promise.resolve(),
+      pending = 0,
+      detach: (() => void) | undefined;
     const write = (text: string) => {
-      if (res.writableLength + Buffer.byteLength(text) > 1048576) {
-        close();
-        return;
-      }
-      res.write(text);
+      pending++;
+      const sent = queue.then(() =>
+        closed ? false : writeSse(res, text).catch(() => false),
+      );
+      queue = sent;
+      return sent.then((ok) => {
+        pending--;
+        if (!ok) close();
+        return ok;
+      });
     };
     const publish = async () => {
       if (closed) return;
@@ -2349,7 +2367,7 @@ export class WorkflowService {
           )}`;
           if (!closed && version !== last) {
             last = version;
-            write(
+            void write(
               `id: ${version}\ndata: ${JSON.stringify({ apiVersion: API_VERSION, streamId, sequence: ++sequence, type: sequence === 1 ? 'snapshot' : 'update', snapshot, ...more })}\n\n`,
             );
           }
@@ -2361,12 +2379,13 @@ export class WorkflowService {
     // What the adapter reports does not live in a document, so it is the one
     // part still read on a timer.
     const fallback = setInterval(() => void publish().catch(close), 2000);
-    const heartbeat = setInterval(
-      () => write('event: heartbeat\ndata: {}\n\n'),
-      15000,
-    );
+    const heartbeat = setInterval(() => {
+      // Whatever is being written proves the connection is alive.
+      if (!pending) void write('event: heartbeat\ndata: {}\n\n');
+    }, 15000);
     res.on('close', close);
     this.streams.add(close);
+    detach = attach?.(streamId, write);
     await publish().catch((error) => {
       close();
       throw error;

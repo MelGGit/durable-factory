@@ -3,6 +3,7 @@ import { Planning } from './planning.js';
 import type { ConversationId } from '@earendil-works/pi-durable';
 import type { DeletionOperation } from '../../../packages/shared/src/deletion.js';
 import { RunActivityService } from './activity.js';
+import { ChannelRegistry } from './channels.js';
 import {
   runAgUi,
   conversationEncoder,
@@ -158,6 +159,24 @@ export async function startService(options: ServiceOptions = {}) {
   let planning: PlanningService;
   let github: GitHubAdapter;
   let workflow: WorkflowService;
+  // Chats and runs followed over a client's project stream. The services are
+  // looked up per call, since maintenance replaces them.
+  const channels = new ChannelRegistry({
+    authorize: async (kind, id, project) => {
+      const owner =
+        kind === 'chat'
+          ? (await chat!.summary(id)).projectId
+          : (await workflow.get(id)).projectId;
+      if (project && owner !== project)
+        throw new ApiError('NOT_FOUND', 'Not found in this project.', 404);
+    },
+    start: (kind, id, sink) => {
+      if (kind === 'activity')
+        return activity!.streamTo(id, sink, activityEncoder(id));
+      const view = conversationEncoder(id);
+      return chat!.streamTo(id, sink, view.encode, view.failed);
+    },
+  });
   let processes: ProcessSupervisor;
   let workspaces: Workspaces;
   let maintenance = false;
@@ -295,7 +314,7 @@ export async function startService(options: ServiceOptions = {}) {
     // /projects/:id/<resource> addresses a resource of one project. Handlers
     // see the plain path, and the project the request is for.
     const scopedPath =
-      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|events|github\/validate|issues(?:\/\d+\/planning)?))$/.exec(
+      /^\/api\/v1\/projects\/([A-Za-z0-9_-]+)(\/(?:settings|conversations|runs|runs\/events|events(?:\/[A-Za-z0-9-]+\/subscriptions)?|github\/validate|issues(?:\/\d+\/planning)?))$/.exec(
         url.pathname,
       );
     const scopedProject = scopedPath?.[1];
@@ -550,7 +569,15 @@ export async function startService(options: ServiceOptions = {}) {
               await harness.watchDoc(Catalog, context),
             ],
           },
+          (streamId, write) =>
+            channels.attach(streamId, scopedProject && projectId, write),
         );
+      const subscriptions =
+        /^\/api\/v1\/events\/([A-Za-z0-9-]{1,64})\/subscriptions$/.exec(path);
+      if (subscriptions && req.method === 'PUT')
+        return send(res, 200, {
+          channels: await channels.replace(subscriptions[1], await body(req)),
+        });
       if (path === '/api/v1/runs/events' && req.method === 'GET')
         return workflow.stream(
           res,

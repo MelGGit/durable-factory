@@ -49,6 +49,10 @@ export function open(base: string, path: string, resume?: string) {
   req.on('error', () => undefined);
   req.end();
   return {
+    /** The id the service gave the stream, once it has arrived. */
+    get streamId() {
+      return response?.headers['x-factory-stream-id'] as string | undefined;
+    },
     /** Whether the response itself, not a frame, arrives in time. */
     async opened(timeout: number) {
       const deadline = Date.now() + timeout;
