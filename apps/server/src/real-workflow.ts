@@ -38,11 +38,21 @@ import {
   type StageAttempt,
   type Ticket,
   type RunEvidence,
+  type RegressionEvidence,
 } from '../../../packages/shared/src/index.js';
 import { context } from './storage.js';
 import { Catalog } from './chat.js';
 import { regressionProof } from './regression.js';
-import { ProcessSupervisor } from './processes.js';
+import {
+  OUTPUT_BYTES,
+  FAILURE_TAIL_BYTES,
+  fileTail,
+  numbered,
+  numberedTail,
+  readLog,
+  searchExpression,
+} from './agent-output.js';
+import { ProcessSupervisor, type CommandRecord } from './processes.js';
 import { Workspaces, safePath, git, gitEnvironment } from './workspace.js';
 import {
   GitHubFailure,
@@ -70,6 +80,22 @@ const outOfScopeItem = (item: string | OutOfScope): OutOfScope =>
     : item;
 /** Reviewer needs_input rounds after which the same question is not asked again. */
 const REVIEWER_QUESTION_LIMIT = 2;
+/** Footer of a command result; the artifact id works with check_output. */
+const FAILURE_TAILS = 3;
+/** Bounded output tail of a failed command, with the way to read the rest. */
+async function failureTail(
+  record: Pick<CommandRecord, 'artifact' | 'id'> | undefined,
+  id = record?.id,
+) {
+  if (!record) return `Output unavailable for ${id}.`;
+  const tail = await fileTail(record.artifact, FAILURE_TAIL_BYTES).catch(
+    () => undefined,
+  );
+  if (!tail) return `Output unavailable for ${record.id}.`;
+  return `--- output${tail.truncated ? ' (tail)' : ''} of ${record.id}${tail.truncated ? '; read more with check_output' : ''} ---\n${tail.text.trimEnd()}\n---`;
+}
+const commandStatus = (result: CommandRecord, truncated: boolean) =>
+  `[${result.exitCode === undefined ? 'no exit code: timed out or interrupted' : `exit code ${result.exitCode}`}; command artifact ${result.id}${truncated ? '; earlier output was dropped, read it with check_output' : ''}]`;
 type AgentOperation = {
   failure?: 'provider_timeout';
   runId: string;
@@ -239,9 +265,10 @@ export class RealWorkflow {
     const command = defineTool({
       name: 'worktree_command',
       description:
-        'Run a local development command with captured deadline. This is not an OS sandbox. Do not publish, merge, commit, or access credentials.',
+        'Run a local development command with captured deadline. Returns the tail of its combined output and the exit code; a nonzero exit is an error. This is not an OS sandbox. Do not publish, merge, commit, or access credentials.',
       parameters: Type.Object({ command: Type.String({ minLength: 1 }) }),
       replay: 'unsafe',
+      outputLimits: { retain: 'tail' },
       execute: async (args, api, ctx) => {
         const run = await this.guard(api, true),
           active = this.active.get(String(api.conversationId))!;
@@ -260,7 +287,142 @@ export class RealWorkflow {
           env: gitEnvironment(),
           output: (t) => api.output(t),
         });
-        return text({ exitCode: result.exitCode });
+        const retained = api.retainedOutput();
+        return {
+          output: [
+            {
+              type: 'text' as const,
+              text: `${retained.text}${retained.text.endsWith('\n') || !retained.text ? '' : '\n'}${commandStatus(result, retained.truncated)}`,
+            },
+          ],
+          isError: result.exitCode !== 0,
+        };
+      },
+    });
+    const checkOutput = defineTool({
+      name: 'check_output',
+      description:
+        'Read the full log of a check, setup, regression or tool command of this run. Without arguments it lists the commands with their artifact ids. Select one by artifact id, or by check index in the current check results. mode tail (default) shows the last lines; range shows startLine..endLine (at most 500 lines); grep shows lines matching pattern (regular expression, or literal text with literal) with context lines. Output is bounded; the result says how to continue.',
+      parameters: Type.Object({
+        artifact: Type.Optional(Type.String({ minLength: 1 })),
+        check: Type.Optional(Type.Integer({ minimum: 0 })),
+        mode: Type.Optional(
+          Type.Union([
+            Type.Literal('tail'),
+            Type.Literal('range'),
+            Type.Literal('grep'),
+          ]),
+        ),
+        lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 2000 })),
+        startLine: Type.Optional(Type.Integer({ minimum: 1 })),
+        endLine: Type.Optional(Type.Integer({ minimum: 1 })),
+        pattern: Type.Optional(Type.String({ minLength: 1 })),
+        literal: Type.Optional(Type.Boolean()),
+        context: Type.Optional(Type.Integer({ minimum: 0, maximum: 5 })),
+        maxMatches: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+      }),
+      replay: 'safe',
+      execute: async (args, api) => {
+        const run = await this.guard(api),
+          records = (await deps.processes.records(run.id)).sort(
+            (a, b) => a.startedAt - b.startedAt,
+          );
+        const results = run.evidence.findLast(
+          (e) => e.kind === 'checks',
+        )?.results;
+        const id =
+          args.artifact ??
+          (args.check === undefined
+            ? undefined
+            : results?.[args.check]?.artifact);
+        if (!id) {
+          if (args.artifact === undefined && args.check !== undefined)
+            throw new Error(
+              results
+                ? `Current check results have ${results.length} command(s); check must be 0..${results.length - 1}.`
+                : 'There are no current check results. Call check_output without arguments to list commands.',
+            );
+          return text({
+            commands: records.slice(-50).map((r) => ({
+              artifact: r.id,
+              command: r.command,
+              state: r.state,
+              exitCode: r.exitCode,
+              ...(results?.some((c) => c.artifact === r.id)
+                ? { check: results.findIndex((c) => c.artifact === r.id) }
+                : {}),
+            })),
+            ...(records.length > 50
+              ? { note: `${records.length - 50} older command(s) omitted.` }
+              : {}),
+          });
+        }
+        const record = records.find((r) => r.id === id);
+        if (!record)
+          throw new Error(
+            `Unknown artifact ${JSON.stringify(id)}. Call check_output without arguments to list this run's command artifacts.`,
+          );
+        const mode = args.mode ?? 'tail';
+        if (mode === 'range') {
+          if (!args.startLine)
+            throw new Error(
+              'mode range needs startLine (and optional endLine).',
+            );
+          const startLine = args.startLine,
+            endLine = Math.min(
+              args.endLine ?? startLine + 499,
+              startLine + 499,
+            );
+          if (endLine < startLine)
+            throw new Error('endLine must not be before startLine.');
+          const read = await readLog(record.artifact, {
+            mode: 'range',
+            startLine,
+            endLine,
+          });
+          const page = numbered(read.lines);
+          const last = startLine + page.shown - 1;
+          return {
+            output: [
+              {
+                type: 'text' as const,
+                text: `${page.text}\n[${record.command}: lines ${startLine}-${last} of ${read.total}${last < read.total ? `; continue with startLine=${last + 1}` : ''}]`,
+              },
+            ],
+          };
+        }
+        if (mode === 'grep') {
+          if (!args.pattern) throw new Error('mode grep needs a pattern.');
+          const maxMatches = args.maxMatches ?? 50;
+          const read = await readLog(record.artifact, {
+            mode: 'grep',
+            pattern: searchExpression(args.pattern, args.literal),
+            context: args.context ?? 0,
+            maxMatches,
+          });
+          const page = numbered(read.lines);
+          return {
+            output: [
+              {
+                type: 'text' as const,
+                text: `${page.text || '(no matching lines)'}\n[${record.command}: ${read.matches} match(es) in ${read.total} lines${read.matches > maxMatches ? `; showing the first ${maxMatches}, narrow the pattern or use mode range` : ''}${page.shown < read.lines.length ? `; output cut at ${OUTPUT_BYTES} bytes, lower maxMatches or context` : ''}]`,
+              },
+            ],
+          };
+        }
+        const read = await readLog(record.artifact, {
+          mode: 'tail',
+          lines: args.lines ?? 200,
+        });
+        const page = numberedTail(read.lines);
+        return {
+          output: [
+            {
+              type: 'text' as const,
+              text: `${page.text}\n[${record.command}: lines ${page.first}-${read.total} of ${read.total}${page.first > 1 ? `; read earlier lines with mode range, endLine=${page.first - 1}, or search with mode grep` : ''}]`,
+            },
+          ],
+        };
       },
     });
     const include = defineTool({
@@ -526,6 +688,7 @@ export class RealWorkflow {
       implementation,
       history,
       evidence,
+      checkOutput,
     ].map((tool) => ({ ...tool, executionMode: 'sequential' as const }));
     this.extension = defineExtension({
       name: 'factory-real-agents',
@@ -987,6 +1150,7 @@ export class RealWorkflow {
         throw new Error('Mutating commands are not quiescent.');
       const before = await workspaces.candidate(run);
       const results: NonNullable<RunEvidence['results']> = [];
+      const tails = new Map<string, string>();
       // The proof is cheap and the most likely step to need a repair. Run it
       // first so a broken proof fails in seconds, not after the full suite.
       const regression =
@@ -1021,6 +1185,8 @@ export class RealWorkflow {
             duration: result.finishedAt! - result.startedAt,
             artifact: result.id,
           });
+          if (result.exitCode !== 0 && tails.size < FAILURE_TAILS)
+            tails.set(result.id, await failureTail(result));
         }
       const after = await workspaces.candidate(run),
         passed =
@@ -1033,9 +1199,12 @@ export class RealWorkflow {
             ? [
                 ...results.map(
                   (result) =>
-                    `${result.exitCode === 0 ? 'Passed' : 'Failed'}: ${result.command} (exit ${result.exitCode}, ${result.duration} ms)`,
+                    `${result.exitCode === 0 ? 'Passed' : 'Failed'}: ${result.command} (exit ${result.exitCode}, ${result.duration} ms)${tails.has(result.artifact) ? `\n${tails.get(result.artifact)}` : result.exitCode === 0 ? '' : `\nOutput not shown; read it with check_output artifact ${result.artifact}.`}`,
                 ),
                 ...(regression ? [regression.message] : []),
+                ...(regression && !regression.passed
+                  ? [await this.regressionTail(regression)]
+                  : []),
                 ...(regression && !regression.passed
                   ? ['Required checks were skipped until the proof passes.']
                   : []),
@@ -1255,6 +1424,24 @@ export class RealWorkflow {
     return run.interventions.some(
       (i) => i.state === 'resolved' && i.reason === 'developer',
     );
+  }
+  /** Output tail of the proof command that decided a failed regression proof. */
+  private async regressionTail(regression: RegressionEvidence) {
+    const last = regression.results.at(-1),
+      decisive =
+        last && last.exitCode !== 0
+          ? last
+          : regression.results.findLast((r) =>
+              r.artifact.endsWith('-base-test'),
+            );
+    return decisive
+      ? failureTail(
+          (await this.deps.processes.records()).find(
+            (r) => r.id === decisive.artifact,
+          ),
+          decisive.artifact,
+        )
+      : '';
   }
   private async changedFiles(run: WorkflowRun, source: string) {
     return (

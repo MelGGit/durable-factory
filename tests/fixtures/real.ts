@@ -21,6 +21,13 @@ import type {
   GitHubAdapter,
 } from '../../apps/server/src/github.js';
 
+/** A tool result as the scripted model received it. */
+export type SeenResult = {
+  role: 'developer' | 'reviewer';
+  toolName: string;
+  isError: boolean;
+  text: string;
+};
 export async function realFixture(
   options: {
     directory?: string;
@@ -47,6 +54,16 @@ export async function realFixture(
       outOfScope: { change: string; required: boolean; evidence: string }[];
     };
     issueBody?: string;
+    /** Tool calls the developer makes before the default script, in order. */
+    developerCalls?: {
+      name: string;
+      args: Record<string, unknown> | ((results: SeenResult[]) => object);
+    }[];
+    /** Same for the reviewer. */
+    reviewerCalls?: {
+      name: string;
+      args: Record<string, unknown> | ((results: SeenResult[]) => object);
+    }[];
   } = {},
 ) {
   const directory =
@@ -78,6 +95,8 @@ export async function realFixture(
   }
   const deps = fixture();
   let reviewAsked = false;
+  const seen = new Map<string, SeenResult>();
+  const prompts: { role: 'developer' | 'reviewer'; text: string }[] = [];
   deps.faux.setResponses(
     Array.from({ length: 200 }, () => async (input) => {
       const user = [...input.messages].reverse().find((m) => m.role === 'user');
@@ -99,6 +118,32 @@ export async function realFixture(
         fauxAssistantMessage(fauxToolCall(name, args), {
           stopReason: 'toolUse',
         });
+      const role = text.includes('"role":"developer"')
+        ? 'developer'
+        : text.includes('"role":"reviewer"')
+          ? 'reviewer'
+          : undefined;
+      if (role && !prompts.some((p) => p.text === text))
+        prompts.push({ role, text });
+      const mine: SeenResult[] = [];
+      for (const r of results) {
+        const entry: SeenResult = {
+          role: role!,
+          toolName: r.toolName,
+          isError: r.isError,
+          text: r.content.map((c) => ('text' in c ? c.text : '')).join(''),
+        };
+        seen.set(`${role}-${r.toolCallId}`, entry);
+        mine.push(entry);
+      }
+      const scripted = role && options[`${role}Calls`];
+      if (scripted && mine.length < scripted.length) {
+        const next = scripted[mine.length];
+        return call(
+          next.name,
+          typeof next.args === 'function' ? next.args(mine) : next.args,
+        );
+      }
       if (text === 'plan') {
         if (!results.some((r) => r.toolName === 'save_ticket'))
           return call('save_ticket', ticket);
@@ -359,6 +404,12 @@ export async function realFixture(
     dataDir,
     client,
     github,
+    /** Every tool result the scripted agents received. */
+    get seen() {
+      return [...seen.values()];
+    },
+    /** Every distinct developer and reviewer prompt, in order. */
+    prompts,
     get service() {
       return service;
     },
