@@ -161,11 +161,17 @@ test('a change to a file the ticket never names pauses before any check runs', a
     await f.close();
   }
 });
-test('a reviewer who finds changes beyond the ticket asks the user instead of passing', async () => {
+test('a reviewer sends changes the ticket does not require back to the developer without asking', async () => {
   const f = await realFixture({
     reviewScope: {
       withinTicket: false,
-      outOfScope: ['Raised a timeout the ticket never mentions'],
+      outOfScope: [
+        {
+          change: 'Raised a timeout the ticket never mentions',
+          required: false,
+          evidence: 'No criterion or check depends on it.',
+        },
+      ],
     },
   });
   try {
@@ -175,11 +181,45 @@ test('a reviewer who finds changes beyond the ticket asks the user instead of pa
       (r) => r.status === 'needs_input',
       30000,
     );
-    assert.equal(run.stage, 'reviewer');
-    const question = run.interventions.find((i) => i.state === 'pending')!;
-    assert.match(question.question, /beyond the ticket/);
-    assert.match(question.question, /Raised a timeout/);
+    assert.equal(
+      run.interventions.some((i) => i.reason === 'reviewer'),
+      false,
+    );
+    assert.equal(
+      run.attempts.filter((a) => a.stage === 'developer').length > 1,
+      true,
+    );
     assert.equal(f.creates, 0);
+  } finally {
+    await f.close();
+  }
+});
+test('a reviewer accepts a change beyond the ticket that it shows is required', async () => {
+  const f = await realFixture({
+    reviewScope: {
+      withinTicket: false,
+      outOfScope: [
+        {
+          change: 'Exported the helper the ticket change imports',
+          required: true,
+          evidence: 'value.txt is read through it.',
+        },
+      ],
+    },
+  });
+  try {
+    const started = await f.client.startIssue(7, 'review-scope-ok');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => r.attempts.some((a) => a.stage === 'reviewer' && a.outcome),
+      30000,
+    );
+    const review = run.attempts.find((a) => a.stage === 'reviewer')!;
+    assert.equal(review.outcome, 'passed');
+    assert.equal(
+      run.interventions.some((i) => i.reason === 'reviewer'),
+      false,
+    );
   } finally {
     await f.close();
   }

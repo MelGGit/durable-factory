@@ -42,7 +42,10 @@ export async function realFixture(
     regression?: RegressionRequirement;
     proofTest?: string;
     extraFile?: string;
-    reviewScope?: { withinTicket: boolean; outOfScope: string[] };
+    reviewScope?: {
+      withinTicket: boolean;
+      outOfScope: { change: string; required: boolean; evidence: string }[];
+    };
     issueBody?: string;
   } = {},
 ) {
@@ -211,11 +214,12 @@ export async function realFixture(
           !results.some((r) => r.toolName === 'submit_review')
         )
           return call('submit_review', {
-            verdict:
-              options.reviewScope?.withinTicket === false
-                ? 'needs_input'
-                : 'pass',
-            findings: [],
+            verdict: options.reviewScope?.outOfScope.some((i) => !i.required)
+              ? 'changes_requested'
+              : 'pass',
+            findings: options.reviewScope?.outOfScope.some((i) => !i.required)
+              ? [{ message: 'Revert the extra change.', blocking: true }]
+              : [],
             scope: options.reviewScope ?? {
               withinTicket: true,
               outOfScope: [],
