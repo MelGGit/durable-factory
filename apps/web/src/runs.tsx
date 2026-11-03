@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityDisclosure } from './activity-disclosure.js';
 import type { PageCard } from './hooks/use-page-cards.js';
 import { RunUsage } from './run-details.js';
 import { useRunCommand } from './hooks/use-run-command.js';
@@ -68,25 +69,35 @@ export function StartRun({ conversationId }: { conversationId: string }) {
 export function CommandLog({
   runId,
   commandId,
+  command,
+  summary,
+  visible = true,
+  attention = false,
   running = false,
 }: {
   runId: string;
   commandId: string;
+  command: string;
+  summary: React.ReactNode;
+  visible?: boolean;
+  attention?: boolean;
   running?: boolean;
 }) {
   const [output, setOutput] = useState(''),
-    [expanded, setExpanded] = useState(false),
+    [expanded, setExpanded] = useState(attention),
     [more, setMore] = useState(true),
     [error, setError] = useState(''),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [copyState, setCopyState] = useState('Copy command');
   const offset = useRef(0),
-    loading = useRef(false),
     loadPromise = useRef<Promise<void> | undefined>(undefined),
     request = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => {
+    if (attention) setExpanded(true);
+  }, [attention]);
   const load = useCallback(() => {
     if (loadPromise.current) return loadPromise.current;
-    loading.current = true;
     setBusy(true);
     const work = (async () => {
       const controller = new AbortController();
@@ -110,7 +121,6 @@ export function CommandLog({
         if (!controller.signal.aborted)
           setError(e instanceof Error ? e.message : 'Unable to load output.');
       } finally {
-        loading.current = false;
         if (!controller.signal.aborted) setBusy(false);
       }
     })();
@@ -121,7 +131,7 @@ export function CommandLog({
     return work;
   }, [runId, commandId]);
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded || !visible) return;
     let stopped = false;
     void (async () => {
       await loadPromise.current;
@@ -136,20 +146,45 @@ export function CommandLog({
       stopped = true;
       clearInterval(timer);
     };
-  }, [expanded, running, load]);
+  }, [expanded, visible, running, load]);
   return (
-    <details
+    <ActivityDisclosure
       className="command-output"
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
+      open={expanded}
+      onOpenChange={setExpanded}
     >
-      <summary>View command output</summary>
+      <summary>{summary}</summary>
       {expanded && (
-        <>
-          <pre>
+        <div className="command-body">
+          <div className="command-section-heading">
+            <span>Command</span>
+            <button
+              type="button"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await navigator.clipboard.writeText(command);
+                    setCopyState('Copied');
+                  } catch {
+                    setCopyState('Copy failed');
+                  }
+                })();
+              }}
+            >
+              {copyState}
+            </button>
+          </div>
+          <pre className="command-source">
+            <code>{command}</code>
+          </pre>
+          <div className="command-section-heading">Output</div>
+          <pre className="command-log" aria-busy={busy}>
             {output ||
-              (running
-                ? 'Waiting for command output…'
-                : 'Command produced no output.')}
+              (busy
+                ? 'Loading command output…'
+                : running
+                  ? 'Waiting for command output…'
+                  : 'Command produced no output.')}
           </pre>
           {(more || error) && (
             <button disabled={busy} onClick={() => void load()}>
@@ -157,9 +192,9 @@ export function CommandLog({
             </button>
           )}
           {error && <p role="alert">{error}</p>}
-        </>
+        </div>
       )}
-    </details>
+    </ActivityDisclosure>
   );
 }
 export function useRunDetails({

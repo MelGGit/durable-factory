@@ -691,51 +691,7 @@ h3 {
   line-height: 1.8;
   text-align: center;
 }
-.tool-card {
-  padding: 0;
-  border: 1px solid var(--line);
-  min-width: 0;
-  overflow: hidden;
-}
-.tool-card summary {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  cursor: pointer;
-  list-style: none;
-  min-width: 0;
-}
-.tool-card summary::after {
-  margin-left: 2px;
-}
-.tool-card summary::-webkit-details-marker {
-  display: none;
-}
-.tool-indicator {
-  flex-shrink: 0;
-}
-.tool-preview {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: 12px;
-  flex: 1;
-  min-width: 0;
-}
-.tool-status {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.tool-card h4 {
-  font-size: 12px;
-  margin: 0;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
+/* Tool details share the transcript's type and spacing. */
 .tool-card pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -743,11 +699,17 @@ h3 {
   overflow: auto;
   font-size: var(--font-ui);
   line-height: 1.6;
-  padding: 0 12px 12px;
+  padding: 8px 12px 12px;
   margin: 0;
 }
-.tool-card > button,
-.tool-card > p {
+.tool-card h4 {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin: 0;
+  padding: 10px 12px 0;
+}
+.tool-detail > p {
   margin: 8px 12px 12px;
 }
 .artifact-output > button,
@@ -928,12 +890,6 @@ h3 {
   .chat-empty h2 {
     font-size: 24px;
   }
-  .tool-preview {
-    display: none;
-  }
-  .tool-card summary {
-    flex-wrap: wrap;
-  }
 }
 
 /* Durable workflow inspector */
@@ -1068,17 +1024,261 @@ h3 {
   overflow-wrap: anywhere;
   margin-top: 6px;
 }
-.command-output {
-  margin-top: 10px;
+.workflow-event-row,
+.workflow-events > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui);
 }
-.command-output summary {
+.workflow-event-row {
+  margin: 6px 0 12px;
+}
+.workflow-event-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workflow-events {
+  min-width: 0;
+  margin: 6px 0 12px;
+}
+.workflow-events > summary {
+  padding: 7px 0;
   cursor: pointer;
+  list-style: none;
+}
+.workflow-events > summary::-webkit-details-marker {
+  display: none;
+}
+.workflow-events > summary::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  align-self: center;
+  margin-right: 3px;
+}
+.workflow-events[open] > summary::after {
+  transform: rotate(45deg);
+}
+.workflow-events > summary:hover {
+  color: var(--text);
+}
+.workflow-events > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.workflow-events-attention > summary {
+  color: var(--danger);
+}
+.workflow-event-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.workflow-event-record {
+  padding: 10px 12px;
+}
+.workflow-event-record + .workflow-event-record {
+  border-top: 1px solid var(--border);
+}
+.workflow-event-record .workflow-event-row {
+  color: var(--text);
+  margin: 0 0 6px;
+}
+.workflow-event-detail {
+  max-height: 280px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.workflow-event-detail > :first-child {
+  margin-top: 0;
+}
+.workflow-event-detail > :last-child {
+  margin-bottom: 0;
+}
+.workflow-event-detail :is(h1, h2, h3, h4) {
+  font-size: var(--font-ui);
+}
+.implementation-events .workflow-events time,
+.implementation-events .workflow-event-row time {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.command-output {
+  min-width: 0;
+}
+.workflow-commands summary {
+  cursor: pointer;
+  list-style: none;
+}
+.workflow-commands summary::-webkit-details-marker {
+  display: none;
+}
+.workflow-commands summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(-45deg);
+  margin-right: 4px;
+}
+.workflow-commands[open] > summary::after,
+.command-output[open] > summary::after {
+  transform: rotate(45deg);
+}
+.workflow-commands {
+  color: var(--text-muted);
+  font-size: var(--font-ui);
+  min-width: 0;
+  margin: 6px 0 12px;
+}
+.command-group-summary,
+.command-output > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+.workflow-commands summary:hover {
+  background: var(--hover);
+}
+.workflow-commands summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -3px;
+  border-radius: 6px;
+}
+.command-group-title {
+  font-weight: 400;
+}
+.command-group-summary {
+  padding: 7px 0;
+}
+.command-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.command-status-success {
+  color: var(--text-muted);
+}
+.command-status-success::before {
+  display: none;
+}
+.workflow-command + .workflow-command {
+  border-top: 1px solid var(--border);
+}
+.command-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.command-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: var(--font-label);
+}
+.command-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.command-status-running {
+  color: var(--info);
+}
+.command-status-failed {
+  color: var(--danger);
+}
+.command-status-warning {
+  color: var(--warn);
+}
+.command-group-failed {
+  border-color: var(--danger-border);
+}
+.command-body {
+  padding: 0 14px 14px;
+}
+.command-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  color: var(--text-muted);
+  font-size: var(--font-label);
+}
+.command-section-heading button,
+.command-body > button {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: var(--font-label);
 }
 .command-output pre {
+  margin: 4px 0 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 360px;
   overflow: auto;
+}
+.command-output pre:last-child {
+  margin-bottom: 0;
+}
+.implementation-events .workflow-commands time {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.run-event > strong {
+  color: var(--text);
+  font-weight: 500;
+  font-size: var(--font-ui);
+}
+@media (max-width: 600px) {
+  .command-group-summary,
+  .command-output > summary {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px;
+  }
+  .command-output .command-label {
+    flex-basis: calc(100% - 24px);
+  }
+  .command-output .command-status {
+    margin-left: 18px;
+  }
+  .command-body {
+    padding: 0 10px 10px;
+  }
 }
 .linked-implementation {
   color: var(--green);
@@ -1660,44 +1860,132 @@ h3 {
   border-left-color: var(--border);
   color: var(--text-muted);
 }
-.tool-card {
-  background: var(--surface-2);
-  border-color: var(--border);
-  border-radius: 8px;
-  margin: 8px 0 14px;
+.tool-activity {
+  min-width: 0;
+  margin: 6px 0 12px;
 }
-.tool-card summary {
-  padding: 8px 12px;
+.tool-agent {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 0 0 2px;
+}
+.tool-card,
+.tool-group {
+  min-width: 0;
+  color: var(--text-muted);
+  margin: 4px 0 10px;
+}
+.tool-activity > .tool-card,
+.tool-activity > .tool-group {
+  margin: 0;
+}
+.tool-card > summary,
+.tool-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 0;
   font-size: var(--font-ui);
+  cursor: pointer;
+  list-style: none;
+  border-radius: 4px;
 }
-.tool-card summary::after {
+.tool-card > summary:hover,
+.tool-group > summary:hover {
+  color: var(--text);
+}
+.tool-card > summary:focus-visible,
+.tool-group > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.tool-card > summary::-webkit-details-marker,
+.tool-group > summary::-webkit-details-marker {
+  display: none;
+}
+.tool-card > summary::after,
+.tool-group > summary::after {
   content: '';
-  width: 6px;
-  height: 6px;
-  margin: 0 2px 2px 4px;
-  border-right: 1.5px solid var(--text-muted);
-  border-bottom: 1.5px solid var(--text-muted);
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  margin-right: 3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+.tool-card[open] > summary::after,
+.tool-group[open] > summary::after {
   transform: rotate(45deg);
 }
-.tool-card[open] summary::after {
-  content: '';
-  transform: rotate(-135deg);
+.tool-label {
+  min-width: 0;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.tool-indicator {
-  color: var(--success);
-}
-.tool-preview,
 .tool-status {
-  color: var(--text-muted);
+  flex-shrink: 0;
+  font-size: 11px;
 }
-.tool-card[data-status='failed'] {
-  border-color: var(--danger-border);
-}
-.tool-card[data-status='failed'] .tool-indicator {
+.tool-failed {
   color: var(--danger);
 }
-.tool-card[data-status='running'] .tool-indicator {
-  color: var(--accent);
+.tool-indicator {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tool-spin 1s linear infinite;
+}
+@keyframes tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-indicator {
+    animation: none;
+  }
+}
+.tool-list,
+.tool-detail {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+  min-width: 0;
+}
+.tool-list > .tool-card {
+  margin: 0;
+}
+.tool-list > .tool-card + .tool-card {
+  border-top: 1px solid var(--border);
+}
+.tool-list > .tool-card > summary {
+  padding: 8px 12px;
+}
+.tool-list .tool-detail {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+.tool-detail {
+  color: var(--text);
+}
+.tool-name {
+  color: var(--text-muted);
+  font-family: monospace;
+  font-size: 11px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tool-card[data-status='failed'] > .tool-detail {
+  border-color: var(--danger-border);
 }
 .agent-activity {
   color: var(--text-muted);

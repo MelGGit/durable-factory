@@ -1,9 +1,6 @@
 import { ImplementationTranscript, RunInformation } from './run-chat.js';
-import {
-  conversationItems,
-  agentLabel,
-  type PresentationTool,
-} from './transcript.js';
+import { conversationItems, agentLabel } from './transcript.js';
+import { Tool, ToolActivity } from './tool-activity.js';
 import { markdown } from './markdown.js';
 import { Overlay, useMedia } from './panels.js';
 import { StartRun } from './runs.js';
@@ -61,122 +58,6 @@ type ConversationView = {
   linkedRunId?: string;
   startEntry?: string;
 };
-function ArtifactText({
-  artifact,
-  conversationId,
-  label = 'output',
-  phase = 'completed',
-}: {
-  artifact: string;
-  conversationId: string;
-  label?: string;
-  phase?: PresentationTool['status'];
-}) {
-  const [output, setOutput] = useState('');
-  const [offset, setOffset] = useState(0);
-  const [exhaustedPhase, setExhaustedPhase] = useState<typeof phase>();
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const load = async () => {
-    setLoading(true);
-    try {
-      const page = await client.artifact(conversationId, artifact, offset);
-      setOutput((previous) => previous + page.text);
-      // EOF is temporary while the tool runs. Keep a byte cursor so a later
-      // read appends only new data, including when completion races this read.
-      setOffset(
-        page.nextOffset ??
-          offset + new TextEncoder().encode(page.text).byteLength,
-      );
-      setExhaustedPhase(page.nextOffset === undefined ? phase : undefined);
-      setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load output.');
-    } finally {
-      setLoading(false);
-    }
-  };
-  return (
-    <div className="artifact-output">
-      {(phase === 'pending' ||
-        phase === 'running' ||
-        exhaustedPhase !== phase) && (
-        <button
-          type="button"
-          disabled={loading}
-          className="secondary"
-          onClick={() => void load()}
-        >
-          {output ? `Load more ${label}` : `Read complete ${label}`}
-        </button>
-      )}
-      {output && <pre>{output}</pre>}
-      {error && <p role="alert">{error}</p>}
-    </div>
-  );
-}
-export function Tool({
-  tool,
-  conversationId,
-}: {
-  tool: PresentationTool;
-  conversationId: string;
-}) {
-  return (
-    <details
-      className="tool-card"
-      data-tool-id={tool.id}
-      data-conversation-item={`tool:${tool.id}`}
-      data-status={tool.status}
-    >
-      <summary>
-        <span className="tool-indicator" aria-hidden="true">
-          {tool.status === 'completed'
-            ? '✓'
-            : tool.status === 'failed'
-              ? '!'
-              : '◌'}
-        </span>
-        <strong>{tool.name}</strong>
-        {tool.arguments && (
-          <code className="tool-preview">
-            {tool.arguments.replace(/\s+/g, ' ').slice(0, 100)}
-          </code>
-        )}
-        <span className="tool-status">{tool.status}</span>
-      </summary>
-      {tool.arguments && (
-        <>
-          <h4>Input / command</h4>
-          <pre>{tool.arguments}</pre>
-        </>
-      )}
-      {tool.output && (
-        <>
-          <h4>Output</h4>
-          <pre>{tool.output}</pre>
-        </>
-      )}
-      {tool.truncated && <p>Output preview is limited.</p>}
-      {tool.inputArtifact && (
-        <ArtifactText
-          key={tool.inputArtifact}
-          artifact={tool.inputArtifact}
-          conversationId={conversationId}
-          label="input"
-        />
-      )}
-      {tool.artifact && (
-        <ArtifactText
-          key={tool.artifact}
-          artifact={tool.artifact}
-          conversationId={conversationId}
-          phase={tool.status}
-        />
-      )}
-    </details>
-  );
-}
 function PlanningOperation({
   snapshot,
   selected,
@@ -764,9 +645,7 @@ export function ChatApp() {
     if (anchor.current !== undefined) {
       const saved = anchor.current;
       const item = Array.from(
-        element.querySelectorAll<HTMLElement>(
-          ':scope > [data-conversation-item]',
-        ),
+        element.querySelectorAll<HTMLElement>('[data-conversation-item]'),
       ).find((node) => node.dataset.conversationItem === saved.key);
       element.scrollTop += item
         ? item.getBoundingClientRect().top - saved.top
@@ -917,12 +796,14 @@ export function ChatApp() {
       if (element) {
         const bounds = element.getBoundingClientRect();
         const item = Array.from(
-          element.querySelectorAll<HTMLElement>(
-            ':scope > [data-conversation-item]',
-          ),
+          element.querySelectorAll<HTMLElement>('[data-conversation-item]'),
         ).find((node) => {
           const rect = node.getBoundingClientRect();
-          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+          return (
+            rect.height > 0 &&
+            rect.bottom > bounds.top &&
+            rect.top < bounds.bottom
+          );
         });
         anchor.current = {
           key: item?.dataset.conversationItem,
@@ -1289,8 +1170,11 @@ export function ChatApp() {
                           }}
                         />
                       ) : (
-                        conversationItems(visibleEntries, snapshot?.tools).map(
-                          (item) => {
+                        <ToolActivity key={selected}>
+                          {conversationItems(
+                            visibleEntries,
+                            snapshot?.tools,
+                          ).map((item) => {
                             if (item.kind === 'tool')
                               return (
                                 <Tool
@@ -1349,8 +1233,8 @@ export function ChatApp() {
                                 )}
                               </article>
                             );
-                          },
-                        )
+                          })}
+                        </ToolActivity>
                       )}
                       {!selectedRun &&
                         !snapshot?.conversation.runId &&

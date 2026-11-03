@@ -85,13 +85,19 @@ test(
         'https://github.com/example/project/pull/9',
       );
       const check = page
-        .locator('.implementation-events .run-event')
+        .locator('.implementation-events .workflow-command')
         .filter({
-          has: page.getByText(run.configuration.requiredChecks[0], {
-            exact: true,
+          has: page.locator('.command-label', {
+            hasText: run.configuration.requiredChecks[0],
           }),
         })
         .last();
+      await check
+        .locator(
+          'xpath=ancestor::details[contains(@class,"workflow-commands")]',
+        )
+        .locator(':scope > summary')
+        .click();
       await check.locator('.command-output > summary').click();
       await page.getByText('Required gate passed', { exact: true }).waitFor();
       await mkdir(resolve('test-results'), { recursive: true });

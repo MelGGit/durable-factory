@@ -11,6 +11,7 @@ import {
   historyView,
   viewSnapshotEvents,
   type ConversationSnapshot,
+  type ToolView,
 } from '../../packages/shared/src/index.js';
 import { installAgUiStream } from './ag-ui-stream.js';
 import { fixture, configure } from '../fixtures/chat.js';
@@ -36,6 +37,289 @@ async function installSnapshotStream(
 async function pushSnapshot(page: Page, snapshot: ConversationSnapshot) {
   await pushers.get(page)!(snapshot);
 }
+
+test(
+  'tool groups stay compact, retain disclosures and in-flight output through regrouping, and reveal new failures once',
+  { timeout: 30000 },
+  async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'factory-tool-groups-'));
+    const service = await startService({ dataDir, port: 0, chat: fixture() });
+    const browser = await chromium.launch({
+      headless: true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    });
+    let release = () => {};
+    try {
+      const client = new ChatClient(service.url);
+      await configure(client);
+      const conversation = await client.createConversation(
+        'Compact tool activity',
+        'tool-groups',
+      );
+      const read: ToolView = {
+        id: 'read',
+        name: 'read_repository',
+        arguments: '{"path":"README.md"}',
+        status: 'running',
+        artifact: 'task-read',
+        output: 'Reading…',
+      };
+      const command: ToolView = {
+        id: 'command',
+        name: 'worktree_command',
+        arguments: '{"command":"bun test"}',
+        status: 'running',
+      };
+      let snapshot: ConversationSnapshot = {
+        conversation,
+        execution: 'running',
+        partial: '',
+        submissions: [],
+        entries: [],
+        tools: [read],
+      };
+      const page = await browser.newPage({
+        viewport: { width: 1440, height: 1000 },
+      });
+      await page.addInitScript(() =>
+        localStorage.setItem('factory.theme.v1', 'system'),
+      );
+      await page.addInitScript(() => {
+        const cancelled: boolean[] = [];
+        Object.assign(window, { __activityClicksCancelled: cancelled });
+        document.addEventListener('click', (event) => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest('.tool-card > summary, .tool-group > summary')
+          )
+            cancelled.push(event.defaultPrevented);
+        });
+      });
+      page.setDefaultTimeout(6000);
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await installSnapshotStream(page, snapshot);
+      let requests = 0;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route('**/artifacts/task-read?*', async (route) => {
+        requests++;
+        await gate;
+        await route.fulfill({
+          json: { text: 'Complete output survives regrouping ✓' },
+        });
+      });
+      await page.goto(`${service.url}/?conversation=${conversation.id}`);
+      const readCard = page.locator('.tool-card[data-tool-id="read"]');
+      await readCard.getByText('Reading README.md', { exact: true }).waitFor();
+      assert.equal(await readCard.getAttribute('open'), null);
+      assert.equal(requests, 0);
+      const group = page.locator('.tool-group');
+      snapshot = { ...snapshot, tools: [read, command] };
+      await pushSnapshot(page, snapshot);
+      await group
+        .locator(':scope > summary')
+        .getByText('Running bun test · 2 calls', { exact: true })
+        .waitFor();
+      assert.equal(await group.getAttribute('open'), null);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      assert.equal(
+        await group
+          .locator(':scope > summary .tool-indicator')
+          .evaluate((node) => getComputedStyle(node).animationName),
+        'none',
+      );
+      assert.equal(requests, 0);
+      snapshot = { ...snapshot, tools: [read] };
+      await pushSnapshot(page, snapshot);
+      await group.waitFor({ state: 'detached' });
+      await readCard.locator(':scope > summary').focus();
+      await page.keyboard.press('Enter');
+      await readCard
+        .getByRole('button', { name: 'Read complete output' })
+        .click();
+      snapshot = {
+        ...snapshot,
+        tools: [{ ...read, status: 'completed' }, command],
+      };
+      await pushSnapshot(page, snapshot);
+      await group
+        .locator(':scope > summary')
+        .getByText('Running bun test · 2 calls', { exact: true })
+        .waitFor();
+      assert.equal(await group.getAttribute('open'), '');
+      assert.equal(await readCard.getAttribute('open'), '');
+      assert.equal(
+        await readCard
+          .getByRole('button', { name: 'Read complete output' })
+          .isDisabled(),
+        true,
+      );
+      release();
+      await readCard
+        .getByText('Complete output survives regrouping ✓', { exact: true })
+        .waitFor();
+      assert.equal(requests, 1);
+
+      // Another call changes the group key and remounts its children.
+      const edited: ToolView = {
+        id: 'edit',
+        name: 'worktree_edit',
+        arguments: '{"path":"app.ts"}',
+        status: 'completed',
+      };
+      const completed = [
+        { ...read, status: 'completed' as const },
+        { ...command, status: 'completed' as const },
+        edited,
+      ];
+      snapshot = {
+        ...snapshot,
+        execution: 'idle',
+        tools: [],
+        entries: [
+          {
+            id: '10',
+            kind: 'pi.assistant',
+            text: 'I checked the files.',
+            tools: completed.map((tool) => ({ ...tool, status: 'pending' })),
+          },
+          { id: '11', kind: 'pi.tool-result', text: '', tools: completed },
+        ],
+      };
+      await pushSnapshot(page, snapshot);
+      await group
+        .locator(':scope > summary')
+        .getByText('Read 1 file, ran 1 command, edited 1 file', { exact: true })
+        .waitFor();
+      await readCard
+        .getByText('Complete output survives regrouping ✓', { exact: true })
+        .waitFor();
+      assert.equal(await readCard.count(), 1);
+      assert.equal(await readCard.getAttribute('open'), '');
+      assert.equal(requests, 1);
+      assert.equal(
+        await readCard.locator('.artifact-output').count(),
+        2,
+        'Input and output remain distinct even when they reference the same artifact',
+      );
+      await group.locator(':scope > summary').click();
+      await page.waitForFunction(
+        () => !document.querySelector('.tool-group')?.hasAttribute('open'),
+      );
+
+      // A failure opens both levels, but unrelated updates respect a manual collapse.
+      snapshot = {
+        ...snapshot,
+        entries: snapshot.entries.map((entry) =>
+          entry.kind === 'pi.tool-result'
+            ? {
+                ...entry,
+                tools: completed.map((tool) =>
+                  tool.id === 'command'
+                    ? {
+                        ...tool,
+                        status: 'failed',
+                        output: 'Assertion failed: expected 200',
+                      }
+                    : tool,
+                ),
+              }
+            : entry,
+        ),
+      };
+      await pushSnapshot(page, snapshot);
+      const failed = page.locator('.tool-card[data-tool-id="command"]');
+      await failed
+        .getByText('Assertion failed: expected 200', { exact: true })
+        .waitFor();
+      assert.equal(await group.getAttribute('open'), '');
+      assert.equal(await failed.getAttribute('open'), '');
+      await failed
+        .locator(':scope > summary')
+        .getByText('Failed', { exact: true })
+        .waitFor();
+      await failed.locator(':scope > summary').click();
+      await group.locator(':scope > summary').click();
+      await page.waitForFunction(
+        () => !document.querySelector('.tool-group')?.hasAttribute('open'),
+      );
+      snapshot = { ...snapshot, partial: 'Checking the failure.' };
+      await pushSnapshot(page, snapshot);
+      await page.getByText('Checking the failure.', { exact: true }).waitFor();
+      assert.equal(await group.getAttribute('open'), null);
+      assert.equal(await failed.getAttribute('open'), null);
+      // Opening the group restores the still-open read without fetching again.
+      await group.locator(':scope > summary').click();
+      await readCard
+        .getByText('Complete output survives regrouping ✓', { exact: true })
+        .waitFor();
+      assert.equal(requests, 1);
+      assert.equal(await failed.getAttribute('open'), null);
+      assert.deepEqual(errors, []);
+      const cancelled = await page.evaluate(
+        () =>
+          (window as unknown as { __activityClicksCancelled: boolean[] })
+            .__activityClicksCancelled,
+      );
+      assert.ok(cancelled.length > 0);
+      assert.equal(
+        cancelled.some(Boolean),
+        false,
+        'Native summary activation must remain uncancelled so Safari can toggle it',
+      );
+
+      await mkdir(resolve('test-results'), { recursive: true });
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' });
+        await page.reload();
+        await failed
+          .getByText('Assertion failed: expected 200', { exact: true })
+          .waitFor();
+        assert.equal(
+          await page.locator('html').getAttribute('data-theme'),
+          colorScheme,
+        );
+        for (const width of [1440, 390]) {
+          await page.setViewportSize({ width, height: 1000 });
+          await page
+            .getByLabel('Conversation transcript')
+            .evaluate((element) => {
+              element.scrollTop = 0;
+            });
+          await page.screenshot({
+            path: resolve(
+              `test-results/tool-activity-${colorScheme}-${width}.png`,
+            ),
+            fullPage: true,
+          });
+          assert.ok(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          );
+          assert.equal(await group.locator('.tool-indicator').count(), 0);
+          await group.locator(':scope > summary').click();
+          await page.screenshot({
+            path: resolve(
+              `test-results/tool-activity-${colorScheme}-${width}-collapsed.png`,
+            ),
+            fullPage: true,
+          });
+          await group.locator(':scope > summary').click();
+        }
+      }
+    } finally {
+      release();
+      await browser.close();
+      await service.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   'growing tool artifacts stay readable after EOF, completion and in-flight reads',
@@ -236,6 +520,7 @@ test(
                 id: 'old-call',
                 name: 'probe',
                 output: 'Final output',
+                artifact: 'task-old-call',
                 status: 'completed',
               },
             ],
@@ -258,6 +543,12 @@ test(
                   text: 'Older assistant context',
                   tools: [
                     {
+                      id: 'older-neighbor',
+                      name: 'read_repository',
+                      arguments: '{"path":"README.md"}',
+                      status: 'completed',
+                    },
+                    {
                       id: 'old-call',
                       name: 'probe',
                       arguments: '{}',
@@ -270,9 +561,20 @@ test(
           },
         }),
       );
+      await page.route('**/artifacts/task-old-call?*', (route) =>
+        route.fulfill({
+          json: { text: 'Loaded output stays through history regrouping' },
+        }),
+      );
       await page.goto(`${service.url}/?conversation=${conversation.id}`);
       const tool = page.locator('.tool-card[data-tool-id="old-call"]');
       await tool.locator('summary').click();
+      await tool.getByRole('button', { name: 'Read complete output' }).click();
+      await tool
+        .getByText('Loaded output stays through history regrouping', {
+          exact: true,
+        })
+        .waitFor();
       await page.getByLabel('Conversation transcript').evaluate((element) => {
         element.scrollTop = 0;
       });
@@ -293,6 +595,12 @@ test(
       );
       assert.equal(await tool.count(), 1);
       assert.equal(await tool.getAttribute('open'), '');
+      assert.equal(await page.locator('.tool-group').getAttribute('open'), '');
+      await tool
+        .getByText('Loaded output stays through history regrouping', {
+          exact: true,
+        })
+        .waitFor();
     } finally {
       await browser.close();
       await service.close();

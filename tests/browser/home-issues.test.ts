@@ -84,9 +84,16 @@ test(
       assert.equal(fixture.github.repository('example/beta').updates, 0);
       await page.getByLabel('Message', { exact: true }).fill('plan');
       await page.getByRole('button', { name: /^Send/ }).click();
-      await page
-        .locator('.tool-card summary strong')
-        .getByText('propose_issue', { exact: true })
+      const proposal = page.locator('.tool-card').filter({
+        has: page.locator('.tool-name', { hasText: 'propose_issue' }),
+      });
+      await proposal.waitFor({ state: 'attached' });
+      const activity = page.locator('.tool-group').filter({ has: proposal });
+      if (await activity.count())
+        await activity.locator(':scope > summary').click();
+      await proposal
+        .locator('summary')
+        .getByText('Proposed issue', { exact: true })
         .waitFor();
       await page.getByLabel('Message', { exact: true }).fill('update it');
       await page.getByRole('button', { name: /^Send/ }).click();

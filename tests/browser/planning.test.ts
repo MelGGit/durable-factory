@@ -108,8 +108,12 @@ test(
         0,
       );
       const proposal = page.locator('.tool-card').filter({
-        has: page.locator('summary strong', { hasText: 'propose_issue' }),
+        has: page.locator('.tool-name', { hasText: 'propose_issue' }),
       });
+      await proposal.waitFor({ state: 'attached' });
+      const activity = page.locator('.tool-group').filter({ has: proposal });
+      if (await activity.count())
+        await activity.locator(':scope > summary').click();
       await proposal.locator('summary').click();
       await proposal
         .locator('pre')

@@ -9,12 +9,15 @@ import {
 } from '../../../packages/shared/src/index.js';
 import { markdown } from './markdown.js';
 import { conversationItems } from './transcript.js';
-import { CommandLog, useRunDetails } from './runs.js';
+import { useRunDetails } from './runs.js';
+import { WorkflowCommands } from './workflow-commands.js';
+import { groupWorkflowActivity, isWorkflowEvent } from './workflow-activity.js';
+import { WorkflowEvents } from './workflow-events.js';
 import { eventHub } from './hooks/use-workflow.js';
 import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
 import { RunQuestion, RunResumePrompt } from './run-question.js';
-import { Tool } from './chat.js';
+import { Tool, ToolActivity } from './tool-activity.js';
 const activity = new RunActivityClient();
 
 export function ImplementationTranscript({
@@ -133,7 +136,11 @@ export function ImplementationTranscript({
           ) ?? [],
         ).find((node) => {
           const rect = node.getBoundingClientRect();
-          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+          return (
+            rect.height > 0 &&
+            rect.bottom > bounds.top &&
+            rect.top < bounds.bottom
+          );
         });
         scrollAnchor.current = {
           key: item?.dataset.conversationItem,
@@ -193,23 +200,40 @@ export function ImplementationTranscript({
   const renderTool = (
     tool: import('./transcript.js').PresentationTool,
     conversationId: string,
+    attemptId?: string,
+    role?: string,
+    at?: number,
   ) => {
     const key = `${conversationId}:${tool.id}`;
     if (renderedTools.has(key)) return null;
     renderedTools.add(key);
     return (
-      <section key={`tool:${key}`} data-conversation-item={`tool:${key}`}>
-        <div className="message-author">
-          {run.attempts.some(
+      <Tool
+        key={`tool:${key}`}
+        tool={tools.get(key) ?? tool}
+        conversationId={conversationId}
+        attemptId={
+          attemptId ??
+          run.attempts.findLast(
             (a) =>
-              a.stage === 'reviewer' && a.conversationId === conversationId,
+              a.conversationId === conversationId &&
+              (at === undefined || a.startedAt <= at),
+          )?.id
+        }
+        agent={
+          (
+            role
+              ? role === 'review'
+              : run.attempts.some(
+                  (a) =>
+                    a.stage === 'reviewer' &&
+                    a.conversationId === conversationId,
+                )
           )
             ? 'Review agent'
-            : 'Developer agent'}{' '}
-          · Tool activity
-        </div>
-        <Tool tool={tools.get(key) ?? tool} conversationId={conversationId} />
-      </section>
+            : 'Developer agent'
+        }
+      />
     );
   };
   return (
@@ -224,140 +248,160 @@ export function ImplementationTranscript({
         </button>
       )}
       {error && <p role="alert">{error}</p>}
-      {[
-        ...items.flatMap((item) => {
-          if (questionIds.has(item.id)) return [];
-          const answered = run.interventions.find(
-            (question) =>
-              question.state === 'resolved' &&
-              item.id === `timeline:question-${question.id}`,
-          );
-          if (answered)
-            return [
-              <RunQuestion
-                key={item.id}
-                run={run}
-                question={answered}
-                onRun={onRun}
-              />,
-            ];
-          if (item.entry) {
-            const entry = item.entry;
-            return [
-              entry.text || entry.textArtifact || entry.interrupted ? (
+      <ToolActivity key={run.id}>
+        {[
+          ...groupWorkflowActivity(items, [...tools.values()]).flatMap(
+            (group) => {
+              const item = group[0]!;
+              if (item.command)
+                return [
+                  <WorkflowCommands
+                    key={item.id}
+                    items={group}
+                    runId={run.id}
+                  />,
+                ];
+              if (isWorkflowEvent(item))
+                return [<WorkflowEvents key={item.id} items={group} />];
+              if (questionIds.has(item.id))
+                return [<React.Fragment key={item.id} />];
+              const answered = run.interventions.find(
+                (question) =>
+                  question.state === 'resolved' &&
+                  item.id === `timeline:question-${question.id}`,
+              );
+              if (answered)
+                return [
+                  <RunQuestion
+                    key={item.id}
+                    run={run}
+                    question={answered}
+                    onRun={onRun}
+                  />,
+                ];
+              if (item.entry) {
+                const entry = item.entry;
+                return [
+                  entry.text || entry.textArtifact || entry.interrupted ? (
+                    <article
+                      key={item.id}
+                      className={`message ${item.actor === 'human' ? 'user-message' : item.actor === 'code' ? 'event-message' : 'assistant-message'}`}
+                      data-conversation-item={item.id}
+                    >
+                      <div className="message-author">
+                        {item.title}
+                        {entry.interrupted && ' · Interrupted'}
+                        {item.at !== undefined && (
+                          <time dateTime={new Date(item.at).toISOString()}>
+                            {new Date(item.at).toLocaleTimeString()}
+                          </time>
+                        )}
+                      </div>
+                      {entry.text && (
+                        <div
+                          className="message-text markdown"
+                          dangerouslySetInnerHTML={{
+                            __html: markdown(entry.text),
+                          }}
+                        />
+                      )}
+                      {entry.textArtifact && (
+                        <Tool
+                          conversationId={item.conversationId!}
+                          tool={{
+                            id: entry.id,
+                            name: 'Complete message',
+                            status: 'completed',
+                            artifact: entry.textArtifact,
+                          }}
+                        />
+                      )}
+                    </article>
+                  ) : null,
+                  ...entry.tools.map((tool) =>
+                    renderTool(
+                      tool,
+                      item.conversationId!,
+                      item.attemptId,
+                      item.actor,
+                      item.at,
+                    ),
+                  ),
+                ];
+              }
+              if (
+                item.actor === 'human' &&
+                item.id.startsWith('timeline:decision-') &&
+                item.title === 'answer'
+              )
+                return [
+                  <article
+                    key={item.id}
+                    className="message user-message"
+                    data-conversation-item={item.id}
+                  >
+                    <div className="message-author">
+                      You
+                      {item.at !== undefined && (
+                        <time dateTime={new Date(item.at).toISOString()}>
+                          {new Date(item.at).toLocaleTimeString()}
+                        </time>
+                      )}
+                    </div>
+                    <div
+                      className="message-text markdown"
+                      dangerouslySetInnerHTML={{
+                        __html: markdown(item.detail ?? ''),
+                      }}
+                    />
+                  </article>,
+                ];
+              return (
                 <article
                   key={item.id}
-                  className={`message ${item.actor === 'human' ? 'user-message' : item.actor === 'code' ? 'event-message' : 'assistant-message'}`}
                   data-conversation-item={item.id}
+                  className="message event-message run-event"
                 >
                   <div className="message-author">
-                    {item.title}
-                    {entry.interrupted && ' · Interrupted'}
+                    {item.actor === 'human' ? 'You' : 'Workflow'}
                     {item.at !== undefined && (
                       <time dateTime={new Date(item.at).toISOString()}>
                         {new Date(item.at).toLocaleTimeString()}
                       </time>
                     )}
                   </div>
-                  {entry.text && (
-                    <div
-                      className="message-text markdown"
-                      dangerouslySetInnerHTML={{ __html: markdown(entry.text) }}
-                    />
-                  )}
-                  {entry.textArtifact && (
-                    <Tool
-                      conversationId={item.conversationId!}
-                      tool={{
-                        id: entry.id,
-                        name: 'Complete message',
-                        status: 'completed',
-                        artifact: entry.textArtifact,
-                      }}
-                    />
+                  <strong>{item.title}</strong>
+                  {item.detail && !repeatsQuestion(item) && (
+                    <p>{item.detail}</p>
                   )}
                 </article>
-              ) : null,
-              ...entry.tools.map((tool) =>
-                renderTool(tool, item.conversationId!),
-              ),
-            ];
-          }
-          if (
-            item.actor === 'human' &&
-            item.id.startsWith('timeline:decision-') &&
-            item.title === 'answer'
-          )
-            return [
+              );
+            },
+          ),
+          ...live.flatMap((source) => [
+            source.partial ? (
               <article
-                key={item.id}
-                className="message user-message"
-                data-conversation-item={item.id}
+                key={`partial:${source.conversationId}`}
+                className="message assistant-message"
               >
                 <div className="message-author">
-                  You
-                  {item.at !== undefined && (
-                    <time dateTime={new Date(item.at).toISOString()}>
-                      {new Date(item.at).toLocaleTimeString()}
-                    </time>
-                  )}
+                  {source.role === 'review'
+                    ? 'Review agent'
+                    : 'Developer agent'}{' '}
+                  · Responding
                 </div>
                 <div
                   className="message-text markdown"
-                  dangerouslySetInnerHTML={{
-                    __html: markdown(item.detail ?? ''),
-                  }}
+                  dangerouslySetInnerHTML={{ __html: markdown(source.partial) }}
                 />
-              </article>,
-            ];
-          return (
-            <article
-              key={item.id}
-              data-conversation-item={item.id}
-              className="message event-message run-event"
-            >
-              <div className="message-author">
-                {item.actor === 'human' ? 'You' : 'Workflow'}
-                {item.at !== undefined && (
-                  <time dateTime={new Date(item.at).toISOString()}>
-                    {new Date(item.at).toLocaleTimeString()}
-                  </time>
-                )}
-              </div>
-              <strong>{item.title}</strong>
-              {item.detail && !repeatsQuestion(item) && <p>{item.detail}</p>}
-              {item.command && (
-                <CommandLog
-                  key={item.command.id}
-                  runId={run.id}
-                  commandId={item.command.id}
-                  running={item.command.state !== 'finished'}
-                />
-              )}
-            </article>
-          );
-        }),
-        ...live.flatMap((source) => [
-          source.partial ? (
-            <article
-              key={`partial:${source.conversationId}`}
-              className="message assistant-message"
-            >
-              <div className="message-author">
-                {source.role === 'review' ? 'Review agent' : 'Developer agent'}{' '}
-                · Responding
-              </div>
-              <div
-                className="message-text markdown"
-                dangerouslySetInnerHTML={{ __html: markdown(source.partial) }}
-              />
-            </article>
-          ) : null,
-          ...source.tools.map((tool) =>
-            renderTool(tool, source.conversationId),
-          ),
-        ]),
-      ]}
+              </article>
+            ) : null,
+            ...source.tools.map((tool) =>
+              renderTool(tool, source.conversationId, undefined, source.role),
+            ),
+          ]),
+        ]}
+      </ToolActivity>
       {questions.map((question) => (
         <RunQuestion
           key={question.id}
