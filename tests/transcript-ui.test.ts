@@ -6,6 +6,8 @@ import {
   groupToolActivity,
   toolLabel,
   toolGroupLabel,
+  groupResponseFlow,
+  type ResponsePartDescription,
   type ActivityCall,
 } from '../apps/web/src/transcript.js';
 import type {
@@ -27,6 +29,69 @@ const result: ToolView = {
   artifact: 'task-1',
   truncated: true,
 };
+
+test('a response combines prose, tools and workflow updates until a speaker, attempt or user boundary', () => {
+  const speaker = {
+    conversationId: 'dev',
+    attemptId: 'first',
+    author: 'Developer agent',
+  };
+  const agent: ResponsePartDescription = { kind: 'agent', speaker, at: 100 };
+  const parts: ResponsePartDescription[] = [
+    { kind: 'workflow' },
+    agent,
+    { ...agent, at: 101 },
+    { kind: 'workflow', attemptId: 'first' },
+    agent,
+    { kind: 'boundary' },
+    agent,
+    { ...agent, speaker: { ...speaker, attemptId: 'retry' } },
+    {
+      ...agent,
+      speaker: { ...speaker, conversationId: 'review', author: 'Review agent' },
+    },
+  ];
+  const before = JSON.stringify(parts);
+  const groups = groupResponseFlow(parts, (part) => part);
+  assert.deepEqual(
+    groups.map((group) =>
+      group.kind === 'response' ? group.items.length : 'standalone',
+    ),
+    ['standalone', 4, 'standalone', 1, 1, 1],
+  );
+  assert.equal(JSON.stringify(parts), before);
+  assert.equal(groups[1].kind === 'response' && groups[1].at, 100);
+});
+
+test('questions close their response and workflow for another attempt remains separate', () => {
+  const agent: ResponsePartDescription = {
+    kind: 'agent',
+    speaker: {
+      conversationId: 'dev',
+      attemptId: 'one',
+      author: 'Developer agent',
+    },
+  };
+  const groups = groupResponseFlow<ResponsePartDescription>(
+    [
+      agent,
+      { ...agent, closes: true },
+      { kind: 'workflow' },
+      agent,
+      { kind: 'workflow', attemptId: 'two' },
+      agent,
+      { kind: 'boundary' },
+      agent,
+    ],
+    (part) => part,
+  );
+  assert.deepEqual(
+    groups.map((group) =>
+      group.kind === 'response' ? group.items.length : 'standalone',
+    ),
+    [2, 'standalone', 1, 'standalone', 1, 'standalone', 1],
+  );
+});
 const entry = (
   id: string,
   kind: string,

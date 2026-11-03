@@ -1,7 +1,7 @@
 import { ImplementationTranscript, RunInformation } from './run-chat.js';
 import { conversationItems, agentLabel } from './transcript.js';
-import { Tool, ToolActivity } from './tool-activity.js';
-import { markdown } from './markdown.js';
+import { Tool } from './tool-activity.js';
+import { ResponseFlow, ResponsePart, ResponseText } from './response-flow.js';
 import { Overlay, useMedia } from './panels.js';
 import { StartRun } from './runs.js';
 import { ProjectTree, followLink } from './sidebar.js';
@@ -831,6 +831,7 @@ export function ChatApp() {
       !entries.length &&
       !cursor &&
       !snapshot.partial &&
+      !snapshot.liveParts?.length &&
       !snapshot.tools.length &&
       snapshot.execution === 'idle' &&
       !snapshot.submissions.length &&
@@ -1170,9 +1171,24 @@ export function ChatApp() {
                           }}
                         />
                       ) : (
-                        <ToolActivity key={selected}>
+                        <ResponseFlow key={selected}>
                           {conversationItems(
-                            visibleEntries,
+                            [
+                              ...visibleEntries,
+                              ...(snapshot &&
+                              !snapshot.conversation.runId &&
+                              (snapshot.partial || snapshot.liveParts?.length)
+                                ? [
+                                    {
+                                      id: 'partial',
+                                      kind: 'pi.assistant',
+                                      text: snapshot.partial,
+                                      parts: snapshot.liveParts,
+                                      tools: [],
+                                    },
+                                  ]
+                                : []),
+                            ],
                             snapshot?.tools,
                           ).map((item) => {
                             if (item.kind === 'tool')
@@ -1181,16 +1197,39 @@ export function ChatApp() {
                                   key={item.key}
                                   tool={item.tool}
                                   conversationId={selected}
+                                  agent={label}
                                 />
                               );
                             const { entry } = item;
                             const user = entry.kind === 'pi.user';
                             const assistant = entry.kind === 'pi.assistant';
+                            if (assistant)
+                              return (
+                                <ResponsePart
+                                  key={item.key}
+                                  speaker={{
+                                    conversationId: selected,
+                                    author: label,
+                                  }}
+                                  at={entry.at}
+                                >
+                                  <ResponseText
+                                    entry={entry}
+                                    live={
+                                      entry.id === 'partial' &&
+                                      snapshot?.liveParts?.at(-1)?.id ===
+                                        entry.parts?.at(-1)?.id
+                                    }
+                                    conversationId={selected}
+                                    itemKey={item.key}
+                                  />
+                                </ResponsePart>
+                              );
                             return (
                               <article
                                 key={item.key}
                                 data-conversation-item={item.key}
-                                className={`message ${user ? 'user-message' : assistant ? 'assistant-message' : 'event-message'}`}
+                                className={`message ${user ? 'user-message' : 'event-message'}`}
                               >
                                 <div className="message-author">
                                   {user
@@ -1199,26 +1238,16 @@ export function ChatApp() {
                                       ? 'Tool result'
                                       : entry.kind === 'pi.compaction'
                                         ? 'Context summary'
-                                        : assistant
-                                          ? label
-                                          : 'Conversation event'}
+                                        : 'Conversation event'}
                                   {entry.interrupted && (
                                     <span> · Interrupted</span>
                                   )}
                                 </div>
-                                {entry.text &&
-                                  (assistant ? (
-                                    <div
-                                      className="message-text markdown"
-                                      dangerouslySetInnerHTML={{
-                                        __html: markdown(entry.text),
-                                      }}
-                                    />
-                                  ) : (
-                                    <div className="message-text">
-                                      {entry.text}
-                                    </div>
-                                  ))}
+                                {entry.text && (
+                                  <div className="message-text">
+                                    {entry.text}
+                                  </div>
+                                )}
                                 {entry.textArtifact && (
                                   <Tool
                                     key={entry.textArtifact}
@@ -1234,33 +1263,15 @@ export function ChatApp() {
                               </article>
                             );
                           })}
-                        </ToolActivity>
+                        </ResponseFlow>
                       )}
-                      {!selectedRun &&
-                        !snapshot?.conversation.runId &&
-                        snapshot?.partial && (
-                          <article
-                            className="message assistant-message"
-                            data-conversation-item="partial"
-                          >
-                            <div className="message-author">
-                              {label} · Responding
-                            </div>
-                            <div
-                              className="message-text markdown"
-                              dangerouslySetInnerHTML={{
-                                __html: markdown(snapshot.partial),
-                              }}
-                            />
-                          </article>
-                        )}
                       {!selectedRun &&
                         snapshot?.execution !== 'idle' &&
                         snapshot &&
-                        !snapshot.partial && (
+                        !snapshot.partial &&
+                        !snapshot.liveParts?.length && (
                           <div className="agent-activity" role="status">
                             <span aria-hidden="true">◌</span>
-                            {label} ·{' '}
                             {snapshot.execution === 'interrupting'
                               ? 'Stopping…'
                               : 'Working…'}
@@ -1269,7 +1280,8 @@ export function ChatApp() {
                       {!emptyPlanning &&
                         !selectedRun &&
                         !entries.length &&
-                        !snapshot?.partial && (
+                        !snapshot?.partial &&
+                        !snapshot?.liveParts?.length && (
                           <p className="transcript-hint">
                             Describe the feature you want to build and any
                             constraints.

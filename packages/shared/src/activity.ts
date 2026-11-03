@@ -36,6 +36,7 @@ export interface RunActivityPage {
     conversationId: string;
     role: Role;
     partial: string;
+    liveParts?: ConversationSnapshot['liveParts'];
     tools: ToolView[];
   }[];
 }

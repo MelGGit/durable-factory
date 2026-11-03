@@ -159,7 +159,12 @@ export class RunActivityService {
             run.attempts.some((attempt) => attempt.message === entry.text)
           )
             continue;
-          if (!entry.text && !entry.tools.length && !entry.interrupted)
+          if (
+            !entry.text &&
+            !entry.parts?.length &&
+            !entry.tools.length &&
+            !entry.interrupted
+          )
             continue;
           const budget = Math.max(
             1,
@@ -228,6 +233,7 @@ export class RunActivityService {
           conversationId,
           role: summary.role,
           partial: snapshot.partial,
+          ...(snapshot.liveParts ? { liveParts: snapshot.liveParts } : {}),
           tools: snapshot.tools,
         });
       }

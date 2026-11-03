@@ -596,7 +596,7 @@ h3 {
   scrollbar-gutter: stable;
 }
 .message {
-  margin: 0 0 26px;
+  margin: 0 0 24px;
   padding: 0;
   overflow-wrap: anywhere;
   min-width: 0;
@@ -617,35 +617,28 @@ h3 {
 .markdown > :last-child {
   margin-bottom: 0;
 }
-.markdown p {
-  margin: 0 0 14px;
+.transcript .markdown p {
+  margin: 0 0 12px;
 }
-.markdown h1,
-.markdown h2,
-.markdown h3,
-.markdown h4,
-.markdown h5,
-.markdown h6 {
-  margin: 22px 0 10px;
-  line-height: 1.4;
-  color: var(--green);
+.transcript .markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 16px 0 8px;
+  line-height: inherit;
+  color: var(--text);
+  font-size: var(--font-body);
+  font-weight: 500;
 }
-.markdown h1 {
-  font-size: 23px;
+.transcript .markdown :is(strong, b) {
+  font-weight: inherit;
 }
-.markdown h2 {
-  font-size: 20px;
+.transcript .markdown :is(ul, ol) {
+  padding-left: 22px;
+  margin: 8px 0 12px;
 }
-.markdown h3 {
-  font-size: 17px;
+.transcript .markdown li {
+  margin: 4px 0;
 }
-.markdown ul,
-.markdown ol {
-  padding-left: 23px;
-  margin: 12px 0;
-}
-.markdown li {
-  margin: 5px 0;
+.transcript .markdown li > :is(ul, ol) {
+  margin: 4px 0;
 }
 .markdown a {
   text-decoration: underline;
@@ -1807,9 +1800,6 @@ h3 {
 .transcript {
   padding-top: 32px;
 }
-.message {
-  margin-bottom: 28px;
-}
 .user-message {
   margin-left: auto;
   max-width: 85%;
@@ -1830,26 +1820,81 @@ h3 {
   margin-bottom: 8px;
 }
 .message-text {
-  line-height: 1.6;
+  font-family: inherit;
+  font-weight: inherit;
+  line-height: inherit;
   font-size: var(--font-body);
+}
+.agent-response {
+  min-width: 0;
+  margin: 0 0 24px;
+}
+.agent-response > .response-author {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.agent-response > .response-author > time {
+  margin-left: 0;
+  font-size: var(--font-label);
+}
+.response-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.response-content > * {
+  margin: 0;
+  min-width: 0;
+}
+.response-content > .response-text {
+  padding: 0;
+}
+.response-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.implementation-events .agent-response .response-question {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.transcript .markdown > :first-child {
+  margin-top: 0;
+}
+.transcript .markdown > :last-child {
+  margin-bottom: 0;
+}
+.transcript .markdown code {
+  font-size: var(--font-ui);
+}
+.transcript .markdown pre {
+  font-size: var(--font-ui);
+}
+.transcript .markdown pre code {
+  font-size: inherit;
+}
+.transcript .markdown :is(th, td) {
+  border: 0;
+  border-bottom: 1px solid var(--border);
+}
+.transcript .markdown th {
+  font-weight: 500;
 }
 .event-message {
   border-left: 2px solid var(--border);
   color: var(--text-muted);
-}
-.markdown h1,
-.markdown h2,
-.markdown h3,
-.markdown h4 {
-  color: var(--text);
-  font-weight: 500;
 }
 .markdown a {
   color: var(--accent);
 }
 .markdown code {
   background: var(--surface-3);
-  font-size: var(--font-ui);
 }
 .markdown pre {
   background: var(--surface-2);
@@ -1879,6 +1924,7 @@ h3 {
 .tool-activity > .tool-group {
   margin: 0;
 }
+.thinking-activity > summary,
 .tool-card > summary,
 .tool-group > summary {
   display: flex;
@@ -1891,19 +1937,23 @@ h3 {
   list-style: none;
   border-radius: 4px;
 }
+.thinking-activity > summary:hover,
 .tool-card > summary:hover,
 .tool-group > summary:hover {
   color: var(--text);
 }
+.thinking-activity > summary:focus-visible,
 .tool-card > summary:focus-visible,
 .tool-group > summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+.thinking-activity > summary::-webkit-details-marker,
 .tool-card > summary::-webkit-details-marker,
 .tool-group > summary::-webkit-details-marker {
   display: none;
 }
+.thinking-activity > summary::after,
 .tool-card > summary::after,
 .tool-group > summary::after {
   content: '';
@@ -1915,6 +1965,7 @@ h3 {
   border-bottom: 1.5px solid currentColor;
   transform: rotate(-45deg);
 }
+.thinking-activity[open] > summary::after,
 .tool-card[open] > summary::after,
 .tool-group[open] > summary::after {
   transform: rotate(45deg);
@@ -1978,6 +2029,10 @@ h3 {
   color: var(--text);
 }
 .tool-name {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--text-muted);
   font-family: monospace;
   font-size: 11px;
@@ -3400,7 +3455,7 @@ summary.page-card-heading::after {
 
 .implementation-events .run-question {
   padding: 0;
-  margin: 0 0 26px;
+  margin: 0 0 24px;
   border: 0;
   border-radius: 0;
 }
@@ -3428,4 +3483,30 @@ summary.page-card-heading::after {
 .run-question [role='alert'] {
   margin-top: 12px;
   color: var(--danger);
+}
+
+.thinking-activity {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui);
+  font-weight: 400;
+}
+.thinking-label {
+  flex-shrink: 0;
+}
+.thinking-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thinking-content {
+  padding: 4px 0 8px 16px;
+  border-left: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.transcript .thinking-content .markdown,
+.transcript .thinking-content .markdown :is(h1, h2, h3, h4, h5, h6, strong, b) {
+  font-size: var(--font-ui);
+  font-weight: 400;
 }

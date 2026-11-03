@@ -176,6 +176,45 @@ test('an SDK observer rebuilds each snapshot from a valid standard event stream'
     snapshot({ entries: [user, call, result], execution: 'running' }),
     snapshot({ entries: [user, call, result, answer] }),
   ];
+  const thinking = (text: string) => ({
+    id: 'generation:0',
+    type: 'thinking' as const,
+    text,
+  });
+  frames.push(
+    snapshot({
+      entries: [user],
+      liveParts: [thinking('Checking')],
+      execution: 'running',
+    }),
+    snapshot({
+      entries: [user],
+      liveParts: [thinking('Checking coverage')],
+      execution: 'running',
+    }),
+    snapshot({
+      entries: [user],
+      partial: 'Covered.',
+      liveParts: [
+        thinking('Checking coverage'),
+        { id: 'generation:1', type: 'text', text: 'Covered.' },
+      ],
+      execution: 'running',
+    }),
+    snapshot({
+      entries: [
+        user,
+        {
+          ...answer,
+          text: 'Covered.',
+          parts: [
+            thinking('Checking coverage'),
+            { id: 'generation:1', type: 'text', text: 'Covered.' },
+          ],
+        },
+      ],
+    }),
+  );
   const server = createServer((req, res: ServerResponse) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const stream = new AgUiViewStream('7', 'run');
@@ -216,4 +255,41 @@ test('an SDK observer rebuilds each snapshot from a valid standard event stream'
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('reasoning uses native deltas and closes before the answer begins', () => {
+  const stream = new AgUiMessageStream();
+  const messages = (value: string, answer = '') =>
+    conversationView(
+      snapshot({
+        partial: answer,
+        liveParts: [
+          { id: 'thought', type: 'thinking', text: value },
+          ...(answer
+            ? [{ id: 'answer', type: 'text' as const, text: answer }]
+            : []),
+        ],
+      }),
+    ).messages;
+  const initial = stream.update(messages('Checking'));
+  const delta = stream.update(messages('Checking coverage'));
+  assert.deepEqual(delta, [
+    {
+      type: 'REASONING_MESSAGE_CONTENT',
+      messageId: '7:live:part:0',
+      delta: ' coverage',
+    },
+  ]);
+  const answer = stream.update(messages('Checking coverage', 'Done.'));
+  assert.deepEqual(
+    answer.map((event) => event.type),
+    [
+      'REASONING_MESSAGE_END',
+      'REASONING_END',
+      'TEXT_MESSAGE_START',
+      'TEXT_MESSAGE_CONTENT',
+    ],
+  );
+  for (const event of [...initial, ...delta, ...answer, ...stream.finish()])
+    EventSchema.parse(event);
 });

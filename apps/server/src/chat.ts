@@ -22,7 +22,11 @@ import {
   type LiveState,
 } from '@earendil-works/pi-durable';
 import type { JsonRepresentation } from '@earendil-works/chord';
-import type { Models, ModelThinkingLevel } from '@earendil-works/pi-ai';
+import type {
+  AssistantMessage,
+  Models,
+  ModelThinkingLevel,
+} from '@earendil-works/pi-ai';
 import {
   API_VERSION,
   ApiError,
@@ -37,6 +41,7 @@ import {
   type Settings,
   type RoleSettings,
   type TranscriptEntry,
+  type TranscriptPart,
   type ToolView,
   type ProjectIssue,
 } from '../../../packages/shared/src/index.js';
@@ -140,11 +145,47 @@ function textContent(value: unknown): string {
     .filter(Boolean)
     .join('\n');
 }
+/** UI text never includes provider reasoning or opaque signatures. */
+function responseText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  return value
+    .filter((item) => item?.type === 'text')
+    .map((item) => item.text)
+    .join('\n');
+}
+function responseParts(
+  message: Pick<AssistantMessage, 'content' | 'timestamp'>,
+  source: string,
+  artifact?: string,
+): TranscriptPart[] {
+  const budget = Math.floor(LIMIT / Math.max(1, message.content.length));
+  return message.content.flatMap((part, index): TranscriptPart[] => {
+    const id = `${source}:${index}`;
+    if (part.type === 'toolCall')
+      return [{ id, type: 'tool', toolId: part.id }];
+    if (part.type === 'thinking' && part.redacted) return [];
+    const raw = part.type === 'thinking' ? part.thinking : part.text;
+    if (!raw?.trim()) return [];
+    const value = preview(raw, budget);
+    return [
+      {
+        id,
+        type: part.type,
+        text: value.text,
+        ...(artifact && value.truncated
+          ? { artifact: `${artifact}-${index}` }
+          : {}),
+      },
+    ];
+  });
+}
 function artifactId(task: unknown) {
   return `task-${String(task)}`;
 }
 export function transcript(entry: EntryRecord): TranscriptEntry {
   const tools: ToolView[] = [];
+  const parts: TranscriptPart[] = [];
   const messages = entry.model ?? [];
   let text =
     entry.kind === 'factory.workflow' &&
@@ -155,9 +196,16 @@ export function transcript(entry: EntryRecord): TranscriptEntry {
       ? entry.data.text
       : '';
   let interrupted = false;
-  for (const message of messages) {
-    text += textContent(message.content);
+  for (const [messageIndex, message] of messages.entries()) {
+    text += responseText(message.content);
     if (message.role === 'assistant') {
+      parts.push(
+        ...responseParts(
+          message,
+          `${entry.byTaskId ?? entry.id}:${message.timestamp}:${messageIndex}`,
+          `entry-${entry.id}-part-${messageIndex}`,
+        ),
+      );
       interrupted ||= message.stopReason === 'aborted';
       for (const item of message.content)
         if (item.type === 'toolCall')
@@ -208,10 +256,17 @@ export function transcript(entry: EntryRecord): TranscriptEntry {
           typeof entry.data.at === 'number'
         ? { at: entry.data.at }
         : {}),
-    text: preview(text).text,
+    text: parts.length
+      ? parts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n')
+      : preview(text).text,
+    ...(parts.length ? { parts } : {}),
     tools,
-    ...(Buffer.byteLength(text) > LIMIT
-      ? { textArtifact: `entry-${entry.id}` }
+    ...(Buffer.byteLength(text) > LIMIT ||
+    parts.some((part) => part.type === 'text' && part.artifact)
+      ? { textArtifact: `entry-${entry.id}-text` }
       : {}),
     ...(interrupted ? { interrupted } : {}),
   };
@@ -1034,6 +1089,12 @@ export class ChatService {
     const workflow = conversation.runId
       ? await this.deps.workflowView?.(conversation.runId)
       : undefined;
+    const liveParts = live?.generation?.message
+      ? responseParts(
+          live.generation.message,
+          `${live.run?.taskId ?? 'live'}:${live.generation.message.timestamp}:0`,
+        )
+      : undefined;
     return {
       conversation,
       ...(workflow ? { workflow } : {}),
@@ -1041,7 +1102,12 @@ export class ChatService {
         ? { planning: await this.deps.planning.read(id) }
         : {}),
       entries,
-      partial: preview(textContent(live?.generation?.message?.content)).text,
+      partial:
+        liveParts
+          ?.filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n') ?? '',
+      ...(liveParts ? { liveParts } : {}),
       tools: (live?.tools ?? []).map((tool) => ({
         id: tool.callId,
         name: tool.name,
@@ -1195,30 +1261,54 @@ export class ChatService {
   async artifact(id: string, artifact: string, offset: number) {
     await this.summary(id);
     if (
-      !/^(task|entry)-\d+$/.test(artifact) ||
+      !/^(?:task-\d+|entry-\d+(?:-text|-part-\d+-\d+)?)$/.test(artifact) ||
       !Number.isSafeInteger(offset) ||
       offset < 0
     )
       invalid('Invalid output page.');
     if (artifact.startsWith('entry-')) {
       const entry = await this.harness.commit(
-        (tx) => tx.entry(Number(artifact.slice(6)) as EntryId),
+        (tx) => tx.entry(Number(/^entry-(\d+)/.exec(artifact)![1]) as EntryId),
         context,
       );
       if (!entry || String(entry.conversationId) !== id)
         throw new ApiError('NOT_FOUND', 'Output artifact not found.', 404);
-      const text = (entry.model ?? [])
-        .map(
-          (message) =>
-            textContent(message.content) +
-            (Array.isArray(message.content)
-              ? message.content
-                  .filter((item) => item.type === 'toolCall')
-                  .map((item) => JSON.stringify(item, null, 2))
-                  .join('\n')
-              : ''),
+      const part = /^entry-\d+-part-(\d+)-(\d+)$/.exec(artifact);
+      let text: string;
+      if (part) {
+        const message = entry.model?.[Number(part[1])];
+        const content = Array.isArray(message?.content)
+          ? message.content[Number(part[2])]
+          : undefined;
+        if (
+          content?.type !== 'text' &&
+          !(content?.type === 'thinking' && !content.redacted)
         )
-        .join('\n');
+          throw new ApiError('NOT_FOUND', 'Output artifact not found.', 404);
+        text =
+          content?.type === 'text'
+            ? content.text
+            : content?.type === 'thinking' && !content.redacted
+              ? content.thinking
+              : '';
+      } else if (artifact.endsWith('-text')) {
+        text = (entry.model ?? [])
+          .map((message) => responseText(message.content))
+          .join('\n');
+      } else {
+        text = (entry.model ?? [])
+          .map(
+            (message) =>
+              responseText(message.content) +
+              (Array.isArray(message.content)
+                ? message.content
+                    .filter((item) => item.type === 'toolCall')
+                    .map((item) => JSON.stringify(item, null, 2))
+                    .join('\n')
+                : ''),
+          )
+          .join('\n');
+      }
       return outputPage(
         Buffer.from(text).subarray(offset, offset + LIMIT + 4),
         offset,

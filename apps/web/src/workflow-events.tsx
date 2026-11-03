@@ -33,7 +33,9 @@ export function WorkflowEvents({ items }: { items: RunActivityItem[] }) {
     return (
       <div className="workflow-event-row" data-conversation-item={first.id}>
         <span className="workflow-event-title">{lastText.title}</span>
-        <EventTime at={last.at} />
+        <span className="sr-only">
+          <EventTime at={last.at} />
+        </span>
       </div>
     );
   const title = `${lastText.title}${items.length > 1 ? ` · ${items.length} updates` : ''}`;
@@ -48,7 +50,6 @@ export function WorkflowEvents({ items }: { items: RunActivityItem[] }) {
         <span className="tool-label" title={title}>
           {title}
         </span>
-        <EventTime at={last.at} />
       </summary>
       <div className="workflow-event-list">
         {items.map((item) => {
@@ -58,6 +59,11 @@ export function WorkflowEvents({ items }: { items: RunActivityItem[] }) {
               {items.length > 1 && (
                 <div className="workflow-event-row">
                   <span>{event.title}</span>
+                  <EventTime at={item.at} />
+                </div>
+              )}
+              {items.length === 1 && (
+                <div className="workflow-event-meta">
                   <EventTime at={item.at} />
                 </div>
               )}

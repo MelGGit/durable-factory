@@ -55,6 +55,11 @@ export interface ToolView {
   artifact?: string;
   truncated?: boolean;
 }
+/** Provider content in its original presentation order. IDs survive live commit. */
+export type TranscriptPart =
+  | { id: string; type: 'text'; text: string; artifact?: string }
+  | { id: string; type: 'thinking'; text: string; artifact?: string }
+  | { id: string; type: 'tool'; toolId: string };
 export interface TranscriptEntry {
   /** Original AG-UI user identity, when this entry was admitted through AG-UI. */
   messageId?: string;
@@ -62,6 +67,7 @@ export interface TranscriptEntry {
   id: string;
   kind: string;
   text: string;
+  parts?: TranscriptPart[];
   interrupted?: boolean;
   textArtifact?: string;
   tools: ToolView[];
@@ -77,6 +83,7 @@ export interface ConversationSnapshot {
   planning?: PlanningState;
   entries: TranscriptEntry[];
   partial: string;
+  liveParts?: TranscriptPart[];
   tools: ToolView[];
   submissions: ChatSubmission[];
   execution: 'idle' | 'running' | 'interrupting';

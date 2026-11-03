@@ -119,6 +119,24 @@ test(
           { ...command, status: 'failed', output: 'Review command failed' },
         ]),
       ];
+      for (const index of [0, items.length - 1]) {
+        const entry = items[index].entry!;
+        entry.parts = [
+          {
+            id: 'shared-thinking',
+            type: 'thinking',
+            text:
+              index === 0
+                ? 'Checking developer coverage.'
+                : 'Checking reviewer coverage.',
+          },
+          ...entry.tools.map((tool) => ({
+            id: `part:${tool.id}`,
+            type: 'tool' as const,
+            toolId: tool.id,
+          })),
+        ];
+      }
       const page = await browser.newPage({
         viewport: { width: 1440, height: 1000 },
       });
@@ -157,6 +175,7 @@ test(
                       ...item.entry,
                       id: String(Number(item.entry.id) + 100),
                       kind: 'pi.tool-result',
+                      parts: undefined,
                     },
                   },
                 ]
@@ -167,7 +186,7 @@ test(
       });
       await page.goto(`${fixture.service.url}/?conversation=${conversationId}`);
       const groups = page.locator('.tool-group');
-      const activities = page.locator('.tool-activity');
+      const responses = page.locator('.agent-response');
       await page.getByText('Review command failed', { exact: true }).waitFor();
       assert.equal(
         await page.locator('.workflow-commands').count(),
@@ -199,18 +218,23 @@ test(
       await workflow.locator(':scope > summary').click();
       assert.equal(await groups.count(), 2);
       assert.equal(
-        await activities.count(),
+        await responses.count(),
         4,
-        'Workflow events and attempt changes each break adjacency',
+        'Independent checks, new attempts and agent handoffs delimit responses',
       );
       assert.equal(await groups.first().getAttribute('open'), null);
       assert.equal(await groups.last().getAttribute('open'), '');
       assert.equal(
         await page
-          .locator('.tool-agent')
+          .locator('.response-author > span')
           .getByText('Review agent', { exact: true })
           .count(),
         1,
+      );
+      assert.equal(
+        await page.locator('.tool-agent').count(),
+        0,
+        'Tool groups share the response author',
       );
       await groups.first().locator(':scope > summary').focus();
       await page.keyboard.press('Space');
@@ -231,6 +255,18 @@ test(
         await developerRead.getAttribute('data-status'),
         'completed',
       );
+      const thinking = page.locator('.thinking-activity');
+      assert.equal(await thinking.count(), 2);
+      assert.equal(await thinking.first().getAttribute('open'), null);
+      assert.equal(await thinking.last().getAttribute('open'), null);
+      await thinking.first().locator('summary').click();
+      await thinking.first().locator('.thinking-content').waitFor();
+      assert.equal(
+        await thinking.last().getAttribute('open'),
+        null,
+        'Thinking disclosure state is scoped to its conversation',
+      );
+      await thinking.first().locator('summary').click();
       assert.deepEqual(errors, []);
       await mkdir(resolve('test-results'), { recursive: true });
       await page.getByLabel('Conversation transcript').evaluate((element) => {

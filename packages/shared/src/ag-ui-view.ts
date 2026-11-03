@@ -5,13 +5,21 @@ import {
   transformHttpEventStream,
   type AgentSubscriber,
 } from '@ag-ui/client';
-import { agUiMessages, FACTORY_AG_UI_VERSION } from './ag-ui.js';
+import {
+  agUiMessages,
+  FACTORY_AG_UI_VERSION,
+  partMessages,
+  partsMeta,
+  partsFromMessages,
+  type PartMeta,
+} from './ag-ui.js';
 import { API_VERSION, ApiError, responseError } from './core.js';
 import type {
   ConnectionState,
   ConversationSnapshot,
   ToolView,
   TranscriptEntry,
+  TranscriptPart,
 } from './chat.js';
 import type { RunActivityItem, RunActivityPage } from './activity.js';
 
@@ -40,6 +48,7 @@ export interface EntryMeta {
   at?: number;
   interrupted?: boolean;
   textArtifact?: string;
+  parts?: PartMeta[];
   /** Original AG-UI id of a user message, when it differs from the entry's. */
   messageId?: string;
   text?: string;
@@ -59,6 +68,7 @@ interface ConversationState {
   olderCursor?: string;
   entries: Record<string, EntryMeta>;
   tools: ToolView[];
+  liveParts?: PartMeta[];
 }
 type ActivityItemState = Omit<RunActivityItem, 'entry'> & { entryKey?: string };
 interface ActivityState {
@@ -67,7 +77,9 @@ interface ActivityState {
   items: ActivityItemState[];
   updates?: ActivityItemState[];
   cursor?: string;
-  live: Omit<RunActivityPage['live'][number], 'partial'>[];
+  live: (Omit<RunActivityPage['live'][number], 'partial' | 'liveParts'> & {
+    liveParts?: PartMeta[];
+  })[];
   entries: Record<string, EntryMeta>;
 }
 interface HistoryState {
@@ -89,6 +101,7 @@ function entryMeta(entry: TranscriptEntry): EntryMeta {
     ...(entry.at === undefined ? {} : { at: entry.at }),
     ...(entry.interrupted ? { interrupted: true } : {}),
     ...(entry.textArtifact ? { textArtifact: entry.textArtifact } : {}),
+    ...(entry.parts ? { parts: partsMeta(entry.parts) } : {}),
     ...(entry.messageId ? { messageId: entry.messageId } : {}),
     ...(entry.kind === 'pi.tool-result' && entry.text
       ? { text: entry.text }
@@ -128,8 +141,38 @@ function liveMessages(
   partial: string,
   tools: readonly ToolView[],
   committed: ReadonlySet<string>,
+  parts?: readonly TranscriptPart[],
 ): Message[] {
   const pending = tools.filter((tool) => !committed.has(tool.id));
+  if (parts?.length) {
+    const represented = new Set(
+      parts.filter((part) => part.type === 'tool').map((part) => part.toolId),
+    );
+    return [
+      ...partMessages(threadId, liveId(threadId), parts, pending),
+      ...pending
+        .filter(
+          (tool) =>
+            represented.has(tool.id) &&
+            (tool.status === 'completed' || tool.status === 'failed'),
+        )
+        .map(
+          (tool): Message => ({
+            id: `${threadId}:result:${tool.id}`,
+            role: 'tool',
+            toolCallId: toolCallId(threadId, tool.id),
+            content: tool.output ?? '',
+            ...(tool.status === 'failed' ? { error: 'Tool failed' } : {}),
+          }),
+        ),
+      ...liveMessages(
+        threadId,
+        '',
+        pending.filter((tool) => !represented.has(tool.id)),
+        committed,
+      ),
+    ];
+  }
   if (!partial && !pending.length) return [];
   return [
     {
@@ -176,6 +219,9 @@ export function conversationState(
       olderCursor: snapshot.olderCursor,
       entries: entriesMeta(snapshot.conversation.id, snapshot.entries),
       tools: snapshot.tools,
+      ...(snapshot.liveParts
+        ? { liveParts: partsMeta(snapshot.liveParts) }
+        : {}),
     },
   });
 }
@@ -190,7 +236,13 @@ export function conversationView(
   return json({
     messages: [
       ...agUiMessages(threadId, snapshot.entries),
-      ...liveMessages(threadId, snapshot.partial, snapshot.tools, committed),
+      ...liveMessages(
+        threadId,
+        snapshot.partial,
+        snapshot.tools,
+        committed,
+        snapshot.liveParts,
+      ),
     ],
     state: conversationState(snapshot),
   });
@@ -220,6 +272,7 @@ export function activityView(page: RunActivityPage): AgUiView<ActivityState> {
       source.partial,
       source.tools,
       committed.get(source.conversationId) ?? new Set(),
+      source.liveParts,
     ))
       messages.set(message.id, message);
   return json({
@@ -233,7 +286,10 @@ export function activityView(page: RunActivityPage): AgUiView<ActivityState> {
         items,
         updates,
         cursor: page.cursor,
-        live: page.live.map(({ partial: _partial, ...source }) => source),
+        live: page.live.map(({ partial: _partial, liveParts, ...source }) => ({
+          ...source,
+          ...(liveParts ? { liveParts: partsMeta(liveParts) } : {}),
+        })),
         entries,
       },
     },
@@ -312,8 +368,8 @@ const calls = (message: Message) =>
 function grows(previous: Message, next: Message) {
   return (
     previous.id === next.id &&
-    previous.role === 'assistant' &&
-    next.role === 'assistant' &&
+    (previous.role === 'assistant' || previous.role === 'reasoning') &&
+    next.role === previous.role &&
     text(next).startsWith(text(previous)) &&
     calls(previous).every(
       (call, index) =>
@@ -330,11 +386,16 @@ function grows(previous: Message, next: Message) {
  */
 export class AgUiMessageStream {
   private previous?: Message[];
-  private open = new Set<string>();
+  private open = new Map<string, 'assistant' | 'reasoning'>();
   /** Closes any message still open, before the run ends. */
   finish(): BaseEvent[] {
-    const events = [...this.open].map(
-      (messageId) => ({ type: 'TEXT_MESSAGE_END', messageId }) as BaseEvent,
+    const events = [...this.open].flatMap(([messageId, role]) =>
+      role === 'reasoning'
+        ? ([
+            { type: 'REASONING_MESSAGE_END', messageId },
+            { type: 'REASONING_END', messageId },
+          ] as BaseEvent[])
+        : [{ type: 'TEXT_MESSAGE_END', messageId } as BaseEvent],
     );
     this.open.clear();
     return events;
@@ -345,16 +406,29 @@ export class AgUiMessageStream {
     const previous = this.previous;
     this.previous = [...next];
     const isLive = (message: Message) =>
-      message.role === 'assistant' && message.id.endsWith(':live');
+      (message.role === 'assistant' || message.role === 'reasoning') &&
+      /:live(?::part:\d+)?$/.test(message.id) &&
+      !next.some(
+        (other) =>
+          other.id.startsWith(
+            message.id.replace(/:part:\d+$/, '') + ':part:',
+          ) &&
+          Number(other.id.split(':').at(-1)) >
+            Number(message.id.split(':').at(-1)),
+      );
     const begin = (message: Message) => {
+      const reasoning = message.role === 'reasoning';
+      if (reasoning) emit({ type: 'REASONING_START', messageId: message.id });
       emit({
-        type: 'TEXT_MESSAGE_START',
+        type: reasoning ? 'REASONING_MESSAGE_START' : 'TEXT_MESSAGE_START',
         messageId: message.id,
         role: message.role,
       });
       if (text(message))
         emit({
-          type: 'TEXT_MESSAGE_CONTENT',
+          type: reasoning
+            ? 'REASONING_MESSAGE_CONTENT'
+            : 'TEXT_MESSAGE_CONTENT',
           messageId: message.id,
           delta: text(message),
         });
@@ -386,25 +460,31 @@ export class AgUiMessageStream {
           content: message.content,
           role: 'tool',
         });
-      if (message.role === 'assistant' && isLive(message)) {
+      if (isLive(message)) {
         begin(message);
-        this.open.add(message.id);
+        this.open.set(message.id, message.role as 'assistant' | 'reasoning');
       } else if (text(message)) {
         begin(message);
-        emit({ type: 'TEXT_MESSAGE_END', messageId: message.id });
+        emit({
+          type:
+            message.role === 'reasoning'
+              ? 'REASONING_MESSAGE_END'
+              : 'TEXT_MESSAGE_END',
+          messageId: message.id,
+        });
+        if (message.role === 'reasoning')
+          emit({ type: 'REASONING_END', messageId: message.id });
       }
       for (const item of calls(message)) call(message.id, item);
     };
     const snapshot = () => {
-      for (const id of this.open)
-        emit({ type: 'TEXT_MESSAGE_END', messageId: id });
-      this.open.clear();
+      events.push(...this.finish());
       // The generation in progress is opened first so later tokens are deltas,
       // then the snapshot replaces the temporary copy it creates.
       for (const message of next)
         if (isLive(message)) {
           begin(message);
-          this.open.add(message.id);
+          this.open.set(message.id, message.role as 'assistant' | 'reasoning');
         }
       emit({ type: 'MESSAGES_SNAPSHOT', messages: next });
     };
@@ -441,7 +521,14 @@ export class AgUiMessageStream {
       const after = next[shared];
       const delta = text(after).slice(text(before).length);
       if (delta)
-        emit({ type: 'TEXT_MESSAGE_CONTENT', messageId: after.id, delta });
+        emit({
+          type:
+            after.role === 'reasoning'
+              ? 'REASONING_MESSAGE_CONTENT'
+              : 'TEXT_MESSAGE_CONTENT',
+          messageId: after.id,
+          delta,
+        });
       for (const item of calls(after).slice(calls(before).length))
         call(after.id, item);
       from = shared + rest.length;
@@ -449,6 +536,17 @@ export class AgUiMessageStream {
     // A user's message is not generation output: it reaches clients in a
     // snapshot, which replaces any local copy instead of duplicating it.
     const added = next.slice(from);
+    for (const [messageId, role] of this.open) {
+      const current = next.find((message) => message.id === messageId);
+      if (current && isLive(current)) continue;
+      emit({
+        type:
+          role === 'reasoning' ? 'REASONING_MESSAGE_END' : 'TEXT_MESSAGE_END',
+        messageId,
+      });
+      if (role === 'reasoning') emit({ type: 'REASONING_END', messageId });
+      this.open.delete(messageId);
+    }
     for (const message of added) if (message.role !== 'user') append(message);
     if (added.some((message) => message.role === 'user'))
       emit({ type: 'MESSAGES_SNAPSHOT', messages: next });
@@ -602,6 +700,14 @@ export function entriesFromAgUi(
         }
     }
   }
+  for (const [key, entry] of entries)
+    if (metas[key]?.parts) {
+      entry.parts = partsFromMessages(key, metas[key].parts!, messages);
+      entry.text = entry.parts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
+    }
   return entries;
 }
 
@@ -624,7 +730,27 @@ export function conversationFromAgUi(
     ...(factory.workflow ? { workflow: factory.workflow } : {}),
     ...(factory.planning ? { planning: factory.planning } : {}),
     entries,
-    partial: live ? textOf(live) : '',
+    partial: factory.liveParts
+      ? partsFromMessages(
+          liveId(factory.conversation.id),
+          factory.liveParts,
+          messages,
+        )
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n')
+      : live
+        ? textOf(live)
+        : '',
+    ...(factory.liveParts
+      ? {
+          liveParts: partsFromMessages(
+            liveId(factory.conversation.id),
+            factory.liveParts,
+            messages,
+          ),
+        }
+      : {}),
     tools: factory.tools,
     submissions: factory.submissions,
     execution: factory.execution,
@@ -650,12 +776,26 @@ export function activityFromAgUi(
     items: factory.items.map(revive),
     ...(factory.updates ? { updates: factory.updates.map(revive) } : {}),
     ...(factory.cursor ? { cursor: factory.cursor } : {}),
-    live: factory.live.map((source) => ({
+    live: factory.live.map(({ liveParts, ...source }) => ({
       ...source,
-      partial: textOf(
-        messages.find((m) => m.id === liveId(source.conversationId)) ??
-          ({ content: '' } as Message),
-      ),
+      ...(liveParts
+        ? {
+            liveParts: partsFromMessages(
+              liveId(source.conversationId),
+              liveParts,
+              messages,
+            ),
+          }
+        : {}),
+      partial: liveParts
+        ? partsFromMessages(liveId(source.conversationId), liveParts, messages)
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
+            .join('\n')
+        : textOf(
+            messages.find((m) => m.id === liveId(source.conversationId)) ??
+              ({ content: '' } as Message),
+          ),
     })),
   };
 }

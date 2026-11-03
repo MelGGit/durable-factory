@@ -9,6 +9,8 @@ import {
 } from '../../../packages/shared/src/index.js';
 import { markdown } from './markdown.js';
 import { conversationItems } from './transcript.js';
+import { ResponseFlow, ResponsePart, ResponseText } from './response-flow.js';
+import type { ResponseSpeaker } from './transcript.js';
 import { useRunDetails } from './runs.js';
 import { WorkflowCommands } from './workflow-commands.js';
 import { groupWorkflowActivity, isWorkflowEvent } from './workflow-activity.js';
@@ -17,7 +19,7 @@ import { eventHub } from './hooks/use-workflow.js';
 import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
 import { RunQuestion, RunResumePrompt } from './run-question.js';
-import { Tool, ToolActivity } from './tool-activity.js';
+import { Tool } from './tool-activity.js';
 const activity = new RunActivityClient();
 
 export function ImplementationTranscript({
@@ -186,8 +188,8 @@ export function ImplementationTranscript({
   const questions = run.interventions.filter(
     (question) => question.state === 'pending',
   );
-  const questionIds = new Set(
-    questions.map((question) => `timeline:question-${question.id}`),
+  const questionIds = new Map(
+    questions.map((question) => [`timeline:question-${question.id}`, question]),
   );
   // The attempt's own events repeat its final message, which is the question.
   const repeatsQuestion = (item: RunActivityItem) =>
@@ -197,6 +199,71 @@ export function ImplementationTranscript({
         item.attemptId === question.attemptId &&
         item.detail === question.question,
     );
+  const speakerFor = (
+    conversationId: string,
+    at?: number,
+    attemptId?: string,
+    role?: string,
+  ): ResponseSpeaker => ({
+    conversationId,
+    attemptId:
+      attemptId ??
+      run.attempts.findLast(
+        (a) =>
+          a.conversationId === conversationId &&
+          (at === undefined || a.startedAt <= at),
+      )?.id,
+    author: (
+      role
+        ? role === 'review'
+        : run.attempts.some(
+            (a) =>
+              a.stage === 'reviewer' && a.conversationId === conversationId,
+          )
+    )
+      ? 'Review agent'
+      : 'Developer agent',
+  });
+  const renderedQuestions = new Set<string>();
+  const renderQuestion = (
+    question: import('../../../packages/shared/src/index.js').Intervention,
+  ) => {
+    if (renderedQuestions.has(question.id)) return null;
+    renderedQuestions.add(question.id);
+    const speaker = {
+      ...speakerFor(
+        question.conversationId,
+        question.createdAt,
+        question.attemptId,
+        question.reason === 'reviewer'
+          ? 'review'
+          : question.reason === 'developer'
+            ? 'development'
+            : undefined,
+      ),
+      author:
+        question.reason === 'developer'
+          ? 'Developer agent'
+          : question.reason === 'reviewer'
+            ? 'Review agent'
+            : 'Workflow',
+    };
+    return (
+      <ResponsePart
+        key={`question:${question.id}`}
+        speaker={speaker}
+        at={question.createdAt}
+        closes
+      >
+        <RunQuestion
+          run={run}
+          question={question}
+          onRun={onRun}
+          withinResponse
+        />
+      </ResponsePart>
+    );
+  };
   const renderTool = (
     tool: import('./transcript.js').PresentationTool,
     conversationId: string,
@@ -207,32 +274,15 @@ export function ImplementationTranscript({
     const key = `${conversationId}:${tool.id}`;
     if (renderedTools.has(key)) return null;
     renderedTools.add(key);
+    const speaker = speakerFor(conversationId, at, attemptId, role);
     return (
       <Tool
         key={`tool:${key}`}
         tool={tools.get(key) ?? tool}
         conversationId={conversationId}
-        attemptId={
-          attemptId ??
-          run.attempts.findLast(
-            (a) =>
-              a.conversationId === conversationId &&
-              (at === undefined || a.startedAt <= at),
-          )?.id
-        }
-        agent={
-          (
-            role
-              ? role === 'review'
-              : run.attempts.some(
-                  (a) =>
-                    a.stage === 'reviewer' &&
-                    a.conversationId === conversationId,
-                )
-          )
-            ? 'Review agent'
-            : 'Developer agent'
-        }
+        attemptId={speaker.attemptId}
+        agent={speaker.author}
+        at={at}
       />
     );
   };
@@ -248,48 +298,80 @@ export function ImplementationTranscript({
         </button>
       )}
       {error && <p role="alert">{error}</p>}
-      <ToolActivity key={run.id}>
+      <ResponseFlow key={run.id}>
         {[
           ...groupWorkflowActivity(items, [...tools.values()]).flatMap(
             (group) => {
               const item = group[0]!;
               if (item.command)
                 return [
-                  <WorkflowCommands
-                    key={item.id}
-                    items={group}
-                    runId={run.id}
-                  />,
+                  <ResponsePart key={item.id} attemptId={item.attemptId}>
+                    <WorkflowCommands items={group} runId={run.id} />
+                  </ResponsePart>,
                 ];
               if (isWorkflowEvent(item))
-                return [<WorkflowEvents key={item.id} items={group} />];
-              if (questionIds.has(item.id))
-                return [<React.Fragment key={item.id} />];
+                return [
+                  <ResponsePart
+                    key={item.id}
+                    attemptId={group.at(-1)?.attemptId}
+                  >
+                    <WorkflowEvents
+                      items={group.map((event) =>
+                        repeatsQuestion(event)
+                          ? { ...event, detail: undefined }
+                          : event,
+                      )}
+                    />
+                  </ResponsePart>,
+                ];
+              const pendingQuestion = questionIds.get(item.id);
+              if (pendingQuestion) return [renderQuestion(pendingQuestion)];
               const answered = run.interventions.find(
                 (question) =>
                   question.state === 'resolved' &&
                   item.id === `timeline:question-${question.id}`,
               );
-              if (answered)
-                return [
-                  <RunQuestion
-                    key={item.id}
-                    run={run}
-                    question={answered}
-                    onRun={onRun}
-                  />,
-                ];
+              if (answered) return [renderQuestion(answered)];
               if (item.entry) {
-                const entry = item.entry;
-                return [
-                  entry.text || entry.textArtifact || entry.interrupted ? (
+                return conversationItems([item.entry]).map((part) => {
+                  if (part.kind === 'tool')
+                    return renderTool(
+                      part.tool,
+                      item.conversationId!,
+                      item.attemptId,
+                      item.actor,
+                      item.at,
+                    );
+                  const entry = part.entry;
+                  return (item.actor === 'development' ||
+                    item.actor === 'review') &&
+                    entry.kind !== 'pi.compaction' ? (
+                    <ResponsePart
+                      key={`${item.id}:${part.key}`}
+                      speaker={speakerFor(
+                        item.conversationId!,
+                        item.at,
+                        item.attemptId,
+                        item.actor,
+                      )}
+                      at={item.at}
+                    >
+                      <ResponseText
+                        entry={entry}
+                        conversationId={item.conversationId!}
+                        itemKey={item.id}
+                      />
+                    </ResponsePart>
+                  ) : (
                     <article
-                      key={item.id}
-                      className={`message ${item.actor === 'human' ? 'user-message' : item.actor === 'code' ? 'event-message' : 'assistant-message'}`}
+                      key={`${item.id}:${part.key}`}
+                      className={`message ${item.actor === 'human' ? 'user-message' : 'event-message'}`}
                       data-conversation-item={item.id}
                     >
                       <div className="message-author">
-                        {item.title}
+                        {entry.kind === 'pi.compaction'
+                          ? 'Context summary'
+                          : item.title}
                         {entry.interrupted && ' · Interrupted'}
                         {item.at !== undefined && (
                           <time dateTime={new Date(item.at).toISOString()}>
@@ -317,17 +399,8 @@ export function ImplementationTranscript({
                         />
                       )}
                     </article>
-                  ) : null,
-                  ...entry.tools.map((tool) =>
-                    renderTool(
-                      tool,
-                      item.conversationId!,
-                      item.attemptId,
-                      item.actor,
-                      item.at,
-                    ),
-                  ),
-                ];
+                  );
+                });
               }
               if (
                 item.actor === 'human' &&
@@ -378,38 +451,52 @@ export function ImplementationTranscript({
               );
             },
           ),
-          ...live.flatMap((source) => [
-            source.partial ? (
-              <article
-                key={`partial:${source.conversationId}`}
-                className="message assistant-message"
-              >
-                <div className="message-author">
-                  {source.role === 'review'
-                    ? 'Review agent'
-                    : 'Developer agent'}{' '}
-                  · Responding
-                </div>
-                <div
-                  className="message-text markdown"
-                  dangerouslySetInnerHTML={{ __html: markdown(source.partial) }}
-                />
-              </article>
-            ) : null,
-            ...source.tools.map((tool) =>
-              renderTool(tool, source.conversationId, undefined, source.role),
+          ...live.flatMap((source) =>
+            conversationItems(
+              [
+                {
+                  id: 'partial',
+                  kind: 'pi.assistant',
+                  text: source.partial,
+                  parts: source.liveParts,
+                  tools: [],
+                },
+              ],
+              source.tools,
+            ).map((part) =>
+              part.kind === 'tool' ? (
+                renderTool(
+                  part.tool,
+                  source.conversationId,
+                  undefined,
+                  source.role,
+                )
+              ) : (
+                <ResponsePart
+                  key={`partial:${source.conversationId}:${part.key}`}
+                  speaker={speakerFor(
+                    source.conversationId,
+                    undefined,
+                    undefined,
+                    source.role,
+                  )}
+                >
+                  <ResponseText
+                    conversationId={source.conversationId}
+                    itemKey={`partial:${source.conversationId}:${part.key}`}
+                    live={
+                      source.liveParts?.at(-1)?.id ===
+                      part.entry.parts?.at(-1)?.id
+                    }
+                    entry={part.entry}
+                  />
+                </ResponsePart>
+              ),
             ),
-          ]),
+          ),
         ]}
-      </ToolActivity>
-      {questions.map((question) => (
-        <RunQuestion
-          key={question.id}
-          run={run}
-          question={question}
-          onRun={onRun}
-        />
-      ))}
+        {questions.map(renderQuestion)}
+      </ResponseFlow>
       <RunResumePrompt run={run} onRun={onRun} />
       {!items.length && !questions.length && (
         <p role="status">Loading implementation activity…</p>

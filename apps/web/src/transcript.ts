@@ -14,6 +14,67 @@ export interface ActivityCall {
   conversationId: string;
   attemptId?: string;
   agent?: string;
+  at?: number;
+}
+
+export interface ResponseSpeaker {
+  conversationId: string;
+  attemptId?: string;
+  author: string;
+}
+export type ResponsePartDescription =
+  | { kind: 'agent'; speaker: ResponseSpeaker; at?: number; closes?: boolean }
+  | { kind: 'workflow'; attemptId?: string }
+  | { kind: 'boundary' };
+
+/** Preserve chronology while treating one agent's text and activity as a response. */
+export function groupResponseFlow<T>(
+  items: readonly T[],
+  describe: (item: T) => ResponsePartDescription,
+) {
+  const blocks: (
+    | {
+        kind: 'response';
+        speaker: ResponseSpeaker;
+        at?: number;
+        closed: boolean;
+        items: T[];
+      }
+    | { kind: 'standalone'; item: T }
+  )[] = [];
+  for (const item of items) {
+    const part = describe(item);
+    const previous = blocks.at(-1);
+    if (part.kind === 'boundary') blocks.push({ kind: 'standalone', item });
+    else if (part.kind === 'workflow') {
+      if (
+        previous?.kind === 'response' &&
+        !previous.closed &&
+        (part.attemptId === undefined ||
+          part.attemptId === previous.speaker.attemptId)
+      )
+        previous.items.push(item);
+      else blocks.push({ kind: 'standalone', item });
+    } else if (
+      previous?.kind === 'response' &&
+      !previous.closed &&
+      previous.speaker.conversationId === part.speaker.conversationId &&
+      previous.speaker.attemptId === part.speaker.attemptId &&
+      previous.speaker.author === part.speaker.author
+    ) {
+      previous.items.push(item);
+      previous.at ??= part.at;
+      previous.closed = Boolean(part.closes);
+    } else
+      blocks.push({
+        kind: 'response',
+        speaker: part.speaker,
+        at: part.at,
+        closed: Boolean(part.closes),
+        items: [item],
+      });
+  }
+  return blocks;
 }
 
 /** Only presentation neighbors can share a disclosure; content is a boundary. */
@@ -187,7 +248,32 @@ export function conversationItems(
     });
   };
   for (const entry of entries) {
-    if (entry.text || entry.textArtifact || entry.interrupted)
+    if (entry.parts?.length) {
+      for (const [index, part] of entry.parts.entries()) {
+        if (part.type === 'tool') {
+          const tool = tools.get(part.toolId);
+          if (tool) append(tool);
+        } else
+          items.push({
+            kind: 'message',
+            key: `part:${part.id}`,
+            entry: {
+              ...entry,
+              text: part.type === 'text' ? part.text : '',
+              parts: [part],
+              textArtifact: undefined,
+              interrupted:
+                index === entry.parts.length - 1 && entry.interrupted,
+            },
+          });
+      }
+      if (entry.interrupted && entry.parts.at(-1)?.type === 'tool')
+        items.push({
+          kind: 'message',
+          key: `entry:${entry.id}:interrupted`,
+          entry: { ...entry, parts: [], text: '' },
+        });
+    } else if (entry.text || entry.textArtifact || entry.interrupted)
       items.push({ kind: 'message', key: `entry:${entry.id}`, entry });
     entry.tools.forEach(append);
   }

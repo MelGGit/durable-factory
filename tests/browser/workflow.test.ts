@@ -62,6 +62,15 @@ test(
         .locator('.implementation-events .run-question')
         .getByText('Which search behavior should be used?', { exact: true })
         .waitFor();
+      const questionResponse = page
+        .locator('.agent-response')
+        .filter({ has: page.locator('.run-question') });
+      assert.equal(await questionResponse.count(), 1);
+      assert.equal(
+        await questionResponse.locator('.message-author').count(),
+        1,
+        'The question shares its response author',
+      );
       const run = (await s.client.workflow()).runs[0];
       await page
         .getByLabel('Message', { exact: true })
@@ -220,8 +229,13 @@ test(
           exact: true,
         })
         .click();
-      await page
-        .locator('.implementation-events')
+      const reviewProgress = page.locator('.workflow-events').filter({
+        has: page.getByText('Simulated reviewer passed.', { exact: true }),
+      });
+      await reviewProgress.waitFor();
+      if ((await reviewProgress.getAttribute('open')) === null)
+        await reviewProgress.locator(':scope > summary').click();
+      await reviewProgress
         .getByText('Simulated reviewer passed.', { exact: true })
         .waitFor();
       assert.equal(

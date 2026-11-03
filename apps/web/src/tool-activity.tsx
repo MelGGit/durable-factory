@@ -50,7 +50,7 @@ function useActivityState() {
   useSyncExternalStore(state.subscribe, state.snapshot, state.snapshot);
   return state;
 }
-function useCachedState<T>(key: string, initial: T) {
+export function useCachedState<T>(key: string, initial: T) {
   const state = useActivityState();
   const value = state.get(key, initial);
   const set = (update: T | ((previous: T) => T)) => {
@@ -72,7 +72,7 @@ const emptyDisclosure = {
   failedSeen: false,
 };
 
-function ArtifactText({
+export function ArtifactText({
   artifact,
   conversationId,
   label = 'output',
@@ -176,6 +176,7 @@ export function Tool({
   conversationId,
   agent,
   grouped = false,
+  at,
 }: ActivityCall & { grouped?: boolean }) {
   const [disclosure, setDisclosure] = useCachedState(
     callKey({ tool, conversationId }),
@@ -213,7 +214,14 @@ export function Tool({
         <Status tools={[tool]} />
       </summary>
       <div className="tool-detail">
-        <div className="tool-name">{tool.name}</div>
+        <div className="tool-name">
+          {tool.name}
+          {at !== undefined && (
+            <time dateTime={new Date(at).toISOString()}>
+              {new Date(at).toLocaleTimeString()}
+            </time>
+          )}
+        </div>
         {tool.arguments !== undefined && (
           <>
             <h4>Input / command</h4>
@@ -256,7 +264,13 @@ export function Tool({
   );
 }
 
-function ToolGroup({ calls }: { calls: ActivityCall[] }) {
+function ToolGroup({
+  calls,
+  showAgent,
+}: {
+  calls: ActivityCall[];
+  showAgent: boolean;
+}) {
   const state = useActivityState();
   const disclosures = calls.map((call) =>
     state.get(callKey(call), emptyDisclosure),
@@ -267,7 +281,9 @@ function ToolGroup({ calls }: { calls: ActivityCall[] }) {
   const last = calls.at(-1)!;
   return (
     <section className="tool-activity">
-      {calls[0].agent && <div className="tool-agent">{calls[0].agent}</div>}
+      {showAgent && calls[0].agent && (
+        <div className="tool-agent">{calls[0].agent}</div>
+      )}
       <ActivityDisclosure
         className="tool-group"
         open={open}
@@ -302,27 +318,48 @@ function ToolGroup({ calls }: { calls: ActivityCall[] }) {
 }
 
 /** Content stays in transcript order; only adjacent top-level calls are grouped. */
-export function ToolActivity({ children }: { children: React.ReactNode }) {
+export function ToolActivityProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [state] = useState(() => new ActivityState());
+  return (
+    <StateContext.Provider value={state}>{children}</StateContext.Provider>
+  );
+}
+
+export function ToolActivity({
+  children,
+  showAgent = true,
+}: {
+  children: React.ReactNode;
+  showAgent?: boolean;
+}) {
   const groups = groupToolActivity(React.Children.toArray(children), (child) =>
     React.isValidElement<ActivityCall>(child) && child.type === Tool
       ? child.props
       : undefined,
   );
   return (
-    <StateContext.Provider value={state}>
+    <>
       {groups.map((group) =>
         group.kind === 'content' ? (
           group.item
         ) : group.calls.length === 1 ? (
-          <Tool key={callKey(group.calls[0])} {...group.calls[0]} />
+          <Tool
+            key={callKey(group.calls[0])}
+            {...group.calls[0]}
+            agent={showAgent ? group.calls[0].agent : undefined}
+          />
         ) : (
           <ToolGroup
             key={`group:${callKey(group.calls.at(-1)!)}`}
             calls={group.calls}
+            showAgent={showAgent}
           />
         ),
       )}
-    </StateContext.Provider>
+    </>
   );
 }

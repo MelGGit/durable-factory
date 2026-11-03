@@ -171,7 +171,7 @@ export async function runAgUi(
         conversationView({
           ...snapshot,
           entries: entries.sort((a, b) => Number(a.id) - Number(b.id)),
-          ...(live ? {} : { partial: '', tools: [] }),
+          ...(live ? {} : { partial: '', liveParts: undefined, tools: [] }),
         });
       // Earlier work only hydrates the client; replies to this exchange then
       // stream as generation events, even when they arrive in the first frame.

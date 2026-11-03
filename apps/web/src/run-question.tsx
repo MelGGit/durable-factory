@@ -11,10 +11,12 @@ export function RunQuestion({
   run,
   question,
   onRun,
+  withinResponse = false,
 }: {
   run: WorkflowRun;
   question: Intervention;
   onRun: (run: WorkflowRun) => void;
+  withinResponse?: boolean;
 }) {
   const key = `factory.runAnswer.${run.id}.${question.id}`;
   const { error, busy, act } = useRunCommand(run, onRun, key);
@@ -38,19 +40,21 @@ export function RunQuestion({
         : 'Workflow';
   return (
     <article
-      className="message assistant-message run-question"
+      className={`message assistant-message run-question${withinResponse ? ' response-question' : ''}`}
       aria-label="Implementation question"
       data-question-id={question.id}
       data-conversation-item={`timeline:question-${question.id}`}
     >
-      <div className="message-author">
-        {author}
-        {question.createdAt !== undefined && (
-          <time dateTime={new Date(question.createdAt).toISOString()}>
-            {new Date(question.createdAt).toLocaleTimeString()}
-          </time>
-        )}
-      </div>
+      {!withinResponse && (
+        <div className="message-author">
+          {author}
+          {question.createdAt !== undefined && (
+            <time dateTime={new Date(question.createdAt).toISOString()}>
+              {new Date(question.createdAt).toLocaleTimeString()}
+            </time>
+          )}
+        </div>
+      )}
       <div
         className="message-text markdown"
         dangerouslySetInnerHTML={{ __html: markdown(question.question) }}

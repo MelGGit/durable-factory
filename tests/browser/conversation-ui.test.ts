@@ -39,6 +39,253 @@ async function pushSnapshot(page: Page, snapshot: ConversationSnapshot) {
 }
 
 test(
+  'one response combines Markdown and interleaved tools with stable output and restrained typography',
+  { timeout: 30000 },
+  async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'factory-response-flow-'));
+    const service = await startService({ dataDir, port: 0, chat: fixture() });
+    const browser = await chromium.launch({
+      headless: true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : {}),
+    });
+    try {
+      const client = new ChatClient(service.url);
+      await configure(client);
+      const conversation = await client.createConversation(
+        'A continuous response',
+        'response-flow',
+      );
+      const read: ToolView = {
+        id: 'read-settings',
+        name: 'read_repository',
+        arguments: '{"path":"apps/web/src/settings.tsx"}',
+        status: 'pending',
+      };
+      const edit: ToolView = {
+        id: 'edit-settings',
+        name: 'worktree_edit',
+        arguments: '{"path":"apps/web/src/settings.tsx"}',
+        status: 'pending',
+      };
+      const command: ToolView = {
+        id: 'validation',
+        name: 'worktree_command',
+        arguments: '{"command":"bun run check"}',
+        status: 'running',
+        artifact: 'task-validation',
+      };
+      const at = Date.now();
+      let snapshot: ConversationSnapshot = {
+        conversation,
+        execution: 'running',
+        submissions: [],
+        partial: 'I’m checking the last edge case.',
+        tools: [command],
+        entries: [
+          {
+            id: '1',
+            kind: 'pi.user',
+            text: 'Make the settings flow clearer.',
+            tools: [],
+          },
+          {
+            id: '2',
+            at,
+            kind: 'pi.assistant',
+            text: 'I’ll inspect the settings code, update the form, and run focused checks.',
+            tools: [read],
+          },
+          {
+            id: '3',
+            kind: 'pi.tool-result',
+            text: '',
+            tools: [
+              {
+                ...read,
+                status: 'completed',
+                output: 'Settings form inspected.',
+              },
+            ],
+          },
+          {
+            id: '4',
+            at: at + 1,
+            kind: 'pi.assistant',
+            text: '### Updating the form\nThe draft can keep related controls together, with validation beside each field.',
+            tools: [edit],
+          },
+          {
+            id: '5',
+            kind: 'pi.tool-result',
+            text: '',
+            tools: [{ ...edit, status: 'completed', output: 'Form updated.' }],
+          },
+          {
+            id: '6',
+            at: at + 2,
+            kind: 'pi.assistant',
+            text: '## Changes\n\nThe **setup helper** now keeps related controls together.\n\n- Repository settings stay in one section.\n  - Changes remain in the draft until saved.\n- Validation points to the relevant field.\n\n### Validation\n\n```ts\nconst ready = true;\n```\n\n| Check | Result |\n| --- | --- |\n| Draft | Preserved |',
+            tools: [],
+          },
+        ],
+      };
+      const page = await browser.newPage({
+        viewport: { width: 1440, height: 1150 },
+      });
+      page.setDefaultTimeout(6000);
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      page.on('console', (message) => {
+        if (
+          message.type() === 'error' &&
+          /unique.*key|same key/.test(message.text())
+        )
+          errors.push(message.text());
+      });
+      await page.addInitScript(() =>
+        localStorage.setItem('factory.theme.v1', 'system'),
+      );
+      await installSnapshotStream(page, snapshot);
+      let requests = 0;
+      await page.route('**/artifacts/task-validation?*', (route) => {
+        requests++;
+        return route.fulfill({ json: { text: 'TypeScript check passed.' } });
+      });
+      await page.goto(`${service.url}/?conversation=${conversation.id}`);
+      const response = page.locator('.agent-response');
+      const card = page.locator('[data-tool-id="validation"]');
+      await response
+        .getByText('I’m checking the last edge case.', { exact: true })
+        .waitFor();
+      assert.equal(await response.count(), 1);
+      assert.equal(await response.locator('.message-author').count(), 1);
+      assert.equal(await page.locator('.tool-agent').count(), 0);
+      assert.equal(await response.locator('.markdown ul ul').count(), 1);
+      assert.equal(await response.locator('.markdown pre code').count(), 1);
+      assert.equal(await response.locator('.markdown table').count(), 1);
+      const styles = await response.evaluate((element) => {
+        const p = element.querySelector('p')!;
+        const heading = element.querySelector('h2')!;
+        const strong = element.querySelector('strong:not(.tool-label)')!;
+        const appBody = getComputedStyle(document.body);
+        const prose = getComputedStyle(p);
+        return {
+          body: prose.fontSize,
+          heading: getComputedStyle(heading).fontSize,
+          bold: getComputedStyle(strong).fontWeight,
+          bodyWeight: prose.fontWeight,
+          sameFamily: prose.fontFamily === appBody.fontFamily,
+          sameSize: prose.fontSize === appBody.fontSize,
+          sameLineHeight: prose.lineHeight === appBody.lineHeight,
+          gap: getComputedStyle(element.querySelector('.response-content')!)
+            .gap,
+        };
+      });
+      assert.deepEqual(styles, {
+        body: '16px',
+        heading: '16px',
+        bold: '400',
+        bodyWeight: '400',
+        sameFamily: true,
+        sameSize: true,
+        sameLineHeight: true,
+        gap: '12px',
+      });
+      const proseLeft = await response
+        .locator('.response-text')
+        .first()
+        .evaluate((element) => element.getBoundingClientRect().left);
+      assert.ok(
+        Math.abs(
+          (await card
+            .locator(':scope > summary')
+            .evaluate((element) => element.getBoundingClientRect().left)) -
+            proseLeft,
+        ) < 1,
+      );
+      await card.locator(':scope > summary').click();
+      await card.getByRole('button', { name: 'Read complete output' }).click();
+      await card
+        .getByText('TypeScript check passed.', { exact: true })
+        .waitFor();
+      snapshot = {
+        ...snapshot,
+        execution: 'idle',
+        partial: 'All checks passed.',
+        tools: [],
+        entries: [
+          ...snapshot.entries,
+          {
+            id: '7',
+            kind: 'pi.assistant',
+            text: '',
+            tools: [{ ...command, artifact: undefined, status: 'pending' }],
+          },
+          {
+            id: '8',
+            kind: 'pi.tool-result',
+            text: '',
+            tools: [
+              {
+                ...command,
+                status: 'completed',
+                output: 'Validation complete.',
+              },
+            ],
+          },
+        ],
+      };
+      await pushSnapshot(page, snapshot);
+      await response.getByText('All checks passed.', { exact: true }).waitFor();
+      await card
+        .getByText('TypeScript check passed.', { exact: true })
+        .waitFor();
+      assert.equal(await response.count(), 1);
+      assert.equal(
+        await response.locator('.response-author > time').count(),
+        1,
+      );
+      assert.equal(requests, 1);
+      await card.locator(':scope > summary').click();
+      await mkdir(resolve('test-results'), { recursive: true });
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme });
+        await page.reload();
+        await response
+          .getByText('All checks passed.', { exact: true })
+          .waitFor();
+        for (const width of [1440, 390]) {
+          await page.setViewportSize({ width, height: 1150 });
+          await page
+            .getByLabel('Conversation transcript')
+            .evaluate((element) => {
+              element.scrollTop = 0;
+            });
+          await page.screenshot({
+            path: resolve(
+              `test-results/continuous-response-${colorScheme}-${width}.png`,
+            ),
+            fullPage: true,
+          });
+          assert.ok(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          );
+        }
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await browser.close();
+      await service.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'tool groups stay compact, retain disclosures and in-flight output through regrouping, and reveal new failures once',
   { timeout: 30000 },
   async () => {
@@ -764,7 +1011,9 @@ test(
       };
       await push();
       await page
-        .getByText('Development agent · Responding', { exact: true })
+        .locator('.response-author > span')
+        .getByText('Development agent', { exact: true })
+        .last()
         .waitFor();
       snapshot = {
         ...snapshot,
@@ -772,7 +1021,9 @@ test(
       };
       await push();
       await page
-        .getByText('Review agent · Responding', { exact: true })
+        .locator('.response-author > span')
+        .getByText('Review agent', { exact: true })
+        .last()
         .waitFor();
       assert.equal(await input.count(), 0);
       assert.equal(
