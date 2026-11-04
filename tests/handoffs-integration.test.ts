@@ -19,7 +19,8 @@ async function settled(f: Awaited<ReturnType<typeof realFixture>>, id: string) {
     () => f.client.run(id),
     (r) =>
       ['pr_ready', 'needs_input', 'termination_blocker'].includes(r.status),
-    30000,
+    // Three repairs with proof worktrees take about 20 seconds alone.
+    60000,
   );
 }
 test('required regression proof demonstrates base failure and candidate success with a frozen PR handoff', async () => {

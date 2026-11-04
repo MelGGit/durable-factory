@@ -248,7 +248,7 @@ export async function realFixture(
           reminders >= (options.forgetReport ?? 0) &&
           !results.some((r) => r.toolName === 'submit_implementation')
         ) {
-          const run = JSON.parse(text);
+          const run = JSON.parse(text.slice(text.indexOf('\n\n{') + 2));
           const changed = [
             ...git(run.workspace.path, [
               'diff',

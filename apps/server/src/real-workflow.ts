@@ -12,6 +12,7 @@ import {
   hook,
   type Harness,
   type ConversationId,
+  type Conversation,
   type ToolExecutionApi,
   type ToolRegistration,
   type TaskId,
@@ -46,6 +47,11 @@ import { context } from './storage.js';
 import { Catalog } from './chat.js';
 import { regressionProof } from './regression.js';
 import {
+  developerPrompt,
+  reviewerPrompt,
+  attemptKind,
+} from './agent-prompt.js';
+import {
   Navigator,
   FIND_LIMIT,
   writeInside,
@@ -58,6 +64,7 @@ import {
   OUTPUT_BYTES,
   FAILURE_TAIL_BYTES,
   fileTail,
+  tailText,
   numbered,
   numberedTail,
   readLog,
@@ -184,6 +191,8 @@ export class RealWorkflow {
   private providerOwners = new Map<string, string>();
   /** Attempts whose last tool ends the run (a submission or a question); steering waits for the next attempt. */
   private submitted = new Set<string>();
+  /** Conversation size, in characters, above which a repair starts with a compaction. */
+  compactionChars = 160_000;
   /** Test seam: awaited once a report is recorded, before the run ends. */
   afterReport?: () => Promise<void>;
   readonly extension;
@@ -870,14 +879,49 @@ export class RealWorkflow {
     });
     const evidence = defineTool({
       name: 'workflow_evidence',
-      description: 'Read run checks, prior findings, and human answers.',
-      parameters: Type.Object({}),
+      description:
+        "Read the run's validation evidence and human answers, a page at a time. By default only the current evidence (what applies to the present candidate); set history to read superseded evidence too. Each entry has its output tail and its commands with artifact ids for check_output. Continue with offset.",
+      parameters: Type.Object({
+        history: Type.Optional(Type.Boolean()),
+        offset: Type.Optional(Type.Integer({ minimum: 0 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+      }),
       replay: 'safe',
-      execute: async (_, api) => {
-        const run = await this.guard(api);
+      execute: async (args, api) => {
+        const run = await this.guard(api),
+          all = args.history
+            ? [...(run.evidenceHistory ?? []), ...run.evidence]
+            : run.evidence,
+          offset = args.offset ?? 0,
+          limit = args.limit ?? 5;
+        const page = all.slice(offset, offset + limit).map((e) => ({
+          ...e,
+          output: tailText(e.output, 8192).text,
+        }));
+        const next = offset + page.length;
         return text({
-          evidence: run.evidence,
-          interventions: run.interventions,
+          evidence: page,
+          total: all.length,
+          ...(next < all.length
+            ? { nextOffset: next, hint: `continue with offset=${next}` }
+            : {}),
+          ...(!args.history && run.evidenceHistory?.length
+            ? {
+                note: `${run.evidenceHistory.length} superseded entr(ies) exist; set history to read them.`,
+              }
+            : {}),
+          ...(offset === 0
+            ? {
+                answers: run.interventions
+                  .filter((i) => i.state === 'resolved')
+                  .slice(-10)
+                  .map((i) => ({
+                    question: tailText(i.question, 2000).text,
+                    answer: tailText(i.answer ?? '', 2000).text,
+                    ...(i.outOfScope ? { outOfScope: i.outOfScope } : {}),
+                  })),
+              }
+            : {}),
         });
       },
     });
@@ -1192,64 +1236,38 @@ export class RealWorkflow {
       conversationId: attempt.conversationId,
       signal,
     });
-    const prompt = JSON.stringify({
-      role,
-      contractVersion: run.contractVersion ?? 1,
-      specification: run.specification,
-      implementation: currentImplementation(run),
-      previousImplementations: run.implementations,
-      issue: run.issueSnapshot ?? run.specification,
-      base: run.base,
-      workspace: run.workspace,
-      source: run.source,
-      ...(role === 'developer'
-        ? {
-            requiredChecks: run.configuration.requiredChecks,
-            regressionProof: run.specification.regression?.required
-              ? {
-                  command: run.specification.regression.command,
-                  expectedFailure: run.specification.regression.expectedFailure,
-                  testPaths: run.specification.regression.testPaths,
-                }
-              : undefined,
-          }
-        : {}),
-      evidence: run.evidence,
-      previousEvidence: run.evidenceHistory,
-      attempts: run.attempts,
-      answers: run.interventions.filter((i) => i.state === 'resolved'),
-      guidance: run.inputs.filter((i) => i.status === 'consumed'),
-      scope: {
-        namedInTicket: namedPaths(run.specification),
-        ...(role === 'reviewer'
-          ? {
-              changedFiles: await this.changedFiles(run, run.source),
-              notNamedInTicket: unnamedFiles(
-                run.specification,
-                await this.changedFiles(run, run.source),
-              ),
-            }
-          : {}),
-      },
-      instructions: 'Read AGENTS.md and repository instructions if present.',
-    });
-    const submission = await conversation.submit(
-      {
-        type: 'input',
-        content: prompt,
-        requestId: `agent-${attempt.id}-${randomUUID()}`,
-      },
-      context,
-    );
-    await this.agentChange(attempt.id, (op) => {
-      op.submissionId = String(submission.id);
-    });
     const abort = () => {
       void this.abortAgent(attempt.id).catch(() => {});
     };
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
     try {
+      const named = namedPaths(run.specification);
+      let prompt: string;
+      if (role === 'reviewer') {
+        const changed = await this.changedFiles(run, run.source);
+        prompt = reviewerPrompt(run, {
+          namedInTicket: named,
+          changedFiles: changed,
+          notNamedInTicket: unnamedFiles(run.specification, changed),
+        });
+      } else {
+        const { kind } = attemptKind(run, attempt);
+        if (kind === 'repair')
+          await this.compactBeforeRepair(conversation, signal);
+        prompt = developerPrompt(run, attempt, { namedInTicket: named });
+      }
+      const submission = await conversation.submit(
+        {
+          type: 'input',
+          content: prompt,
+          requestId: `agent-${attempt.id}-${randomUUID()}`,
+        },
+        context,
+      );
+      await this.agentChange(attempt.id, (op) => {
+        op.submissionId = String(submission.id);
+      });
       const settled = await submission.wait(context);
       const result = await this.agentOperation(attempt.id);
       if (signal.aborted) throw new Error('Agent interrupted');
@@ -1351,6 +1369,30 @@ export class RealWorkflow {
         )
           await harness.abortTask(task.record.id, context);
     }
+  }
+  /**
+   * A repair continues the same conversation, so a long one is summarized
+   * first, keeping what the repair needs. The compaction finishes (or is
+   * aborted by the stage's cleanup) before the attempt's own request starts.
+   */
+  private async compactBeforeRepair(
+    conversation: Conversation,
+    signal: AbortSignal,
+  ) {
+    const view = await conversation.context(context);
+    if (JSON.stringify(view.messages).length < this.compactionChars) return;
+    const harness = this.deps.harness();
+    const id = await conversation.compact(
+      'Keep the failing check and test names with their error text, every reviewer finding, the current implementation report, and the user answers. Drop exploration, file contents and passing output.',
+      context,
+    );
+    const settled = await harness.waitForTask(id, context);
+    signal.throwIfAborted();
+    const outcome = (settled as { state: { outcome: any } }).state.outcome;
+    if (outcome.status === 'completed' && outcome.result.submissionId)
+      await (
+        await harness.submission(outcome.result.submissionId, context)
+      )?.wait(context);
   }
   private async abortAgent(attemptId: string) {
     const op = await this.agentOperation(attemptId);

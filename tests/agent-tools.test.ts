@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { until } from './fixtures/chat.js';
 import { realFixture } from './fixtures/real.js';
-import { AgentOperations } from '../apps/server/src/real-workflow.js';
+import { ChatClient } from '../packages/shared/src/index.js';
+import {
+  AgentOperations,
+  type RealWorkflow,
+} from '../apps/server/src/real-workflow.js';
 import { context } from '../apps/server/src/storage.js';
 
 type Fixture = Awaited<ReturnType<typeof realFixture>>;
@@ -394,3 +398,111 @@ async function answered(f: Fixture, id: string, status = 'needs_input') {
     30000,
   );
 }
+
+const dataOf = (prompt: string) =>
+  JSON.parse(prompt.slice(prompt.indexOf('\n\n{') + 2));
+
+test('prompts are structured per attempt and never resend history', async () => {
+  const f = await realFixture({
+    checkCommand: 'echo REPAIR-CAUSE-7 >&2; exit 2',
+  });
+  try {
+    const started = await f.client.startIssue(7, 'prompt-shape');
+    await until(
+      () => f.client.run(started.id),
+      (r) => r.attempts.filter((a) => a.stage === 'developer').length >= 2,
+      30000,
+    );
+    const [first, repair] = f.prompts.filter((p) => p.role === 'developer');
+    assert.match(first.text, /^You are the developer for issue #7/);
+    assert.deepEqual(
+      Object.keys(dataOf(first.text)).sort(),
+      [
+        'answers',
+        'base',
+        'contractVersion',
+        'guidance',
+        'issueUrl',
+        'requiredChecks',
+        'role',
+        'scope',
+        'source',
+        'ticket',
+        'workspace',
+      ].sort(),
+    );
+    assert.match(repair.text, /^Repair 1 of 3 for issue #7/);
+    const data = dataOf(repair.text);
+    assert.equal(data.ticket, undefined);
+    for (const key of [
+      'attempts',
+      'evidence',
+      'previousImplementations',
+      'implementation',
+    ])
+      assert.equal(data[key], undefined, key);
+    assert.equal(data.causes.length, 1);
+    assert.match(data.causes[0].output, /REPAIR-CAUSE-7/);
+    assert.match(repair.text, /workflow_evidence.*check_output/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('the reviewer input leaves out developer attempts, guidance and old reports', async () => {
+  const f = await realFixture();
+  try {
+    assert.equal((await finish(f, 'reviewer-input')).status, 'pr_ready');
+    const prompt = f.prompts.find((p) => p.role === 'reviewer')!;
+    assert.match(prompt.text, /^You are the independent reviewer/);
+    const data = dataOf(prompt.text);
+    for (const key of [
+      'attempts',
+      'guidance',
+      'previousImplementations',
+      'workspace',
+      'issue',
+    ])
+      assert.equal(data[key], undefined, key);
+    assert.equal(
+      data.implementation.summary,
+      'Update value and generated result.',
+    );
+    assert.equal(data.evidence[0].kind, 'checks');
+    assert.ok(data.scope.changedFiles.includes('value.txt'));
+    assert.deepEqual(data.earlierReviews, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a long conversation is compacted before a repair without disturbing the stage', async () => {
+  const f = await realFixture({ checkCommand: 'echo COMPACT-CAUSE; exit 2' });
+  try {
+    (f.service.workflow['adapter'] as RealWorkflow).compactionChars = 1;
+    // Compaction waits for its task; short conversations may decline, so count the requests.
+    const harness = f.service.workflow['harness'];
+    let compactions = 0;
+    const wait = harness.waitForTask.bind(harness);
+    harness.waitForTask = (async (...args: Parameters<typeof wait>) => {
+      const record = await harness.getTask(args[0], args[1]);
+      if (record?.kind === 'pi.compaction') compactions++;
+      return wait(...args);
+    }) as typeof wait;
+    const started = await f.client.startIssue(7, 'compact');
+    await until(
+      async () => f.prompts.filter((p) => p.role === 'developer').length,
+      (n) => n >= 2,
+      30000,
+    );
+    assert.equal(compactions, 1);
+    assert.match(
+      f.prompts.filter((p) => p.role === 'developer')[1].text,
+      /COMPACT-CAUSE/,
+    );
+    const run = await f.client.run(started.id);
+    assert.notEqual(run.status, 'termination_blocker');
+  } finally {
+    await f.close();
+  }
+});
