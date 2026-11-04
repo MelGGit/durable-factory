@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { realFixture } from '../tests/fixtures/real.js';
+import type { RealWorkflow } from '../apps/server/src/real-workflow.js';
 const scenario = process.argv[2];
 let publicationReached!: () => void;
 const publication = new Promise<void>((resolve) => {
@@ -9,12 +10,7 @@ const publication = new Promise<void>((resolve) => {
 });
 const fixture = await realFixture(
   scenario === 'report'
-    ? {
-        afterImplementation: async () => {
-          publicationReached();
-          await new Promise(() => {});
-        },
-      }
+    ? {}
     : scenario === 'proof'
       ? {
           regression: {
@@ -34,6 +30,13 @@ const fixture = await realFixture(
             },
           },
 );
+if (scenario === 'report')
+  // A submission ends the run, so stop inside the tool, right after the report is recorded.
+  (fixture.service.workflow['adapter'] as RealWorkflow).afterReport =
+    async () => {
+      publicationReached();
+      await new Promise(() => {});
+    };
 if (scenario === 'commit')
   await writeFile(
     join(fixture.repo, '.git/hooks/post-commit'),

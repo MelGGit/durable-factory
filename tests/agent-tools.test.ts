@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { until } from './fixtures/chat.js';
 import { realFixture } from './fixtures/real.js';
+import { AgentOperations } from '../apps/server/src/real-workflow.js';
+import { context } from '../apps/server/src/storage.js';
 
 type Fixture = Awaited<ReturnType<typeof realFixture>>;
 async function finish(f: Fixture, id: string, status = 'pr_ready') {
@@ -122,6 +124,100 @@ test('a repair attempt starts with the failing check output', async () => {
     )!;
     assert.match(checks.output, /MARKER-FAIL-42/);
     assert.match(checks.output, /-check-0 ---/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a transient provider failure is retried instead of pausing the run', async () => {
+  const f = await realFixture({
+    transientFailures: 2,
+    retry: { maxRetries: 3, baseDelayMs: 10 },
+  });
+  try {
+    const run = await finish(f, 'transient');
+    assert.equal(run.status, 'pr_ready', JSON.stringify(run.attempts));
+    assert.equal(run.repairCount, 0);
+    assert.equal(run.attempts.filter((a) => a.stage === 'developer').length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('without a retry budget the same failure pauses the run', async () => {
+  const f = await realFixture({ transientFailures: 1 });
+  try {
+    assert.equal((await finish(f, 'no-retry')).status, 'needs_input');
+  } finally {
+    await f.close();
+  }
+});
+
+test('a forgotten implementation report is requested again before the user is asked', async () => {
+  const f = await realFixture({ forgetReport: 1 });
+  try {
+    const run = await finish(f, 'nudge');
+    assert.equal(run.status, 'pr_ready', JSON.stringify(run.attempts));
+    assert.equal(run.implementations?.length, 1);
+    assert.deepEqual(f.finals, ['developer']);
+    assert.equal(run.attempts.filter((a) => a.stage === 'developer').length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('the reminder limit survives a restart and then the user is asked', async () => {
+  const f = await realFixture({ forgetReport: 9 });
+  try {
+    const run = await finish(f, 'nudge-limit', 'never');
+    assert.equal(run.status, 'needs_input');
+    assert.match(
+      run.attempts.find((a) => a.stage === 'developer')!.message ?? '',
+      /valid implementation report/,
+    );
+    // The first stop plus two reminders, each answered without a report.
+    assert.equal(f.finals.filter((r) => r === 'developer').length, 3);
+    await f.restart();
+    const op = (await f.service.workflow['harness'].snapshot(
+      AgentOperations,
+      context,
+    ))!.items[run.attempts.find((a) => a.stage === 'developer')!.id];
+    assert.equal(op.nudges, 2);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a submission ends the run at the handoff', async () => {
+  const f = await realFixture();
+  try {
+    assert.equal((await finish(f, 'terminate')).status, 'pr_ready');
+    assert.deepEqual(f.finals, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test('run_required_checks shows output to the developer and records no evidence', async () => {
+  const f = await realFixture({
+    checkCommand: 'echo SELF-FAIL-9 >&2; exit 4',
+    developerCalls: [{ name: 'run_required_checks', args: {} }],
+  });
+  try {
+    const started = await f.client.startIssue(7, 'self-check');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => [...r.evidence, ...(r.evidenceHistory ?? [])].length > 0,
+      30000,
+    );
+    const [result] = f.seen.filter((r) => r.toolName === 'run_required_checks');
+    assert.equal(result.isError, true);
+    assert.match(result.text, /FAILED check: echo SELF-FAIL-9/);
+    assert.match(result.text, /SELF-FAIL-9/);
+    assert.match(result.text, /exit code 4/);
+    for (const evidence of [...run.evidence, ...(run.evidenceHistory ?? [])])
+      assert.doesNotMatch(JSON.stringify(evidence), /selfcheck/);
+    assert.match(f.prompts[0].text, /"requiredChecks":\["echo SELF-FAIL-9/);
   } finally {
     await f.close();
   }

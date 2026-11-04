@@ -95,6 +95,12 @@ export interface ServiceOptions {
   github?: GitHubAdapter;
   workflow?: { adapter: WorkflowAdapter; clock?: WorkflowClock };
   workflowMode?: 'simulation' | 'real' | 'disabled';
+  /**
+   * Provider request retries for transient failures. Defaults to
+   * {@link PROVIDER_RETRIES}, or none with injected `chat` dependencies so
+   * offline scripts stay deterministic.
+   */
+  retry?: { maxRetries: number; baseDelayMs?: number };
   /** Disposable local transport for offline real-workflow verification only. */
   workflowRemote?: string;
   /** Address to listen on. Anything beyond loopback requires `authToken`. */
@@ -106,6 +112,8 @@ export interface ServiceOptions {
   /** Shared secret required as a bearer token on every `/api/v1` request. */
   authToken?: string;
 }
+/** Retries of a transient provider failure (429, 5xx, network) before a run pauses. */
+export const PROVIDER_RETRIES = 3;
 const loopbackHosts = new Set(['127.0.0.1', 'localhost', '::1']);
 const wildcardHosts = new Set(['0.0.0.0', '::']);
 /** How a host is written in a URL or Host header, where IPv6 needs brackets. */
@@ -1027,7 +1035,11 @@ export async function startService(options: ServiceOptions = {}) {
       openedConfiguration = await openConfiguration(ownership!.dataDir, {
         models,
         registry,
-        settings: { retry: { maxRetries: 0 } },
+        settings: {
+          retry: options.retry ?? {
+            maxRetries: options.chat ? 0 : PROVIDER_RETRIES,
+          },
+        },
       });
       configuration = openedConfiguration;
       const requestyIds = new Set<string>();

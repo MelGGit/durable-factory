@@ -54,6 +54,11 @@ export async function realFixture(
       outOfScope: { change: string; required: boolean; evidence: string }[];
     };
     issueBody?: string;
+    /** Developer turns that stop without a report; each reminder counts as one. */
+    forgetReport?: number;
+    /** Provider requests that fail with a transient error before the script runs. */
+    transientFailures?: number;
+    retry?: { maxRetries: number; baseDelayMs?: number };
     /** Tool calls the developer makes before the default script, in order. */
     developerCalls?: {
       name: string;
@@ -95,6 +100,8 @@ export async function realFixture(
   }
   const deps = fixture();
   let reviewAsked = false;
+  let failures = 0;
+  const finals: string[] = [];
   const seen = new Map<string, SeenResult>();
   const prompts: { role: 'developer' | 'reviewer'; text: string }[] = [];
   deps.faux.setResponses(
@@ -135,6 +142,13 @@ export async function realFixture(
         };
         seen.set(`${role}-${r.toolCallId}`, entry);
         mine.push(entry);
+      }
+      if (role === 'developer' && failures < (options.transientFailures ?? 0)) {
+        failures++;
+        return fauxAssistantMessage('', {
+          stopReason: 'error',
+          errorMessage: '503 service temporarily unavailable',
+        });
       }
       const scripted = role && options[`${role}Calls`];
       if (scripted && mine.length < scripted.length) {
@@ -204,8 +218,12 @@ export async function realFixture(
             path: 'regression.test.cjs',
             content: options.proofTest,
           });
+        const reminders = input.messages
+          .slice(last + 1)
+          .filter((m) => m.role === 'user').length;
         if (
           !options.omitImplementation &&
+          reminders >= (options.forgetReport ?? 0) &&
           !results.some((r) => r.toolName === 'submit_implementation')
         ) {
           const run = JSON.parse(text);
@@ -236,6 +254,7 @@ export async function realFixture(
           });
         }
         await options.afterImplementation?.();
+        finals.push('developer');
         return fauxAssistantMessage('Implementation complete.');
       }
       if (text.includes('"role":"reviewer"')) {
@@ -282,6 +301,7 @@ export async function realFixture(
               },
             ],
           });
+        finals.push('reviewer');
         return fauxAssistantMessage('Review complete.');
       }
       return fauxAssistantMessage('Fixture reply');
@@ -370,6 +390,7 @@ export async function realFixture(
     github,
     workflowRemote: remote,
     workflowMode: options.mode,
+    ...(options.retry ? { retry: options.retry } : {}),
   });
   const client = new WorkflowClient(service.url);
   if (!options.directory) {
@@ -410,6 +431,8 @@ export async function realFixture(
     },
     /** Every distinct developer and reviewer prompt, in order. */
     prompts,
+    /** Roles whose scripted agent was asked for a closing answer. */
+    finals,
     get service() {
       return service;
     },
@@ -427,6 +450,7 @@ export async function realFixture(
         github,
         workflowRemote: remote,
         workflowMode: options.mode,
+        ...(options.retry ? { retry: options.retry } : {}),
       });
     },
     async close() {
