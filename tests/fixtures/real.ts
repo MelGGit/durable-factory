@@ -48,7 +48,14 @@ export async function realFixture(
     assessments?: CriterionAssessment[];
     regression?: RegressionRequirement;
     proofTest?: string;
-    extraFile?: string;
+    extraFile?: string | string[];
+    /** The developer asks this before working, until an answer exists. */
+    ask?: {
+      question: string;
+      outOfScope?: { change: string; paths: string[] };
+    };
+    /** Entries for the report's outOfScope. */
+    declareOutOfScope?: string[];
     reviewScope?: {
       withinTicket: boolean;
       outOfScope: { change: string; required: boolean; evidence: string }[];
@@ -177,6 +184,12 @@ export async function realFixture(
       }
       if (text.includes('"role":"developer"')) {
         if (
+          options.ask &&
+          text.includes('"answers":[]') &&
+          !results.some((r) => r.toolName === 'workflow_question')
+        )
+          return call('workflow_question', options.ask);
+        if (
           options.developerCommand &&
           !results.some((r) => r.toolName === 'worktree_command')
         )
@@ -200,16 +213,19 @@ export async function realFixture(
           return call('include_generated_file', {
             path: 'generated/result.txt',
           });
-        if (
-          options.extraFile &&
-          !results.some(
-            (r) =>
-              r.toolName === 'worktree_write' &&
-              JSON.stringify(r).includes(options.extraFile!),
-          )
-        )
+        const nextExtra = [options.extraFile ?? []]
+          .flat()
+          .find(
+            (path) =>
+              !results.some(
+                (r) =>
+                  r.toolName === 'worktree_write' &&
+                  JSON.stringify(r).includes(path),
+              ),
+          );
+        if (nextExtra)
           return call('worktree_write', {
-            path: options.extraFile,
+            path: nextExtra,
             content: 'extra\n',
           });
         if (
@@ -256,7 +272,7 @@ export async function realFixture(
             validation: ['Required checks run by the service.'],
             concerns: [],
             reviewerNotes: 'Inspect the value and generated result.',
-            outOfScope: [],
+            outOfScope: options.declareOutOfScope ?? [],
           });
         }
         await options.afterImplementation?.();

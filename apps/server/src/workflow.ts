@@ -94,6 +94,8 @@ export const systemClock: WorkflowClock = {
 export interface StageResult {
   outcome: 'passed' | 'failed' | 'needs_input' | 'uncertain';
   message: string;
+  /** Set on a developer question about a change beyond the ticket. */
+  outOfScope?: { change: string; paths: string[] };
   source?: string;
   implementation?: BoundImplementation;
   assessments?: CriterionAssessment[];
@@ -402,7 +404,12 @@ export class WorkflowService {
     state.revision++;
     run.revision++;
   }
-  private question(run: WorkflowRun, reason: string, question: string) {
+  private question(
+    run: WorkflowRun,
+    reason: string,
+    question: string,
+    outOfScope?: { change: string; paths: string[] },
+  ) {
     if (
       run.interventions.some(
         (i) => i.state === 'pending' && i.reason === reason,
@@ -417,6 +424,7 @@ export class WorkflowService {
       createdAt: this.clock.now(),
       reason,
       question,
+      ...(outOfScope ? { outOfScope: structuredClone(outOfScope) } : {}),
       ...(attempt ? { attemptId: attempt.id, taskId: attempt.taskId } : {}),
       conversationId: attempt?.conversationId ?? run.developerConversationId,
     });
@@ -1381,7 +1389,12 @@ export class WorkflowService {
             result.outcome === 'failed')
         ) {
           current.status = 'needs_input';
-          this.question(current, attempt.stage, result.message);
+          this.question(
+            current,
+            attempt.stage,
+            result.message,
+            result.outOfScope,
+          );
           // Retain the stage for infrastructure/baseline retry; developer questions resume development.
         } else if (result.outcome === 'uncertain') {
           current.status = 'needs_input';

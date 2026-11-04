@@ -9,6 +9,7 @@ import {
   namedPaths,
   unnamedFiles,
   scopeProblem,
+  approvedScope,
   validateAssessments,
   pullRequestBody,
   runTimeline,
@@ -348,11 +349,18 @@ test('files the ticket never names are flagged, and extras need the user before 
   const extra = ['apps/web/src/style.css', 'package.json'];
   assert.deepEqual(unnamedFiles(named, extra), ['package.json']);
   // Undeclared extras are refused outright, even after the user answered something.
-  assert.match(scopeProblem({}, named, extra, true)!, /package\.json/);
+  const approvedPackage = { paths: ['package.json'], changes: [] };
+  assert.match(
+    scopeProblem({}, named, extra, approvedPackage)!,
+    /package\.json/,
+  );
   // Declared extras are refused until the user approved them.
   const declared = { outOfScope: ['package.json: add a test script'] };
-  assert.match(scopeProblem(declared, named, extra, false)!, /approval/);
-  assert.equal(scopeProblem(declared, named, extra, true), undefined);
+  assert.match(scopeProblem(declared, named, extra)!, /not approved/);
+  assert.equal(
+    scopeProblem(declared, named, extra, approvedPackage),
+    undefined,
+  );
   // A ticket that names no files leaves scope to the agents and the reviewer.
   const unnamedTicket = {
     ...ticket,
@@ -363,4 +371,112 @@ test('files the ticket never names are flagged, and extras need the user before 
     regression: { required: false as const, reason: 'New capability.' },
   };
   assert.deepEqual(unnamedFiles(unnamedTicket, ['anything.ts']), []);
+});
+
+test('a test file that pairs with a named source file is not an extra', () => {
+  const named = {
+    ...ticket,
+    scope: 'Change src/lib/parse.ts and format.ts.',
+    regression: {
+      required: false as const,
+      reason: 'Covered by existing tests.',
+    },
+  };
+  const changed = [
+    'src/lib/parse.ts',
+    'src/lib/parse.test.ts',
+    'src/lib/__tests__/parse.spec.ts',
+    'tests/parse.test.ts',
+    'tests/lib/parse.test.ts',
+    'src/format.ts',
+    'src/format.test.ts',
+    'src/other.test.ts',
+    'src/lib/parse.helper.ts',
+    'docs/parse.test.md',
+    'e2e/parse.test.ts',
+  ];
+  assert.deepEqual(unnamedFiles(named, changed), [
+    'src/other.test.ts',
+    'src/lib/parse.helper.ts',
+    'docs/parse.test.md',
+    'e2e/parse.test.ts',
+  ]);
+});
+
+test('only the paths a developer question named are approved', () => {
+  const named = {
+    ...ticket,
+    scope: 'Change src/a.ts.',
+    regression: { required: false as const, reason: 'Covered.' },
+  };
+  const changed = ['src/a.ts', 'package.json', 'build.config.js'];
+  const answered = (outOfScope?: { change: string; paths: string[] }) => ({
+    interventions: [
+      {
+        id: 'q',
+        revision: 1,
+        state: 'resolved' as const,
+        reason: 'developer',
+        question: 'May I?',
+        conversationId: '1',
+        answer: 'yes',
+        ...(outOfScope ? { outOfScope } : {}),
+      },
+    ],
+  });
+  const report = {
+    outOfScope: [
+      'package.json: add a script',
+      'build.config.js: raise the timeout',
+    ],
+  };
+  // An answer that never named paths, like any legacy record, approves nothing.
+  assert.deepEqual(approvedScope(answered()), { paths: [], changes: [] });
+  assert.match(
+    scopeProblem(report, named, changed, approvedScope(answered()))!,
+    /not approved changing: package\.json, build\.config\.js/,
+  );
+  // An approved change passes while an unapproved one in the same report fails.
+  const some = approvedScope(
+    answered({ change: 'add a script', paths: ['package.json'] }),
+  );
+  assert.match(
+    scopeProblem(report, named, changed, some)!,
+    /not approved changing: build\.config\.js/,
+  );
+  assert.equal(
+    scopeProblem(
+      { outOfScope: ['package.json: add a script'] },
+      named,
+      ['src/a.ts', 'package.json'],
+      some,
+    ),
+    undefined,
+  );
+  // Unresolved or non-developer questions approve nothing.
+  assert.deepEqual(
+    approvedScope({
+      interventions: [
+        {
+          ...answered({ change: 'x', paths: ['p'] }).interventions[0],
+          state: 'pending' as const,
+        },
+        {
+          ...answered({ change: 'x', paths: ['p'] }).interventions[0],
+          reason: 'reviewer',
+        },
+      ],
+    }),
+    { paths: [], changes: [] },
+  );
+  // A directory approves what is under it.
+  assert.equal(
+    scopeProblem(
+      { outOfScope: ['config/: settings'] },
+      named,
+      ['src/a.ts', 'config/a.json'],
+      approvedScope(answered({ change: 'settings', paths: ['config/'] })),
+    ),
+    undefined,
+  );
 });

@@ -91,6 +91,8 @@ export interface Intervention {
   taskId?: string;
   conversationId: string;
   answer?: string;
+  /** The change beyond the ticket this question asks about; its answer approves exactly these paths. */
+  outOfScope?: { change: string; paths: string[] };
 }
 /** Blockers cleared by an explicit control, never by a typed answer. */
 const BLOCKER_REASONS = [

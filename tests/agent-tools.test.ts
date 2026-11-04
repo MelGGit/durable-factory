@@ -316,3 +316,81 @@ test('both roles search, find, read and diff; the reviewer sees the candidate tr
     await f.close();
   }
 });
+
+test('answering an unrelated question does not approve a change beyond the ticket', async () => {
+  const f = await realFixture({
+    extraFile: 'notes.md',
+    ask: { question: 'Which style do you prefer?' },
+    declareOutOfScope: ['notes.md: extra notes'],
+  });
+  try {
+    const run = await answered(f, 'unrelated-answer');
+    assert.equal(run.status, 'needs_input');
+    assert.match(rejection(f), /has not approved changing: notes\.md/);
+    assert.equal(
+      run.attempts.some((a) => a.stage === 'checks'),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('an approved change passes while an unapproved one in the same report does not', async () => {
+  const outOfScope = { change: 'Add notes', paths: ['notes.md'] };
+  const declared = ['notes.md: Add notes', 'extra.md: another note'];
+  const f = await realFixture({
+    extraFile: ['notes.md', 'extra.md'],
+    ask: { question: 'May I add notes?', outOfScope },
+    declareOutOfScope: declared,
+  });
+  const g = await realFixture({
+    extraFile: 'notes.md',
+    ask: { question: 'May I add notes?', outOfScope },
+    declareOutOfScope: [declared[0]],
+  });
+  try {
+    const refused = await answered(f, 'approve-partly');
+    assert.equal(refused.status, 'needs_input');
+    assert.match(rejection(f), /has not approved changing: extra\.md/);
+    const run = await answered(g, 'approve-notes', 'pr_ready');
+    assert.equal(run.status, 'pr_ready', JSON.stringify(run.attempts));
+    assert.deepEqual(run.interventions[0].outOfScope, outOfScope);
+  } finally {
+    await f.close();
+    await g.close();
+  }
+});
+
+/** What the report check last told the developer. */
+const rejection = (f: Fixture) =>
+  f.seen
+    .filter((r) => r.toolName === 'submit_implementation' && r.isError)
+    .at(-1)!.text;
+
+/** Run until the developer asks, answer, and run on until the run settles again. */
+async function answered(f: Fixture, id: string, status = 'needs_input') {
+  const started = await f.client.startIssue(7, id);
+  let run = await until(
+    () => f.client.run(started.id),
+    (r) => r.interventions.some((i) => i.state === 'pending'),
+    30000,
+  );
+  const question = run.interventions.find((i) => i.state === 'pending')!;
+  run = await f.client.command(run.id, {
+    action: 'answer',
+    operationId: `${id}-answer`,
+    expectedRevision: run.revision,
+    interventionId: question.id,
+    interventionRevision: question.revision,
+    answer: 'Yes, go ahead.',
+  });
+  return until(
+    () => f.client.run(started.id),
+    (r) =>
+      r.status === status ||
+      (r.interventions.filter((i) => i.state === 'pending').length > 0 &&
+        r.interventions.length > 1),
+    30000,
+  );
+}

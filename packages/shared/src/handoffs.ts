@@ -236,9 +236,43 @@ export function namedPaths(ticket: Ticket) {
   }
   return [...found];
 }
+const TEST_FILE = /^(.+)\.(?:test|spec)\.[A-Za-z0-9]+$/;
+const dirOf = (path: string) => path.split('/').slice(0, -1).join('/');
+const under = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
+/**
+ * A test file that obviously belongs to a named source file: same base name
+ * with `.test.` or `.spec.`, next to it, in its `__tests__`, or in a
+ * top-level `tests`/`test` directory (mirroring the source path or not).
+ */
+function pairedTest(file: string, named: string[], changed: string[]) {
+  const stem = TEST_FILE.exec(file.split('/').pop()!)?.[1];
+  if (!stem) return false;
+  const dir = dirOf(file);
+  return named.some((path) => {
+    const name = path.split('/').pop()!;
+    if (!FILE_EXTENSION.test(name) || TEST_FILE.test(name)) return false;
+    if (name.replace(/\.[^.]+$/, '') !== stem) return false;
+    // A bare file name stands for wherever the change has that file.
+    const sources = path.includes('/')
+      ? [dirOf(path)]
+      : changed.filter((f) => f === path || f.endsWith(`/${path}`)).map(dirOf);
+    const roots = ['tests', 'test'];
+    return sources.some((source) => {
+      const bare = source.replace(/^(?:src|lib)(?:\/|$)/, '');
+      return [
+        source,
+        under(source, '__tests__'),
+        ...roots,
+        ...roots.map((root) => under(root, source)),
+        ...roots.map((root) => under(root, bare)),
+      ].includes(dir);
+    });
+  });
+}
 /**
  * Changed files the ticket never names. Only meaningful when the ticket names
  * files at all; a ticket without any leaves scope to the agents and reviewer.
+ * Tests that obviously pair with a named source file are not extras.
  */
 export function unnamedFiles(ticket: Ticket, changed: string[]) {
   const named = namedPaths(ticket);
@@ -250,29 +284,72 @@ export function unnamedFiles(ticket: Ticket, changed: string[]) {
           ? file === path ||
             file.startsWith(path.endsWith('/') ? path : `${path}/`)
           : file === path || file.endsWith(`/${path}`),
-      ),
+      ) && !pairedTest(file, named, changed),
   );
 }
+/** Out-of-scope changes the user was asked about and answered, by path and by description. */
+export interface ApprovedScope {
+  paths: string[];
+  changes: string[];
+}
+const NOTHING_APPROVED: ApprovedScope = { paths: [], changes: [] };
 /**
- * Why a report may not go forward: changes beyond the ticket need the user's
- * answer first. `approved` is true once the user has answered a developer
- * question, because that is how an extra is approved.
+ * What the user's answers approve. Only a resolved developer question that
+ * named its out-of-scope change and paths approves anything; answering any
+ * other question, or a record from before questions named paths, does not.
+ */
+export function approvedScope(
+  run: Pick<WorkflowRun, 'interventions'>,
+): ApprovedScope {
+  const asked = run.interventions.filter(
+    (i) => i.state === 'resolved' && i.reason === 'developer' && i.outOfScope,
+  );
+  return {
+    paths: asked.flatMap((i) => i.outOfScope!.paths),
+    changes: asked.map((i) => i.outOfScope!.change),
+  };
+}
+const covers = (approved: string, file: string) =>
+  file === approved ||
+  file.startsWith(approved.endsWith('/') ? approved : `${approved}/`);
+/**
+ * Why a report may not go forward: every change beyond the ticket must be
+ * declared in `outOfScope` and approved by an answer that named its paths.
  */
 export function scopeProblem(
   report: Pick<ImplementationReport, 'outOfScope'>,
   ticket: Ticket,
   changed: string[],
-  approved: boolean,
+  approved: ApprovedScope = NOTHING_APPROVED,
 ) {
   const declared = report.outOfScope ?? [];
   const unnamed = unnamedFiles(ticket, changed);
   const undeclared = unnamed.filter(
-    (file) => !declared.some((entry) => entry.includes(file)),
+    (file) =>
+      !declared.some(
+        (entry) =>
+          entry.includes(file) ||
+          approved.paths.some(
+            (path) => covers(path, file) && entry.includes(path),
+          ),
+      ),
   );
   if (undeclared.length)
-    return `These files are not named in the ticket: ${undeclared.join(', ')}. Revert them, or call workflow_question to ask the user and list them in outOfScope once approved.`;
-  if (declared.length && !approved)
-    return `Out-of-scope changes need the user's approval before they are made: ${declared.join('; ')}. Revert them, or call workflow_question to ask and wait for the answer.`;
+    return `These files are not named in the ticket: ${undeclared.join(', ')}. Revert them, or call workflow_question with outOfScope {change, paths} to ask the user, and list them in outOfScope once approved.`;
+  const unapproved = unnamed.filter(
+    (file) => !approved.paths.some((path) => covers(path, file)),
+  );
+  if (unapproved.length)
+    return `The user has not approved changing: ${unapproved.join(', ')}. Revert them, or call workflow_question with outOfScope {change, paths} naming them and wait for the answer. An answer to another question does not approve them.`;
+  const unlisted = declared.filter(
+    (entry) =>
+      !approved.paths.some((path) => entry.includes(path)) &&
+      !approved.changes.some(
+        (change) => entry.includes(change) || change.includes(entry),
+      ),
+  );
+  if (unlisted.length)
+    return `Out-of-scope changes need the user's approval before they are made: ${unlisted.join('; ')}. Revert them, or call workflow_question with outOfScope {change, paths} to ask and wait for the answer; then mention an approved path or the approved change in the outOfScope entry.`;
   return undefined;
 }
 export function validateAssessments(
