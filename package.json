@@ -29,6 +29,7 @@
     "@ag-ui/core": "1.0.3",
     "@playwright/test": "1.56.1",
     "@types/node": "24.10.0",
+    "@types/picomatch": "4.0.2",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "prettier": "3.6.2",

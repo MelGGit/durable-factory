@@ -54,6 +54,10 @@ export async function realFixture(
       outOfScope: { change: string; required: boolean; evidence: string }[];
     };
     issueBody?: string;
+    /** Extra files in the baseline commit. */
+    baselineFiles?: Record<string, string>;
+    /** Appended to the ticket scope, which names files the developer may touch. */
+    scopeNote?: string;
     /** Developer turns that stop without a report; each reminder counts as one. */
     forgetReport?: number;
     /** Provider requests that fail with a transient error before the script runs. */
@@ -92,6 +96,8 @@ export async function realFixture(
     git(repo, ['init', '-q', '-b', 'main']);
     await writeFile(join(repo, 'value.txt'), 'baseline\n');
     await writeFile(join(repo, '.gitignore'), 'generated/\n');
+    for (const [path, content] of Object.entries(options.baselineFiles ?? {}))
+      await writeFile(join(repo, path), content);
     git(repo, ['add', '.']);
     git(repo, ['commit', '-qm', 'Baseline']);
     git(directory, ['init', '--bare', '-q', remote]);
@@ -339,7 +345,7 @@ export async function realFixture(
         ...(options.regression ? { regression: options.regression } : {}),
         title: 'Implement value',
         scope:
-          'The scripted agent may also write effect.txt, tool-boundary.txt and regression.test.cjs.',
+          `The scripted agent may also write effect.txt, tool-boundary.txt and regression.test.cjs. ${options.scopeNote ?? ''}`.trim(),
         goal: 'Update value.txt and generated/result.txt.',
         acceptanceCriteria: 'AC-1: Update value.txt and generated/result.txt.',
         revision: 0,

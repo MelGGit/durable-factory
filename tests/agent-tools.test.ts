@@ -222,3 +222,97 @@ test('run_required_checks shows output to the developer and records no evidence'
     await f.close();
   }
 });
+
+test('deletes and renames are changed files and both rename paths are reported', async () => {
+  const f = await realFixture({
+    baselineFiles: { 'legacy.txt': 'old\n', 'obsolete.txt': 'gone\n' },
+    scopeNote: 'Rename legacy.txt to renamed.txt and remove obsolete.txt.',
+    developerCalls: [
+      {
+        name: 'worktree_move',
+        args: { from: 'legacy.txt', to: 'renamed.txt' },
+      },
+      { name: 'worktree_delete', args: { path: 'obsolete.txt' } },
+      { name: 'worktree_move', args: { from: '../x', to: 'y' } },
+      { name: 'worktree_delete', args: { path: '/etc/passwd' } },
+    ],
+  });
+  try {
+    const run = await finish(f, 'delete-move');
+    assert.equal(run.status, 'pr_ready', JSON.stringify(run.attempts));
+    assert.deepEqual(run.implementations![0].changedFiles, [
+      'generated/result.txt',
+      'legacy.txt',
+      'obsolete.txt',
+      'renamed.txt',
+      'value.txt',
+    ]);
+    const tree = f
+      .git(f.remote, ['ls-tree', '-r', '--name-only', run.workspace!.branch])
+      .split('\n');
+    assert.ok(tree.includes('renamed.txt'));
+    assert.ok(!tree.includes('legacy.txt') && !tree.includes('obsolete.txt'));
+    const [moved, deleted, escapedMove, escapedDelete] = f.seen.filter(
+      (r) => r.role === 'developer' && /move|delete/.test(r.toolName),
+    );
+    assert.equal(moved.isError, false);
+    assert.equal(deleted.isError, false);
+    assert.equal(escapedMove.isError, true);
+    assert.match(escapedMove.text, /relative path inside the repository/);
+    assert.equal(escapedDelete.isError, true);
+  } finally {
+    await f.close();
+  }
+});
+
+test('both roles search, find, read and diff; the reviewer sees the candidate tree', async () => {
+  const f = await realFixture({
+    developerCalls: [
+      { name: 'worktree_find', args: { glob: '*.txt' } },
+      { name: 'worktree_search', args: { pattern: 'baseline' } },
+      {
+        name: 'worktree_edit',
+        args: {
+          path: 'value.txt',
+          edits: [{ before: 'baseline', after: 'draft' }],
+        },
+      },
+      { name: 'worktree_read', args: { path: 'value.txt', revision: 'base' } },
+    ],
+    reviewerCalls: [
+      { name: 'worktree_search', args: { pattern: 'implemented' } },
+      { name: 'worktree_find', args: { glob: '**' } },
+      { name: 'worktree_diff', args: { mode: 'stat' } },
+      {
+        name: 'worktree_read',
+        args: { path: 'value.txt', revision: 'base', startLine: 1 },
+      },
+      { name: 'check_output', args: {} },
+    ],
+  });
+  try {
+    assert.equal((await finish(f, 'both-roles')).status, 'pr_ready');
+    const of = (role: string, tool: string) =>
+      f.seen.find((r) => r.role === role && r.toolName === tool)!;
+    assert.match(of('developer', 'worktree_find').text, /value\.txt/);
+    assert.match(
+      of('developer', 'worktree_search').text,
+      /value\.txt:1:baseline/,
+    );
+    assert.match(of('developer', 'worktree_edit').text, /1 replacement/);
+    assert.match(of('developer', 'worktree_read').text, /baseline/);
+    assert.match(
+      of('reviewer', 'worktree_search').text,
+      /value\.txt:1:implemented/,
+    );
+    assert.match(
+      of('reviewer', 'worktree_find').text,
+      /generated\/result\.txt/,
+    );
+    assert.match(of('reviewer', 'worktree_diff').text, /value\.txt/);
+    assert.match(of('reviewer', 'worktree_read').text, /1\tbaseline/);
+    assert.equal(of('reviewer', 'check_output').isError, false);
+  } finally {
+    await f.close();
+  }
+});
