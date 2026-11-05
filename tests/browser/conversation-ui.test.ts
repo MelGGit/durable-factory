@@ -39,7 +39,7 @@ async function pushSnapshot(page: Page, snapshot: ConversationSnapshot) {
 }
 
 test(
-  'one response combines Markdown and interleaved tools with stable output and restrained typography',
+  'one response combines Markdown and interleaved tools with stable output and readable prose typography',
   { timeout: 30000 },
   async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'factory-response-flow-'));
@@ -184,13 +184,13 @@ test(
         };
       });
       assert.deepEqual(styles, {
-        body: '16px',
-        heading: '16px',
-        bold: '400',
+        body: '15px',
+        heading: '15px',
+        bold: '500',
         bodyWeight: '400',
         sameFamily: true,
         sameSize: true,
-        sameLineHeight: true,
+        sameLineHeight: false,
         gap: '12px',
       });
       const proseLeft = await response
@@ -263,6 +263,27 @@ test(
             .evaluate((element) => {
               element.scrollTop = 0;
             });
+          const typography = await response.evaluate((element) => {
+            const prose = getComputedStyle(
+              element.querySelector('.response-text > .markdown')!,
+            );
+            const controls = getComputedStyle(
+              document.querySelector('.composer textarea')!,
+            );
+            return {
+              sameFamily:
+                prose.fontFamily === getComputedStyle(document.body).fontFamily,
+              size: prose.fontSize,
+              controlsSans:
+                controls.fontFamily ===
+                getComputedStyle(document.body).fontFamily,
+            };
+          });
+          assert.deepEqual(typography, {
+            sameFamily: true,
+            size: '15px',
+            controlsSans: true,
+          });
           await page.screenshot({
             path: resolve(
               `test-results/continuous-response-${colorScheme}-${width}.png`,
