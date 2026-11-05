@@ -13,6 +13,7 @@ import { Icon } from './icons.js';
 import { SessionActions } from './session-actions.js';
 import { PageHeader } from './page-header.js';
 import { PageCardsToggle, PageWorkspace } from './page-cards.js';
+import { usePageCards } from './hooks/use-page-cards.js';
 import { SidebarBrand, WorkspaceShell } from './workspace-shell.js';
 import { useConversationUrl, useRoute } from './hooks/use-route.js';
 import { usePageHeader } from './hooks/use-page-header.js';
@@ -35,6 +36,7 @@ import {
   mergeEntries,
   runUpdatedAt,
   DEFAULT_PROJECT_ID,
+  projectLabel,
   type ProjectSummary,
   type ConnectionState,
   type ConversationSnapshot,
@@ -223,6 +225,77 @@ function PlanningOperation({
       )}
     </div>
   );
+}
+
+function PlanningCards({
+  snapshot,
+  projects,
+}: {
+  snapshot: ConversationSnapshot;
+  projects: ProjectSummary[];
+}) {
+  const planning = snapshot.planning;
+  const project = projects.find(
+    (p) => p.id === snapshot.conversation.projectId,
+  );
+  const repository = planning?.repository ?? snapshot.conversation.repository;
+  const source = planning?.sourceIssue;
+  usePageCards(
+    [
+      {
+        id: 'planning-context',
+        title: 'Planning context',
+        content: (
+          <dl className="planning-context">
+            <dt>Project</dt>
+            <dd>
+              {project
+                ? projectLabel(project)
+                : snapshot.conversation.projectId}
+            </dd>
+            <dt>GitHub repository</dt>
+            <dd>{repository.github}</dd>
+            <dt>Local repository path</dt>
+            <dd>{repository.path}</dd>
+            <dt>Base branch</dt>
+            <dd>{repository.baseBranch}</dd>
+            <dt>Planning mode</dt>
+            <dd>{source ? 'Existing issue' : 'New issue'}</dd>
+          </dl>
+        ),
+      },
+      ...(source
+        ? [
+            {
+              id: 'planning-ticket-information',
+              title: 'Ticket information',
+              content: (
+                <>
+                  <p>
+                    Captured source issue from when this planning conversation
+                    started. This is not an unsaved proposal or a live GitHub
+                    view.
+                  </p>
+                  <p>
+                    <a href={source.url} target="_blank" rel="noreferrer">
+                      Issue #{source.number}
+                    </a>{' '}
+                    · {source.state === 'closed' ? 'Closed' : 'Open'}
+                  </p>
+                  <h3>{source.title}</h3>
+                  <div
+                    className="markdown planning-source-body"
+                    dangerouslySetInnerHTML={{ __html: markdown(source.body) }}
+                  />
+                </>
+              ),
+            },
+          ]
+        : []),
+    ],
+    'Chat trails',
+  );
+  return null;
 }
 
 export function ChatApp() {
@@ -1139,6 +1212,13 @@ export function ChatApp() {
                     run={selectedRun}
                     snapshot={workflowSnapshot}
                     onRun={updateRun}
+                  />
+                )}
+                {!selectedRun && snapshot?.conversation.role === 'planning' && (
+                  <PlanningCards
+                    key={snapshot.conversation.id}
+                    snapshot={snapshot}
+                    projects={projects}
                   />
                 )}
                 <div
