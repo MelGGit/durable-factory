@@ -55,6 +55,20 @@ test(
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto(service.url);
       await page.getByRole('button', { name: /^Start a chat in/ }).click();
+      // The context card is there before any message or saved draft exists.
+      const emptyTrails = page.locator('#page-information');
+      await emptyTrails
+        .getByRole('region', { name: 'Planning context', exact: true })
+        .waitFor();
+      assert.deepEqual(
+        await emptyTrails
+          .locator('[data-card-id]')
+          .evaluateAll((cards) =>
+            cards.map((card) => card.getAttribute('data-card-id')),
+          ),
+        ['planning-context'],
+      );
+      assert.equal(await page.locator('.tool-card').count(), 0);
       await page.getByLabel('Message', { exact: true }).fill('plan');
       await page.getByRole('button', { name: /^Send/ }).click();
       await page
@@ -80,6 +94,19 @@ test(
         );
       };
       await assertNoTicket();
+      const trails = page.locator('#page-information');
+      await trails
+        .getByRole('region', { name: 'Planning context', exact: true })
+        .waitFor();
+      assert.equal(await trails.locator('[data-card-id]').count(), 1);
+      assert.match(await trails.innerText(), /example\/project/);
+      assert.match(await trails.innerText(), /New issue/);
+      assert.equal(
+        await trails
+          .getByRole('region', { name: 'Ticket information' })
+          .count(),
+        0,
+      );
       const proposal = page.locator('.tool-card').filter({
         has: page.locator('summary strong', { hasText: 'propose_issue' }),
       });
@@ -103,6 +130,20 @@ test(
         path: resolve('test-results/planning-desktop.png'),
         fullPage: true,
       });
+      // Later settings changes must not replace the captured repository.
+      const elsewhere = join(directory, 'elsewhere');
+      await mkdir(elsewhere);
+      execFileSync('git', ['init', '-q', elsewhere]);
+      const changed = await client.settings();
+      changed.settings.repository = {
+        path: elsewhere,
+        github: 'example/changed',
+        baseBranch: 'develop',
+      };
+      await client.saveSettings({
+        expectedRevision: changed.revision,
+        settings: changed.settings,
+      });
       const port = service.port;
       await service.close();
       service = await startService({
@@ -113,6 +154,26 @@ test(
       });
       await page.reload();
       await page.getByRole('link', { name: 'View issue #1' }).waitFor();
+      const restored = page.locator('#page-information');
+      await restored
+        .getByRole('region', { name: 'Planning context', exact: true })
+        .waitFor();
+      for (const expected of ['example/project', repo, 'main', 'New issue'])
+        assert.ok(
+          (await restored.innerText()).includes(expected),
+          `restored context shows ${expected}`,
+        );
+      assert.ok(!(await restored.innerText()).includes('example/changed'));
+      assert.equal(await restored.locator('[data-card-id]').count(), 1);
+      // The shared controls hide and show the desktop panel.
+      await page
+        .getByRole('button', { name: 'Hide chat trails', exact: true })
+        .click();
+      assert.equal(await restored.getAttribute('aria-hidden'), 'true');
+      await page
+        .getByRole('button', { name: 'Show chat trails', exact: true })
+        .click();
+      assert.equal(await restored.getAttribute('aria-hidden'), 'false');
       await page.setViewportSize({ width: 390, height: 844 });
       await page.getByRole('link', { name: 'View issue #1' }).waitFor();
       await assertNoTicket();
@@ -136,6 +197,32 @@ test(
           () => document.documentElement.scrollWidth <= window.innerWidth,
         ),
       );
+      for (const width of [390, 320, 1024]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page
+          .getByRole('button', { name: 'Show chat trails', exact: true })
+          .click();
+        const overlay = page.getByRole('dialog', {
+          name: 'Chat trails',
+          exact: true,
+        });
+        await overlay
+          .getByRole('region', { name: 'Planning context', exact: true })
+          .waitFor();
+        assert.equal(await overlay.locator('[data-card-id]').count(), 1);
+        assert.ok(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+          `${width}px open overlay has no page overflow`,
+        );
+        assert.ok(
+          await overlay.evaluate((el) => el.scrollWidth <= el.clientWidth),
+          `${width}px overlay content fits`,
+        );
+        await page.keyboard.press('Escape');
+        await overlay.waitFor({ state: 'detached' });
+      }
       await page.setViewportSize({ width: 1024, height: 900 });
       await assertNoTicket();
       await page.screenshot({

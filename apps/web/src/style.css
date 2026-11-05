@@ -2787,6 +2787,27 @@ summary.page-card-heading::after {
 .page-card-body summary {
   cursor: pointer;
 }
+.planning-context {
+  margin: 0;
+}
+.planning-context dt {
+  margin-top: 8px;
+  color: var(--muted, inherit);
+  font-size: 12px;
+}
+.planning-context dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.planning-source-body {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.planning-source-body pre,
+.planning-source-body table {
+  max-width: 100%;
+  overflow-x: auto;
+}
 .page-card-body button {
   max-width: 100%;
   padding: 7px 10px;
