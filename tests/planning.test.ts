@@ -86,9 +86,11 @@ test('saved tickets and proposals remain serializable after commits, replays, an
       remember(await s.service.planning.save(id, ticket, 'unchanged-save')),
       expected,
     );
+    await s.service.planning.review(id);
     const proposal = remember(await s.service.planning.propose(id));
     assert.deepEqual(proposal.ticket, expected);
     assert.equal(proposal.issueBody, ticketBody(expected));
+    await s.service.planning.review(id);
     assert.deepEqual(remember(await s.service.planning.propose(id)), proposal);
     await s.service.planning.save(
       id,
@@ -131,16 +133,19 @@ test('planner tools save and propose, explicit chat approval creates one issue a
       results.map((tool) => [tool.name, tool.status]),
       [
         ['save_ticket', 'completed'],
+        ['review_ticket', 'completed'],
         ['propose_issue', 'completed'],
       ],
     );
     assert.deepEqual(JSON.parse(results[0].output!), planning.ticket);
-    const proposal = JSON.parse(results[1].output!);
+    assert.equal(JSON.parse(results[1].output!).passed, true);
+    const proposal = JSON.parse(results[2].output!);
     assert.deepEqual(proposal.ticket, planning.ticket);
     assert.equal(proposal.issueBody, ticketBody(planning.ticket));
     assert.equal(s.github.calls, 0);
     await send(s.client, s.conversation.id, 'force create', 'unauthorized');
     assert.equal(s.github.calls, 0);
+    await s.service.planning.review(s.conversation.id);
     await s.service.planning.propose(s.conversation.id);
     await send(s.client, s.conversation.id, 'yes', 'approval-1');
     await until(
@@ -150,6 +155,7 @@ test('planner tools save and propose, explicit chat approval creates one issue a
     assert.equal(s.github.calls, 1);
     assert.equal(planning.operation.requestId, 'approval-1');
     assert.ok(s.github.issues[0].body.includes('<!-- durable-factory:issue:'));
+    await s.service.planning.review(s.conversation.id);
     const existing = await s.service.planning.propose(s.conversation.id);
     const existingJson = JSON.stringify(existing);
     assert.deepEqual(
@@ -217,6 +223,7 @@ test('negative and ambiguous replies do not authorize; ticket changes invalidate
         /affirmative/,
       );
     }
+    await s.service.planning.review(s.conversation.id);
     await s.service.planning.propose(s.conversation.id);
     await send(s.client, s.conversation.id, 'yes please', 'approve');
     await s.service.planning.save(
@@ -478,6 +485,7 @@ test('queued or withdrawn approval cannot authorize creation before consumption'
       'Keep planning for a long time. '.repeat(20),
       'busy',
     );
+    await s.service.planning.review(s.conversation.id);
     await s.service.planning.propose(s.conversation.id);
     const approval = await client.submit(
       s.conversation.id,
@@ -911,6 +919,165 @@ test('oversized acceptance checklists are rejected before changing a proposed ti
     assert.deepEqual(after!.ticket, before!.ticket);
     assert.deepEqual(after!.proposal, before!.proposal);
     assert.equal(s.github.calls, 0);
+  } finally {
+    await s.service.close();
+    await rm(s.directory, { recursive: true, force: true });
+  }
+});
+
+test('a ticket cannot be saved with open questions or an impossible file plan', async () => {
+  const s = await setup();
+  try {
+    const id = s.conversation.id;
+    await writeFile(join(s.repo, 'existing.ts'), 'export {};\n');
+    const { openQuestions: _, ...saved } = ticket;
+    await assert.rejects(
+      s.service.planning.save(
+        id,
+        { ...saved, openQuestions: ['Should search be case sensitive?'] },
+        'open',
+      ),
+      /case sensitive/,
+    );
+    await assert.rejects(
+      s.service.planning.save(
+        id,
+        { ...saved, files: 'modify missing.ts: Add search' },
+        'missing',
+      ),
+      /missing\.ts does not exist/,
+    );
+    await assert.rejects(
+      s.service.planning.save(
+        id,
+        { ...saved, files: 'create existing.ts: Add search' },
+        'exists',
+      ),
+      /existing\.ts already exists/,
+    );
+    await assert.rejects(
+      s.service.planning.save(id, { ...saved, files: 'edit stuff' }, 'format'),
+      /modify path: intent/,
+    );
+    await assert.rejects(
+      s.service.planning.save(id, { ...saved, decisions: undefined }, 'none'),
+      /empty|too long/,
+    );
+    assert.equal((await s.service.planning.read(id))?.ticket, undefined);
+    const ok = (await s.service.planning.save(
+      id,
+      { ...saved, files: 'modify existing.ts: Add search' },
+      'ok',
+    )) as { warnings?: string[] };
+    assert.equal(ok.warnings, undefined);
+  } finally {
+    await s.service.close();
+    await rm(s.directory, { recursive: true, force: true });
+  }
+});
+
+test('vague wording and oversized checklists produce warnings without blocking the save', async () => {
+  const s = await setup();
+  try {
+    const { openQuestions: _, ...saved } = ticket;
+    const result = (await s.service.planning.save(
+      s.conversation.id,
+      {
+        ...saved,
+        scope: 'Update the relevant files as needed',
+        acceptanceCriteria: Array.from(
+          { length: 8 },
+          (_, i) => `AC-${i + 1}: Outcome ${i + 1}`,
+        ).join('\n'),
+      },
+      'warn',
+    )) as { warnings: string[]; revision: number };
+    assert.equal(result.revision, 1);
+    assert.equal(result.warnings.length, 2);
+    assert.match(result.warnings[0], /scope.*as needed/);
+    assert.match(result.warnings[1], /8 acceptance criteria/);
+  } finally {
+    await s.service.close();
+    await rm(s.directory, { recursive: true, force: true });
+  }
+});
+
+test('a proposal needs a passed review of the current revision; blocking findings send the planner back', async () => {
+  const s = await setup();
+  try {
+    const id = s.conversation.id;
+    const { openQuestions: _, ...saved } = ticket;
+    await s.service.planning.save(id, saved, 'one');
+    await assert.rejects(s.service.planning.propose(id), /review_ticket/);
+
+    let reply = JSON.stringify({
+      findings: [
+        { kind: 'needs_user_decision', text: 'Case sensitive?' },
+        { kind: 'nit', text: 'Wording' },
+      ],
+    });
+    s.service.planning.reviewer = async () => reply;
+    const blocked = await s.service.planning.review(id);
+    assert.equal(blocked.passed, false);
+    assert.equal(blocked.findings.length, 2);
+    // Repeating the review of an unchanged ticket returns the same result.
+    assert.deepEqual(await s.service.planning.review(id), blocked);
+    await assert.rejects(s.service.planning.propose(id), /review_ticket/);
+
+    await s.service.planning.save(
+      id,
+      { ...saved, decisions: 'D-1: Case sensitive? -> No' },
+      'two',
+    );
+    // A new revision is never covered by the earlier review.
+    await assert.rejects(s.service.planning.propose(id), /review_ticket/);
+    reply = JSON.stringify({ findings: [{ kind: 'nit', text: 'Wording' }] });
+    const passed = await s.service.planning.review(id);
+    assert.equal(passed.passed, true);
+    assert.equal(passed.revision, 2);
+    const proposal = (await s.service.planning.propose(id)) as {
+      unresolvedReviewFindings?: unknown;
+    };
+    assert.equal(proposal.unresolvedReviewFindings, undefined);
+
+    await s.service.planning.save(id, { ...saved, goal: 'Changed' }, 'three');
+    await assert.rejects(s.service.planning.propose(id), /review_ticket/);
+  } finally {
+    await s.service.close();
+    await rm(s.directory, { recursive: true, force: true });
+  }
+});
+
+test('review failures and endless findings stop at the round limit and are shown to the user', async () => {
+  const s = await setup();
+  try {
+    const id = s.conversation.id;
+    const { openQuestions: _, ...saved } = ticket;
+    await s.service.planning.save(id, saved, 'one');
+    s.service.planning.reviewer = async () => 'not json';
+    await assert.rejects(s.service.planning.review(id), /unreadable/);
+    await assert.rejects(s.service.planning.review(id), /unreadable/);
+    const unavailable = await s.service.planning.review(id);
+    assert.equal(unavailable.waived, true);
+    assert.equal((await s.service.planning.propose(id)) !== undefined, true);
+
+    await s.service.planning.save(id, { ...saved, goal: 'Again' }, 'two');
+    s.service.planning.reviewer = async () =>
+      JSON.stringify({
+        findings: [{ kind: 'resolvable_from_repo', text: 'Which module?' }],
+      });
+    for (const goal of ['A', 'B']) {
+      const review = await s.service.planning.review(id);
+      assert.equal(review.passed, false);
+      assert.equal(review.waived, undefined);
+      await s.service.planning.save(id, { ...saved, goal }, `goal-${goal}`);
+    }
+    const last = await s.service.planning.review(id);
+    assert.equal(last.waived, true);
+    const proposal = (await s.service.planning.propose(id)) as {
+      unresolvedReviewFindings: { text: string }[];
+    };
+    assert.equal(proposal.unresolvedReviewFindings[0].text, 'Which module?');
   } finally {
     await s.service.close();
     await rm(s.directory, { recursive: true, force: true });

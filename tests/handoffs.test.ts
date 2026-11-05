@@ -480,3 +480,31 @@ test('only the paths a developer question named are approved', () => {
     undefined,
   );
 });
+
+test('readiness sections round-trip, count as named files, and leave older tickets byte-for-byte unchanged', () => {
+  const legacy = formatTicketBody(ticket);
+  assert.doesNotMatch(legacy, /Out of scope|Decisions|Planned files/);
+  const ready: Ticket = {
+    ...ticket,
+    outOfScope: 'Do not change the payment gateway.',
+    decisions: 'D-1: Guest email required? -> Yes',
+    files:
+      'modify checkout.js: Accept guests\ncreate guest.test.cjs: Cover guests',
+  };
+  const body = formatTicketBody(ready);
+  assert.ok(body.startsWith(legacy.split('\n\n## Regression proof')[0]));
+  const parsed = parseIssueTicket(ready.title, body);
+  assert.equal(parsed.outOfScope, ready.outOfScope);
+  assert.equal(parsed.decisions, ready.decisions);
+  assert.equal(parsed.files, ready.files);
+  assert.equal(formatTicketBody(parsed), body);
+  assert.ok(namedPaths(ready).includes('guest.test.cjs'));
+  assert.throws(
+    () => validateTicketContract({ ...ready, files: 'change checkout.js' }),
+    /modify path: intent/,
+  );
+  assert.throws(
+    () => validateTicketContract({ ...ready, decisions: '  ' }),
+    /decisions/,
+  );
+});

@@ -160,6 +160,11 @@ export class RepositoryReader {
     if (!(await lstat(full)).isFile()) throw invalid();
     return full;
   }
+  /** Which of these paths are current, readable repository files. */
+  async existing(paths: string[]) {
+    const files = new Set(await this.files());
+    return new Set(paths.filter((path) => files.has(path)));
+  }
   async read(path: string) {
     if (!(await this.files()).includes(path)) throw invalid();
     return this.readAllowed(path);

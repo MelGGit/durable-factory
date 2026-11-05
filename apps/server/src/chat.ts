@@ -26,6 +26,7 @@ import type {
   AssistantMessage,
   Models,
   ModelThinkingLevel,
+  ThinkingLevel,
 } from '@earendil-works/pi-ai';
 import {
   API_VERSION,
@@ -404,6 +405,57 @@ export class ChatService {
     if (!item) throw new ApiError('NOT_FOUND', 'Conversation not found.', 404);
     const { requestId: _, ...summary } = item;
     return { ...summary, projectId: summary.projectId ?? DEFAULT_PROJECT_ID };
+  }
+  /**
+   * One tool-less model call with the project's review model (planning model
+   * when none is set). Used for independent checks that must not share the
+   * caller's context.
+   */
+  async completeIndependent(
+    id: string,
+    systemPrompt: string,
+    input: string,
+    signal?: AbortSignal,
+  ) {
+    const { projectId } = await this.summary(id);
+    const { settings } = await this.settings(projectId);
+    const selection = [settings.roles.review, settings.roles.planning].find(
+      (role) => role.provider && role.model,
+    );
+    if (!selection)
+      throw new ApiError(
+        'CONFLICT',
+        'Select a review or planning model in settings first.',
+        409,
+      );
+    if (selection.provider === 'requesty')
+      this.deps.registerRequesty?.(selection.model);
+    const model = this.deps.models.getModel(
+      selection.provider!,
+      selection.model,
+    );
+    if (!model)
+      throw new ApiError('CONFLICT', 'The review model is unavailable.', 409);
+    const response = await this.deps.models.completeSimple(
+      model,
+      {
+        systemPrompt,
+        messages: [{ role: 'user', content: input, timestamp: Date.now() }],
+      },
+      {
+        signal,
+        maxTokens: 4096,
+        ...(selection.reasoning && selection.reasoning !== 'off'
+          ? { reasoning: selection.reasoning as ThinkingLevel }
+          : {}),
+      },
+    );
+    if (response.stopReason !== 'stop')
+      throw new ApiError('CONFLICT', 'The review did not complete.', 409);
+    return response.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
   }
   private async conversation(id: string) {
     await this.summary(id);

@@ -94,6 +94,7 @@ test('issue revisions require approval and reconcile lost update responses witho
       { ...ticket, title: 'Revised search issue' },
       'save-revision',
     );
+    await fixture.service.planning.review(conversation.id);
     await fixture.service.planning.propose(conversation.id);
     await assert.rejects(
       fixture.service.planning.create(conversation.id, undefined, true),
@@ -135,6 +136,7 @@ test('an externally edited issue blocks an approved update rather than overwriti
     const chat = fixture.chat();
     const conversation = await chat.planIssue(1, 'stale-edit');
     await fixture.service.planning.save(conversation.id, ticket, 'revision');
+    await fixture.service.planning.review(conversation.id);
     await fixture.service.planning.propose(conversation.id);
     const remote = fixture.github.repository('example/alpha');
     remote.issues[0].body = 'A newer edit on GitHub';
@@ -194,6 +196,7 @@ for (const mode of ['unknown', 'rejected'] as const) {
         ticket,
         `save-${mode}`,
       );
+      await fixture.service.planning.review(conversation.id);
       await fixture.service.planning.propose(conversation.id);
       const remote = fixture.github.repository('example/alpha');
       remote.mode = mode;
@@ -223,6 +226,7 @@ test('a request to create something does not approve updating an existing issue'
     const chat = fixture.chat();
     const conversation = await chat.planIssue(1, 'edit-intent');
     await fixture.service.planning.save(conversation.id, ticket, 'save-intent');
+    await fixture.service.planning.review(conversation.id);
     await fixture.service.planning.propose(conversation.id);
     await chat.submit(conversation.id, 'create it', 'different-intent');
     await until(

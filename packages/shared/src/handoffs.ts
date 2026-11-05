@@ -83,6 +83,13 @@ export function validateTicketContract(ticket: Ticket): AcceptanceCriterion[] {
   for (const field of ['title', 'goal', 'scope', 'validation'] as const)
     if (typeof ticket[field] !== 'string' || !ticket[field].trim())
       throw new Error(`Issue needs an explicit ${field} section.`);
+  for (const field of ['outOfScope', 'decisions', 'files'] as const)
+    if (
+      ticket[field] !== undefined &&
+      (typeof ticket[field] !== 'string' || !ticket[field]!.trim())
+    )
+      throw new Error(`Issue section ${field} must not be empty when present.`);
+  if (ticket.files !== undefined) filePlan(ticket.files);
   if (
     ticket.criteria &&
     JSON.stringify(criteria) !== JSON.stringify(ticket.criteria)
@@ -114,8 +121,36 @@ export function validateTicketContract(ticket: Ticket): AcceptanceCriterion[] {
     throw new Error('Explain why regression proof is not required.');
   return criteria;
 }
+export interface PlannedFile {
+  action: 'modify' | 'create';
+  path: string;
+  intent: string;
+}
+/** Parse the `modify|create path: intent` lines of a ticket's file plan. */
+export function filePlan(text: string): PlannedFile[] {
+  const plan = normalizeLineEndings(text)
+    .trim()
+    .split('\n')
+    .map((line) => /^\s*(?:-\s*)?(modify|create) (\S+): (\S.*)$/.exec(line));
+  if (!plan.length || plan.some((m) => !m || !relativeFile(m[2])))
+    throw new Error(
+      'List files as one `modify path: intent` or `create path: intent` per line, using repository-relative paths.',
+    );
+  const files = plan.map((m) => ({
+    action: m![1] as PlannedFile['action'],
+    path: m![2],
+    intent: m![3],
+  }));
+  if (new Set(files.map((f) => f.path)).size !== files.length)
+    throw new Error('Each file may be listed only once.');
+  return files;
+}
 export function formatTicketBody(ticket: Ticket) {
-  const base = `## Goal\n\n${ticket.goal}\n\n## Scope\n\n${ticket.scope}\n\n## Acceptance criteria\n\n${ticket.acceptanceCriteria}\n\n## Validation\n\n${ticket.validation}`;
+  let base = `## Goal\n\n${ticket.goal}\n\n## Scope\n\n${ticket.scope}\n\n## Acceptance criteria\n\n${ticket.acceptanceCriteria}\n\n## Validation\n\n${ticket.validation}`;
+  // Optional sections keep tickets saved before the readiness contract byte-for-byte stable.
+  if (ticket.outOfScope) base += `\n\n## Out of scope\n\n${ticket.outOfScope}`;
+  if (ticket.decisions) base += `\n\n## Decisions\n\n${ticket.decisions}`;
+  if (ticket.files) base += `\n\n## Planned files\n\n${ticket.files}`;
   if (!ticket.regression) return base; // Previously approved legacy payloads stay byte-for-byte stable.
   const p = ticket.regression;
   return `${base}\n\n## Regression proof\n\n${p.required ? `Required: yes\nCommand: ${JSON.stringify(p.command)}\nTest paths: ${JSON.stringify(p.testPaths)}\nExpected failure: ${JSON.stringify(p.expectedFailure)}` : `Required: no\nReason: ${JSON.stringify(p.reason)}`}`;
@@ -132,7 +167,7 @@ export function parseIssueTicket(
   );
   const sections = new Map<string, string>();
   const parts = clean.split(
-    /^## (Goal|Scope|Acceptance criteria|Validation|Regression proof)\s*$/m,
+    /^## (Goal|Scope|Acceptance criteria|Validation|Out of scope|Decisions|Planned files|Regression proof)\s*$/m,
   );
   for (let i = 1; i < parts.length; i += 2) {
     if (sections.has(parts[i]))
@@ -147,6 +182,12 @@ export function parseIssueTicket(
     acceptanceCriteria: sections.get('Acceptance criteria') ?? '',
     validation: sections.get('Validation') ?? '',
   };
+  for (const [heading, field] of [
+    ['Out of scope', 'outOfScope'],
+    ['Decisions', 'decisions'],
+    ['Planned files', 'files'],
+  ] as const)
+    if (sections.has(heading)) ticket[field] = sections.get(heading);
   const proof = sections.get('Regression proof');
   if (proof) {
     const values = new Map<string, string>();
@@ -222,6 +263,7 @@ export function namedPaths(ticket: Ticket) {
     ticket.scope,
     ticket.acceptanceCriteria,
     ticket.validation,
+    ticket.files ?? '',
   ].join('\n');
   // Approved test paths are exact, so they need no guessing from prose.
   const found = new Set<string>(

@@ -6,7 +6,7 @@ Planning extends the existing Pi harness and `factory.sqlite`; there is no secon
 
 A registration identifies the canonical local path and configured GitHub owner/repository with a stable ID. Each conversation captures its base branch. Settings changes affect future conversations. Earlier conversations are backfilled from captured repository metadata; records predating base-branch capture default to `main`, rather than adopting current settings.
 
-The planner receives `list_repository`, `read_repository`, `search_repository`, `repository_changes`, `search_history`, `save_ticket`, `propose_issue`, and `create_issue`. Tool execution is sequential within a round. No file-editing, unrestricted shell, development admission, label, or PR tool is exposed.
+The planner receives `list_repository`, `read_repository`, `search_repository`, `repository_changes`, `search_history`, `save_ticket`, `review_ticket`, `propose_issue`, and `create_issue`. Tool execution is sequential within a round. No file-editing, unrestricted shell, development admission, label, or PR tool is exposed.
 
 Repository tools inspect current files, including uncommitted files. They reject traversal, symlinks, Git internals, ignored files (including tracked files now ignored), and binary reads. Git inspection disables optional writes, filesystem monitors, hooks, external diffs/text conversion, and configured clean/process filters. Git explicitly pins its worktree to the registered root, overriding `core.worktree`; diff paths are literal. Tools do not provide an operating-system sandbox against another process concurrently replacing files.
 
@@ -44,6 +44,24 @@ A definitive rejection permits an explicit retry after credentials or permission
 On startup, tool registrations and missing planning metadata are restored before pending operations are reconciled and Pi work resumes. Failed GitHub access leaves the operation inspectable and retryable without blocking the entire application. Repeated submissions, tool replays, and concurrent retry requests serialize on the conversation and return its existing operation or link.
 
 Issue creation does not add `agent:ready`, start a workflow, create branches/worktrees, or open a PR. Explicit implementation instructions call the same durable admission service as application starts and stage 7 label polling; issue creation itself remains separate.
+
+## Ticket readiness
+
+A ticket is ready only when a developer could implement it without asking or assuming. New saves therefore add three required sections to the issue body, each with its own heading and kept short:
+
+- **Out of scope** lists what the developer must not change.
+- **Decisions** has one `D-N: question -> decision` line per choice the developer would otherwise make. The user sees and can veto each one before approval.
+- **Planned files** has one `modify path: intent` or `create path: intent` line per file. `modify` paths must exist and `create` paths must not, checked against the current repository when the ticket is saved. Planned files count as files named in the ticket, so they bind the developer's scope.
+
+Tickets saved before these sections existed format byte-for-byte as before. The sections are parsed only from their exact headings.
+
+`save_ticket` also takes `openQuestions`. A non-empty list rejects the save and tells the planner to ask the user or read the repository first. Saves return advisory `warnings` for vague wording (for example "as needed", "etc.", "consider") and for more than seven acceptance criteria, which usually means the work should be split. Neither blocks the save.
+
+`review_ticket` asks a fresh-context reviewer, using the review model (or the planning model when none is set), what a developer would still have to assume. It sees the ticket and the current text of the `modify` files and has no tools. Findings are `needs_user_decision` (ask the user), `resolvable_from_repo` (the planner settles it and saves again) or `nit` (advisory). A review covers exactly one saved revision, and repeating it for an unchanged ticket returns the same result. Any edit removes it.
+
+`propose_issue` is refused until the current revision has a passing review. A failed or unreadable review counts as a round, and after three rounds without a pass the gate is waived. The proposal then lists the unresolved findings so the planner must tell the user. A passed or waived review starts the count again for the next ticket.
+
+The developer prompt treats these sections as binding and tells the developer to ask with `workflow_question` instead of assuming a choice the ticket does not settle.
 
 ## Approved issue contract — handoffs release
 

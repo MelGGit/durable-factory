@@ -19,6 +19,10 @@ export const ticket = {
     reason: 'New capability; the required suite validates the change.',
   },
   validation: 'Run the offline search tests',
+  outOfScope: 'Do not change how files are saved',
+  decisions: 'D-1: Which files are searched? -> Only tracked project files',
+  files: 'create search.txt: Return matching file links',
+  openQuestions: [] as string[],
 };
 export function planningFixture() {
   const deps = fixture();
@@ -42,9 +46,14 @@ export function planningFixture() {
         if (!results.length) return call('start_development');
         return fauxAssistantMessage('Start operation handled.');
       }
+      // Independent readiness review: a one-shot call whose input is the ticket JSON.
+      if (text.startsWith('{"title"'))
+        return fauxAssistantMessage('{"findings":[]}');
       if (text === 'plan') {
         if (!results.some((r) => r.toolName === 'save_ticket'))
           return call('save_ticket', ticket);
+        if (!results.some((r) => r.toolName === 'review_ticket'))
+          return call('review_ticket');
         if (!results.some((r) => r.toolName === 'propose_issue'))
           return call('propose_issue');
         return fauxAssistantMessage(

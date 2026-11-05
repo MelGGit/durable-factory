@@ -171,9 +171,18 @@ export async function realFixture(
           typeof next.args === 'function' ? next.args(mine) : next.args,
         );
       }
+      if (text.startsWith('{"title"'))
+        return fauxAssistantMessage('{"findings":[]}');
       if (text === 'plan') {
         if (!results.some((r) => r.toolName === 'save_ticket'))
-          return call('save_ticket', ticket);
+          // The scripted developer's files are the ticket's planned files, which bind scope.
+          return call('save_ticket', {
+            ...ticket,
+            files:
+              'modify value.txt: Update the value\ncreate generated/result.txt: Record the result',
+          });
+        if (!results.some((r) => r.toolName === 'review_ticket'))
+          return call('review_ticket');
         if (!results.some((r) => r.toolName === 'propose_issue'))
           return call('propose_issue');
         return fauxAssistantMessage('Create this issue?');
@@ -358,6 +367,10 @@ export async function realFixture(
       options.issueBody ??
       formatTicketBody({
         ...ticket,
+        // The scripted issue predates the readiness sections.
+        outOfScope: undefined,
+        decisions: undefined,
+        files: undefined,
         ...(options.regression ? { regression: options.regression } : {}),
         title: 'Implement value',
         scope:

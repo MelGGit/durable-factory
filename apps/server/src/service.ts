@@ -1119,6 +1119,8 @@ export async function startService(options: ServiceOptions = {}) {
       );
       openedWorkflow = workflow;
       planning.startRun = (input, signal) => workflow.admit(input, signal);
+      planning.reviewer = (id, system, input, signal) =>
+        chat!.completeIndependent(id, system, input, signal);
       chat = new ChatService(
         configuration.harness,
         ownership!.dataDir,

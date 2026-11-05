@@ -6,7 +6,14 @@ import {
   formatTicketBody,
   type RegressionRequirement,
 } from '../packages/shared/src/index.js';
-import { ticket } from './fixtures/planning.js';
+import { ticket as readyTicket } from './fixtures/planning.js';
+// Directly started issues predate the readiness sections, which name files and so restrict scope.
+const ticket = {
+  ...readyTicket,
+  outOfScope: undefined,
+  decisions: undefined,
+  files: undefined,
+};
 const proof: RegressionRequirement = {
   required: true,
   command: 'node regression.test.cjs',
@@ -331,12 +338,18 @@ test('linked admission tolerates transport line-ending normalization without rew
       'CRLF approved issue',
       'crlf-linked-conversation',
     );
-    const approved = { ...ticket, goal: 'First line\r\nSecond line' };
+    const approved = {
+      ...readyTicket,
+      goal: 'First line\r\nSecond line',
+      files:
+        'modify value.txt: Update the value\ncreate generated/result.txt: Record the result',
+    };
     await f.service.planning.save(
       conversation.id,
       approved,
       'crlf-linked-save',
     );
+    await f.service.planning.review(conversation.id);
     await f.service.planning.propose(conversation.id);
     await chat.submit(conversation.id, 'yes', 'crlf-linked-approval');
     const planning = await until(
