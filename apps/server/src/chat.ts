@@ -185,6 +185,12 @@ function artifactId(task: unknown) {
   return `task-${String(task)}`;
 }
 export function transcript(entry: EntryRecord): TranscriptEntry {
+  const workflowInput =
+    entry.kind === 'factory.agent-input'
+      ? (entry.data as unknown as
+          | Pick<TranscriptEntry, 'provenance' | 'presentation'>
+          | undefined)
+      : undefined;
   const tools: ToolView[] = [];
   const parts: TranscriptPart[] = [];
   const messages = entry.model ?? [];
@@ -245,6 +251,12 @@ export function transcript(entry: EntryRecord): TranscriptEntry {
   return {
     id: String(entry.id),
     kind: entry.kind,
+    ...(workflowInput?.provenance
+      ? { provenance: workflowInput.provenance }
+      : {}),
+    ...(workflowInput?.presentation
+      ? { presentation: workflowInput.presentation }
+      : {}),
     ...(entry.model?.some((message) => typeof message.timestamp === 'number')
       ? {
           at: entry.model.find(

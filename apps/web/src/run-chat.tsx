@@ -20,6 +20,7 @@ import { usePageCards } from './hooks/use-page-cards.js';
 import { RunStatusBadge } from './run-status.js';
 import { RunQuestion, RunResumePrompt } from './run-question.js';
 import { Tool } from './tool-activity.js';
+import { WorkflowPrompt } from './workflow-prompt.js';
 const activity = new RunActivityClient();
 
 export function ImplementationTranscript({
@@ -343,6 +344,18 @@ export function ImplementationTranscript({
                       item.at,
                     );
                   const entry = part.entry;
+                  if (
+                    entry.provenance?.author === 'workflow' &&
+                    entry.presentation
+                  )
+                    return (
+                      <WorkflowPrompt
+                        key={`${item.id}:${part.key}`}
+                        entry={entry}
+                        conversationId={item.conversationId!}
+                        itemKey={item.id}
+                      />
+                    );
                   return (item.actor === 'development' ||
                     item.actor === 'review') &&
                     entry.kind !== 'pi.compaction' ? (

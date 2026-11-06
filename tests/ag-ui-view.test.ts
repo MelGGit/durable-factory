@@ -98,6 +98,30 @@ test('conversation views round trip through messages and state', () => {
   );
 });
 
+test('workflow input keeps its user model role and provenance through AG-UI', () => {
+  const prompt: TranscriptEntry = {
+    id: '5',
+    kind: 'factory.agent-input',
+    text: 'Continue.\n\n{"answers":["yes"]}',
+    tools: [],
+    provenance: {
+      author: 'workflow',
+      reason: 'continuation',
+      sourceIds: ['attempt-1'],
+    },
+    presentation: {
+      summary: 'Continued developer attempt',
+      defaultCollapsed: true,
+    },
+    textArtifact: 'entry-5-text',
+  };
+  const original = snapshot({ entries: [user, prompt] });
+  const view = conversationView(original);
+  assert.equal(view.messages[1].role, 'user');
+  assert.equal(view.messages[1].content, prompt.text);
+  assert.deepEqual(conversationFromAgUi(view.messages, view.state), original);
+});
+
 test('the message stream sends appends and token growth as standard deltas, otherwise snapshots', () => {
   const stream = new AgUiMessageStream();
   const view = (s: Partial<ConversationSnapshot>) =>

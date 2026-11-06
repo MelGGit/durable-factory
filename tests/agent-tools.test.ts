@@ -408,7 +408,7 @@ test('prompts are structured per attempt and never resend history', async () => 
   });
   try {
     const started = await f.client.startIssue(7, 'prompt-shape');
-    await until(
+    const run = await until(
       () => f.client.run(started.id),
       (r) => r.attempts.filter((a) => a.stage === 'developer').length >= 2,
       30000,
@@ -444,6 +444,24 @@ test('prompts are structured per attempt and never resend history', async () => 
     assert.equal(data.causes.length, 1);
     assert.match(data.causes[0].output, /REPAIR-CAUSE-7/);
     assert.match(repair.text, /workflow_evidence.*check_output/);
+    const chat = new ChatClient(f.service.url);
+    const history = await until(
+      () => chat.history(run.developerConversationId),
+      (page) =>
+        page.entries.some((entry) => entry.provenance?.reason === 'repair'),
+    );
+    const prompts = history.entries.filter(
+      (entry) => entry.kind === 'factory.agent-input',
+    );
+    assert.deepEqual(
+      prompts.map((entry) => entry.text),
+      [first.text, repair.text],
+    );
+    assert.deepEqual(
+      prompts.map((entry) => entry.provenance?.reason),
+      ['stage-start', 'repair'],
+    );
+    assert.ok(prompts.every((entry) => entry.presentation?.defaultCollapsed));
   } finally {
     await f.close();
   }

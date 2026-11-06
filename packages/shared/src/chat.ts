@@ -67,6 +67,13 @@ export interface TranscriptEntry {
   id: string;
   kind: string;
   text: string;
+  /** Authorship is independent of the role sent to the model. */
+  provenance?: {
+    author: 'human' | 'workflow' | 'agent' | 'tool';
+    reason?: 'stage-start' | 'continuation' | 'repair' | 'review';
+    sourceIds?: string[];
+  };
+  presentation?: { summary: string; defaultCollapsed: boolean };
   parts?: TranscriptPart[];
   interrupted?: boolean;
   textArtifact?: string;

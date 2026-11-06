@@ -2,6 +2,8 @@ import { ImplementationTranscript, RunInformation } from './run-chat.js';
 import { conversationItems, agentLabel } from './transcript.js';
 import { Tool } from './tool-activity.js';
 import { ResponseFlow, ResponsePart, ResponseText } from './response-flow.js';
+import { WorkflowPrompt } from './workflow-prompt.js';
+import { markdown } from './markdown.js';
 import { Overlay, useMedia } from './panels.js';
 import { StartRun } from './runs.js';
 import { ProjectTree, followLink } from './sidebar.js';
@@ -1201,6 +1203,18 @@ export function ChatApp() {
                                 />
                               );
                             const { entry } = item;
+                            if (
+                              entry.provenance?.author === 'workflow' &&
+                              entry.presentation
+                            )
+                              return (
+                                <WorkflowPrompt
+                                  key={item.key}
+                                  entry={entry}
+                                  conversationId={selected}
+                                  itemKey={item.key}
+                                />
+                              );
                             const user = entry.kind === 'pi.user';
                             const assistant = entry.kind === 'pi.assistant';
                             if (assistant)

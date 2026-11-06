@@ -135,25 +135,6 @@ export class RunActivityService {
       do {
         const page = await this.chat.history(conversationId, pageCursor, 100);
         for (const entry of page.entries) {
-          // The service's JSON task prompt is model context, not a human message.
-          if (entry.kind === 'pi.user') {
-            if (
-              /^\{"role":"(?:developer|reviewer)","contractVersion":/.test(
-                entry.text,
-              )
-            )
-              continue;
-            try {
-              const prompt = JSON.parse(entry.text);
-              if (
-                ['developer', 'reviewer'].includes(prompt.role) &&
-                prompt.specification
-              )
-                continue;
-            } catch {
-              /* ordinary user text */
-            }
-          }
           if (
             entry.kind === 'factory.workflow' &&
             run.attempts.some((attempt) => attempt.message === entry.text)
@@ -197,21 +178,25 @@ export class RunActivityService {
             id: `entry:${conversationId}:${entry.id}`,
             at: entry.at,
             actor:
-              entry.kind === 'pi.user'
-                ? 'human'
-                : entry.kind === 'factory.workflow'
-                  ? 'code'
-                  : summary.role === 'review'
-                    ? 'review'
-                    : 'development',
+              entry.provenance?.author === 'workflow'
+                ? 'code'
+                : entry.kind === 'pi.user'
+                  ? 'human'
+                  : entry.kind === 'factory.workflow'
+                    ? 'code'
+                    : summary.role === 'review'
+                      ? 'review'
+                      : 'development',
             title:
-              entry.kind === 'pi.user'
-                ? 'You'
-                : entry.kind === 'factory.workflow'
-                  ? 'Workflow'
-                  : summary.role === 'review'
-                    ? 'Review agent'
-                    : 'Developer agent',
+              entry.provenance?.author === 'workflow'
+                ? 'Workflow'
+                : entry.kind === 'pi.user'
+                  ? 'You'
+                  : entry.kind === 'factory.workflow'
+                    ? 'Workflow'
+                    : summary.role === 'review'
+                      ? 'Review agent'
+                      : 'Developer agent',
             conversationId,
             entry,
           };

@@ -1243,6 +1243,27 @@ export class RealWorkflow {
     if (signal.aborted) abort();
     try {
       const named = namedPaths(run.specification);
+      const { kind, previous } = attemptKind(run, attempt);
+      const since = role === 'reviewer' ? 0 : (previous?.startedAt ?? 0);
+      const answers = run.interventions.filter(
+        (answer) =>
+          answer.state === 'resolved' && (answer.resolvedAt ?? 0) >= since,
+      );
+      const guidance =
+        role === 'reviewer'
+          ? []
+          : run.inputs.filter(
+              (input) =>
+                input.status === 'consumed' && (input.at ?? 0) >= since,
+            );
+      const summary =
+        role === 'reviewer'
+          ? 'Review requested'
+          : {
+              first: 'Started developer attempt',
+              continue: 'Continued developer attempt',
+              repair: `Requested repair ${attempt.repair}`,
+            }[kind];
       let prompt: string;
       if (role === 'reviewer') {
         const changed = await this.changedFiles(run, run.source);
@@ -1252,7 +1273,6 @@ export class RealWorkflow {
           notNamedInTicket: unnamedFiles(run.specification, changed),
         });
       } else {
-        const { kind } = attemptKind(run, attempt);
         if (kind === 'repair')
           await this.compactBeforeRepair(conversation, signal);
         prompt = developerPrompt(run, attempt, { namedInTicket: named });
@@ -1261,6 +1281,32 @@ export class RealWorkflow {
         {
           type: 'input',
           content: prompt,
+          entry: {
+            kind: 'factory.agent-input',
+            data: {
+              provenance: {
+                author: 'workflow',
+                reason:
+                  role === 'reviewer'
+                    ? 'review'
+                    : {
+                        first: 'stage-start',
+                        continue: 'continuation',
+                        repair: 'repair',
+                      }[kind],
+                sourceIds: [
+                  run.id,
+                  attempt.id,
+                  ...answers.map((answer) => answer.id),
+                  ...guidance.map((input) => input.requestId),
+                ],
+              },
+              presentation: {
+                summary: `${summary} for issue #${run.issue.number}${answers.length ? ` · ${answers.length} answer${answers.length === 1 ? '' : 's'} included` : ''}`,
+                defaultCollapsed: true,
+              },
+            },
+          },
           requestId: `agent-${attempt.id}-${randomUUID()}`,
         },
         context,

@@ -13,7 +13,7 @@ import { workflowFixture } from './fixtures/workflow.js';
 import { until } from './fixtures/chat.js';
 import { fauxAssistantMessage } from '../apps/server/src/chat-fixtures.js';
 
-test('run activity merges independent conversations, paginates tied timestamps, hides task prompts and remains stable after restart', async () => {
+test('run activity merges conversations, paginates tied timestamps and preserves prompt provenance after restart', async () => {
   const fixture = await workflowFixture();
   try {
     const planningId = await fixture.issue();
@@ -39,6 +39,27 @@ test('run activity merges independent conversations, paginates tied timestamps, 
           },
         );
       await tx.appendEntry(Number(run.developerConversationId) as never, {
+        kind: 'factory.agent-input',
+        data: {
+          provenance: {
+            author: 'workflow',
+            reason: 'continuation',
+            sourceIds: ['attempt-1'],
+          },
+          presentation: {
+            summary: 'Continued developer attempt',
+            defaultCollapsed: true,
+          },
+        },
+        model: [
+          {
+            role: 'user',
+            content: 'Continue work.\n\n{"answers":["yes"]}',
+            timestamp: at,
+          },
+        ],
+      });
+      await tx.appendEntry(Number(run.developerConversationId) as never, {
         kind: 'pi.user',
         model: [
           {
@@ -46,7 +67,7 @@ test('run activity merges independent conversations, paginates tied timestamps, 
             content: JSON.stringify({
               role: 'developer',
               contractVersion: 2,
-              specification: { secretInternalContext: true },
+              specification: { userPastedJson: true },
             }),
             timestamp: at,
           },
@@ -75,7 +96,17 @@ test('run activity merges independent conversations, paginates tied timestamps, 
     );
     assert.ok(merged.some((item) => item.actor === 'review'));
     assert.ok(merged.some((item) => item.actor === 'development'));
-    assert.ok(!JSON.stringify(merged).includes('secretInternalContext'));
+    const prompt = merged.find(
+      (item) => item.entry?.kind === 'factory.agent-input',
+    );
+    assert.equal(prompt?.actor, 'code');
+    assert.equal(prompt?.title, 'Workflow');
+    assert.equal(prompt?.entry?.presentation?.defaultCollapsed, true);
+    assert.equal(prompt?.entry?.text, 'Continue work.\n\n{"answers":["yes"]}');
+    assert.equal(
+      merged.find((item) => item.entry?.text.includes('userPastedJson'))?.actor,
+      'human',
+    );
     assert.ok(!merged.some((item) => item.conversationId === planningId));
     const planning = await fixture.chat.history(planningId);
     assert.ok(
@@ -92,14 +123,11 @@ test('run activity merges independent conversations, paginates tied timestamps, 
       client.activity(run.id, undefined, 101),
       /Invalid activity page/,
     );
-    const ids = first.items.map((item) => item.id);
     await fixture.restart();
     client = new RunActivityClient(fixture.service.url);
     assert.deepEqual(
-      (await client.activity(run.id, undefined, 11)).items.map(
-        (item) => item.id,
-      ),
-      ids,
+      (await client.activity(run.id, undefined, 11)).items,
+      first.items,
     );
     const summaries = (
       await new (await import('../packages/shared/src/index.js')).ChatClient(

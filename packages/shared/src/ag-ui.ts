@@ -100,7 +100,7 @@ export function agUiMessages(
     } else if (entry.parts?.length) {
       messages.push(...partMessages(threadId, id, entry.parts, entry.tools));
     } else if (entry.text || entry.tools.length) {
-      if (entry.kind === 'pi.user')
+      if (entry.kind === 'pi.user' || entry.kind === 'factory.agent-input')
         messages.push({
           id: entry.messageId ?? id,
           role: 'user',

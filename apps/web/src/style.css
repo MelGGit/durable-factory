@@ -1908,6 +1908,26 @@ h3 {
   border-left: 2px solid var(--border);
   color: var(--text-muted);
 }
+.workflow-prompt > summary {
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workflow-prompt > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.workflow-prompt-content {
+  margin-top: 12px;
+}
+.workflow-prompt-content pre {
+  max-height: 28rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
 .markdown a {
   color: var(--accent);
 }

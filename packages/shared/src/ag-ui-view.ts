@@ -45,6 +45,8 @@ export interface ToolMeta {
 export interface EntryMeta {
   id: string;
   kind: string;
+  provenance?: TranscriptEntry['provenance'];
+  presentation?: TranscriptEntry['presentation'];
   at?: number;
   interrupted?: boolean;
   textArtifact?: string;
@@ -98,6 +100,8 @@ function entryMeta(entry: TranscriptEntry): EntryMeta {
   return {
     id: entry.id,
     kind: entry.kind,
+    ...(entry.provenance ? { provenance: entry.provenance } : {}),
+    ...(entry.presentation ? { presentation: entry.presentation } : {}),
     ...(entry.at === undefined ? {} : { at: entry.at }),
     ...(entry.interrupted ? { interrupted: true } : {}),
     ...(entry.textArtifact ? { textArtifact: entry.textArtifact } : {}),
@@ -644,6 +648,8 @@ export function entriesFromAgUi(
     entries.set(key, {
       id: meta.id,
       kind: meta.kind,
+      ...(meta.provenance ? { provenance: meta.provenance } : {}),
+      ...(meta.presentation ? { presentation: meta.presentation } : {}),
       text: meta.text ?? '',
       tools: [],
       ...(meta.at === undefined ? {} : { at: meta.at }),
