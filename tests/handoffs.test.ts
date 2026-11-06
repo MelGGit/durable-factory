@@ -70,6 +70,22 @@ test('approved issue formatter/parser preserves explicit criteria, commands, pat
     formatTicketBody(noProof),
   );
 });
+test('a failure signature must be a short quote, not a description of the test', () => {
+  assert.throws(
+    () =>
+      validateTicketContract({
+        ...ticket,
+        regression: {
+          ...(ticket.regression as Extract<
+            NonNullable<Ticket['regression']>,
+            { required: true }
+          >),
+          expectedFailure: 'Add a test that fails. '.repeat(30),
+        },
+      }),
+    /limits/,
+  );
+});
 test('unstructured, duplicate or incomplete specifications are never inferred', () => {
   assert.throws(() => parseIssueTicket('Fix', 'Fix checkout please.'), /AC-N/);
   assert.throws(() => criteriaFromText('AC-1: A\nAC-1: B'), /unique/);
