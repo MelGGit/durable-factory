@@ -2,8 +2,6 @@ import type { Ticket } from './planning.js';
 import type { WorkflowRun, RunEvidence } from './workflow.js';
 
 export const MAX_ACCEPTANCE_CRITERIA = 100;
-/** The signature is matched as a literal substring of the base output, so it must stay a short quote. */
-export const MAX_EXPECTED_FAILURE = 500;
 
 export function normalizeLineEndings(text: string) {
   return text.replace(/\r\n?/g, '\n');
@@ -115,7 +113,7 @@ export function validateTicketContract(ticket: Ticket): AcceptanceCriterion[] {
       );
     if (
       proof.command.length > 4000 ||
-      proof.expectedFailure.length > MAX_EXPECTED_FAILURE ||
+      proof.expectedFailure.length > 2000 ||
       proof.testPaths.length > 100
     )
       throw new Error('Regression proof instructions exceed supported limits.');
