@@ -54,15 +54,27 @@ test(
       await page
         .locator('.chat-conversation[data-execution="running"]')
         .waitFor();
-      await page
-        .getByLabel('Message', { exact: true })
-        .fill('Withdraw this follow-up');
-      await page.getByRole('button', { name: /^Send/ }).click();
-      await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
-      await page.getByText('withdrawn', { exact: true }).waitFor();
-      await page
-        .getByRole('button', { name: 'Interrupt conversation', exact: true })
-        .click();
+      const followUp = await client.submit(
+        conversation.id,
+        'Withdraw this follow-up',
+        'withdraw-follow-up',
+      );
+      const withdrawn = await client.withdraw(conversation.id, followUp.id);
+      assert.equal(withdrawn.status, 'withdrawn');
+      assert.equal(
+        (await client.submission(conversation.id, 'withdraw-follow-up')).status,
+        'withdrawn',
+      );
+      for (const selector of ['.submission-list', '.interrupt-row']) {
+        assert.equal(await page.locator(selector).count(), 0);
+      }
+      for (const name of ['Withdraw', 'Retry send', 'Interrupt conversation']) {
+        assert.equal(
+          await page.getByRole('button', { name, exact: true }).count(),
+          0,
+        );
+      }
+      await client.interrupt(conversation.id);
       await page.locator('.chat-conversation[data-execution="idle"]').waitFor();
       // Lose the acknowledgement after admission. Retrying must reuse the saved ID.
       let dropped = false;
@@ -81,6 +93,11 @@ test(
         .getByRole('alert')
         .filter({ hasText: 'Failed to fetch' })
         .waitFor();
+      assert.equal(await page.locator('.submission-list').count(), 0);
+      assert.equal(
+        await page.getByRole('button', { name: 'Retry send' }).count(),
+        0,
+      );
       await page.reload();
       await page
         .locator('.chat-conversation[data-connection="connected"]')

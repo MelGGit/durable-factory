@@ -697,8 +697,10 @@ test(
       });
       const first = await context.newPage(),
         second = await context.newPage();
+      const errors: string[] = [];
       for (const page of [first, second]) {
         page.setDefaultTimeout(10000);
+        page.on('pageerror', (e) => errors.push(e.message));
         await page.goto(
           `${fixture.service.url}/?conversation=${run.developerConversationId}`,
         );
@@ -713,6 +715,35 @@ test(
         return response.status;
       });
       assert.equal(result, 200);
+      for (const page of [first, second]) {
+        assert.equal(await page.locator('.submission-list').count(), 0);
+        assert.equal(await page.locator('.interrupt-row').count(), 0);
+        assert.equal(
+          await page
+            .getByRole('button', { name: 'Interrupt conversation' })
+            .count(),
+          0,
+        );
+        for (const width of [1440, 390]) {
+          await page.setViewportSize({ width, height: 900 });
+          assert.ok(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          );
+          assert.ok(await page.locator('.composer').isVisible());
+          const box = await page.locator('.composer').boundingBox();
+          assert.ok(
+            box &&
+              box.x >= 0 &&
+              box.y >= 0 &&
+              box.x + box.width <= width &&
+              box.y + box.height <= 900,
+            `composer fits at ${width}px`,
+          );
+        }
+        await page.setViewportSize({ width: 1440, height: 1000 });
+      }
       await first
         .getByRole('button', { name: 'Pause run', exact: true })
         .click();
@@ -723,10 +754,21 @@ test(
         .getByLabel('Message', { exact: true })
         .fill('Keep this guidance queued');
       await first.getByRole('button', { name: 'Send', exact: false }).click();
-      await second
-        .getByText('Keep this guidance queued', { exact: true })
-        .first()
-        .waitFor();
+      await until(
+        () => fixture.client.run(run.id),
+        (r) => r.inputs.some((i) => i.content === 'Keep this guidance queued'),
+      );
+      for (const page of [first, second]) {
+        assert.equal(await page.locator('.submission-list').count(), 0);
+        assert.equal(await page.locator('.interrupt-row').count(), 0);
+        assert.equal(
+          await page
+            .getByRole('button', { name: 'Interrupt conversation' })
+            .count(),
+          0,
+        );
+      }
+      assert.deepEqual(errors, []);
       assert.equal((await fixture.client.run(run.id)).status, 'paused');
     } finally {
       await browser.close();

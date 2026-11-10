@@ -61,24 +61,29 @@ test(
           .count(),
         0,
       );
+      const welcomeOnlyHeading = async () => {
+        assert.equal(
+          await page.locator('.chat-welcome > *').count(),
+          1,
+          'welcome has only the heading',
+        );
+        assert.equal(await page.locator('.chat-welcome p').count(), 0);
+        assert.equal(await page.locator('.chat-welcome button').count(), 0);
+        assert.equal(await page.locator('.starter-prompts').count(), 0);
+        assert.equal(await page.locator('.submission-list').count(), 0);
+      };
+      await welcomeOnlyHeading();
       await page
-        .getByRole('button', { name: 'Plan a feature', exact: true })
-        .click();
-      assert.equal(
-        await page.getByLabel('Message', { exact: true }).inputValue(),
-        'I’d like to plan a new feature: ',
-      );
-      assert.equal(await page.locator('.starter-prompts').count(), 0);
-      assert.equal(
-        (await client.history(c.id)).entries.length,
-        0,
-        'starter does not submit',
-      );
+        .getByLabel('Message', { exact: true })
+        .fill('A typed planning draft');
+      await welcomeOnlyHeading();
+      assert.equal((await client.history(c.id)).entries.length, 0);
       await page.reload();
       assert.equal(
         await page.getByLabel('Message', { exact: true }).inputValue(),
-        'I’d like to plan a new feature: ',
+        'A typed planning draft',
       );
+      await welcomeOnlyHeading();
       await page.getByLabel('Message', { exact: true }).fill('');
       const geometry = await page
         .locator('.chat-navigation-row')
@@ -182,6 +187,18 @@ test(
           await page
             .getByRole('button', { name: 'Close conversations', exact: true })
             .click();
+        const box = await page.locator('.composer').boundingBox();
+        assert.ok(
+          box &&
+            box.width > 0 &&
+            box.height > 0 &&
+            box.x >= 0 &&
+            box.y >= 0 &&
+            box.x + box.width <= width &&
+            box.y + box.height <= 844,
+          `composer fits at ${width}px`,
+        );
+        assert.ok(await page.locator('.composer').isVisible());
       }
       await page
         .getByLabel('Message', { exact: true })
