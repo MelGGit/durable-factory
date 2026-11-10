@@ -9,7 +9,6 @@ import { StartRun } from './runs.js';
 import { ProjectTree, followLink } from './sidebar.js';
 import { Home } from './home.js';
 import { Icon } from './icons.js';
-import { markdown } from './markdown.js';
 import { SessionActions } from './session-actions.js';
 import { PageHeader } from './page-header.js';
 import { PageCardsToggle, PageWorkspace } from './page-cards.js';
