@@ -1003,6 +1003,24 @@ test(
         ),
       );
       const input = page.getByLabel('Message', { exact: true });
+      const absent = async (label: string) => {
+        for (const selector of [
+          '.submission-list',
+          '.interrupt-row',
+          '.submission-text',
+        ])
+          assert.equal(await page.locator(selector).count(), 0, label);
+        for (const name of ['Interrupt conversation', 'Withdraw', 'Retry send'])
+          assert.equal(
+            await page.getByRole('button', { name }).count(),
+            0,
+            label,
+          );
+      };
+      await input.fill('   \n  ');
+      assert.ok(await page.getByRole('button', { name: /^Send/ }).isDisabled());
+      await input.press('Enter');
+      assert.equal((await client.history(conversation.id)).entries.length, 0);
       await input.fill('First line');
       await input.press('Shift+Enter');
       await input.press('End');
@@ -1026,6 +1044,53 @@ test(
         ).length,
         1,
       );
+      const submissions: ConversationSnapshot['submissions'] = [
+        {
+          id: 's1',
+          requestId: 'r1',
+          content: 'Queued distinct guidance',
+          mode: 'followUp',
+          status: 'queued',
+        },
+        {
+          id: 's2',
+          requestId: 'r2',
+          content: 'Failed distinct guidance',
+          mode: 'steer',
+          status: 'failed',
+          reason: 'Distinct failure reason',
+        },
+        {
+          id: 's3',
+          requestId: 'r3',
+          content: 'Running distinct guidance',
+          mode: 'followUp',
+          status: 'running',
+        },
+      ];
+      for (const role of ['planning', 'development'] as const)
+        for (const execution of ['idle', 'running', 'interrupting'] as const) {
+          snapshot = {
+            ...snapshot,
+            conversation: { ...conversation, role },
+            execution,
+            submissions,
+          };
+          await push();
+          await page.waitForFunction(
+            (value) =>
+              document
+                .querySelector('.chat-conversation')
+                ?.getAttribute('data-execution') === value,
+            execution,
+          );
+          await absent(`${role} ${execution}`);
+          assert.equal(
+            await page.getByText('Distinct failure reason').count(),
+            0,
+          );
+        }
+      snapshot = { ...snapshot, conversation, execution: 'running' };
       snapshot = {
         ...snapshot,
         conversation: { ...conversation, role: 'development' },
@@ -1047,12 +1112,7 @@ test(
         .last()
         .waitFor();
       assert.equal(await input.count(), 0);
-      assert.equal(
-        await page
-          .getByRole('button', { name: 'Interrupt conversation' })
-          .count(),
-        0,
-      );
+      await absent('review');
       snapshot = {
         ...snapshot,
         conversation: { ...conversation, role: 'development' },
@@ -1066,12 +1126,13 @@ test(
       await push();
       await page.getByText(/Implementation input is closed/).waitFor();
       assert.equal(await input.count(), 0);
-      assert.ok(
-        await page
-          .getByRole('button', { name: 'Interrupt conversation' })
-          .isEnabled(),
-      );
-      snapshot = { ...snapshot, conversation, workflow: undefined };
+      await absent('closed input');
+      snapshot = {
+        ...snapshot,
+        conversation,
+        workflow: undefined,
+        submissions: [],
+      };
       await push();
       await input.waitFor();
       await mkdir(resolve('test-results'), { recursive: true });

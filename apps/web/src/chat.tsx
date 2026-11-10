@@ -9,6 +9,7 @@ import { StartRun } from './runs.js';
 import { ProjectTree, followLink } from './sidebar.js';
 import { Home } from './home.js';
 import { Icon } from './icons.js';
+import { markdown } from './markdown.js';
 import { SessionActions } from './session-actions.js';
 import { PageHeader } from './page-header.js';
 import { PageCardsToggle, PageWorkspace } from './page-cards.js';
@@ -704,14 +705,6 @@ export function ChatApp() {
       setBusy(false);
     }
   };
-  const action = async (work: () => Promise<unknown>) => {
-    try {
-      await work();
-      setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not complete action.');
-    }
-  };
   const send = (event: React.FormEvent) => {
     event.preventDefault();
     const content = current.current.drafts[selected] ?? '';
@@ -839,22 +832,6 @@ export function ChatApp() {
       !snapshot.submissions.length &&
       !pending.length,
   );
-  const interruptControl =
-    snapshot &&
-    snapshot.conversation.role !== 'review' &&
-    snapshot.execution !== 'idle' ? (
-      <span className="interrupt-row">
-        <button
-          className="text-button"
-          type="button"
-          disabled={snapshot.execution === 'interrupting'}
-          title="Stops the current reply and withdraws queued inputs."
-          onClick={() => void action(() => client.interrupt(selected))}
-        >
-          Interrupt conversation
-        </button>
-      </span>
-    ) : null;
   const inChat = route.kind === 'chat';
   const atHome = inChat && !selected;
   const sidebar = (
@@ -1346,97 +1323,8 @@ export function ChatApp() {
                       {emptyPlanning && (
                         <div className="chat-welcome">
                           <h2>What feature would you like to plan?</h2>
-                          <p>
-                            Describe the feature, who it’s for, and what success
-                            looks like.
-                          </p>
-                          {!local.drafts[selected]?.trim() && (
-                            <div
-                              className="starter-prompts"
-                              aria-label="Conversation starters"
-                            >
-                              {[
-                                [
-                                  'Plan a feature',
-                                  'I’d like to plan a new feature: ',
-                                ],
-                                [
-                                  'Define requirements',
-                                  'Help me define the requirements for this feature: ',
-                                ],
-                                [
-                                  'Break down a feature',
-                                  'Help me break this feature into implementation steps: ',
-                                ],
-                              ].map(([prompt, draft]) => (
-                                <button
-                                  type="button"
-                                  className="secondary"
-                                  key={prompt}
-                                  onClick={() => {
-                                    persist((previous) => ({
-                                      ...previous,
-                                      drafts: {
-                                        ...previous.drafts,
-                                        [selected]: draft,
-                                      },
-                                    }));
-                                    document
-                                      .getElementById('chat-message')
-                                      ?.focus();
-                                  }}
-                                >
-                                  {prompt}
-                                </button>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       )}
-                      <div
-                        className="submission-list"
-                        aria-label="Submission status"
-                      >
-                        {snapshot?.submissions
-                          .filter((item) => item.status !== 'completed')
-                          .map((item) => (
-                            <div key={item.id || item.requestId}>
-                              <span className="submission-text">
-                                {item.content}
-                              </span>
-                              <strong>{item.status}</strong>
-                              {item.reason && <small>{item.reason}</small>}
-                              {item.status === 'queued' && (
-                                <button
-                                  className="text-button"
-                                  type="button"
-                                  onClick={() =>
-                                    void action(() =>
-                                      client.withdraw(selected, item.id),
-                                    )
-                                  }
-                                >
-                                  Withdraw
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        {pending.map((item) => (
-                          <div key={item.requestId}>
-                            <span className="submission-text">
-                              {item.content}
-                            </span>
-                            <strong>Awaiting acknowledgement</strong>
-                            <button
-                              className="text-button"
-                              type="button"
-                              onClick={() => void reconcile(item)}
-                            >
-                              Retry send
-                            </button>
-                          </div>
-                        ))}
-                      </div>
                       {!snapshot ? (
                         <p role="status">Connecting to the conversation…</p>
                       ) : awaitingRunAnswer ? (
@@ -1486,21 +1374,18 @@ export function ChatApp() {
                             <small>
                               Enter to send · Shift + Enter for a new line
                             </small>
-                            <div className="composer-actions">
-                              {interruptControl}
-                              <button
-                                className="primary"
-                                type="submit"
-                                disabled={
-                                  !local.drafts[selected]?.trim() ||
-                                  snapshot?.execution === 'interrupting' ||
-                                  answering ||
-                                  pending.length > 0
-                                }
-                              >
-                                Send <Icon name="send" size={14} />
-                              </button>
-                            </div>
+                            <button
+                              className="primary"
+                              type="submit"
+                              disabled={
+                                !local.drafts[selected]?.trim() ||
+                                snapshot?.execution === 'interrupting' ||
+                                answering ||
+                                pending.length > 0
+                              }
+                            >
+                              Send <Icon name="send" size={14} />
+                            </button>
                           </div>
                         </form>
                       ) : (
@@ -1509,7 +1394,6 @@ export function ChatApp() {
                           Available controls are in Chat trails.
                         </p>
                       )}
-                      {snapshot && !acceptsInput && interruptControl}
                       {!awaitingRunAnswer && (
                         <p className="composer-footnote">
                           {composerQuestion

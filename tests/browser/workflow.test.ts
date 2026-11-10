@@ -282,7 +282,11 @@ test(
         .getByLabel('Message', { exact: true })
         .fill('Keep the accepted scope.');
       await page.getByRole('button', { name: 'Send', exact: false }).click();
-      await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
+      assert.equal(await page.locator('.submission-list').count(), 0);
+      await page.locator('[data-card-id="developer-input"] summary').click();
+      await page
+        .getByRole('button', { name: 'Withdraw input', exact: true })
+        .click();
       await page
         .locator('.implementation-events')
         .getByText('Guidance withdrawn', { exact: true })
