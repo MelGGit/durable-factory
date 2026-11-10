@@ -214,7 +214,7 @@ export class RealWorkflow {
         startLine: Type.Optional(Type.Integer({ minimum: 1 })),
         endLine: Type.Optional(Type.Integer({ minimum: 1 })),
         offset: Type.Optional(Type.Integer({ minimum: 0 })),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 65536 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1 })),
         revision: Type.Optional(
           Type.Union([Type.Literal('candidate'), Type.Literal('base')]),
         ),
@@ -229,14 +229,14 @@ export class RealWorkflow {
     const search = defineTool({
       name: 'worktree_search',
       description:
-        'Search repository text for a pattern (extended regular expression; set literal for plain text). Optional path glob such as src/**/*.ts, context lines (0-5) and maxResults (default 100, at most 300). Lines are path:line:text. No match is a normal result. Developers search the worktree without ignored files; reviewers search the validated candidate tree.',
+        'Search repository text for a pattern (extended regular expression; set literal for plain text). Optional path glob such as src/**/*.ts, context lines (0-5) and maxResults (default 100, at most 300); larger values are capped. Lines are path:line:text. No match is a normal result. Developers search the worktree without ignored files; reviewers search the validated candidate tree.',
       parameters: Type.Object({
         pattern: Type.String({ minLength: 1, maxLength: 500 }),
         literal: Type.Optional(Type.Boolean()),
         ignoreCase: Type.Optional(Type.Boolean()),
         path: Type.Optional(Type.String({ minLength: 1 })),
-        context: Type.Optional(Type.Integer({ minimum: 0, maximum: 5 })),
-        maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 300 })),
+        context: Type.Optional(Type.Integer({ minimum: 0 })),
+        maxResults: Type.Optional(Type.Integer({ minimum: 1 })),
       }),
       replay: 'safe',
       execute: async (args, api) =>
@@ -271,7 +271,7 @@ export class RealWorkflow {
           Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 }),
         ),
         offset: Type.Optional(Type.Integer({ minimum: 0 })),
-        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 65536 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1 })),
       }),
       replay: 'safe',
       execute: async (args, api) => {
@@ -446,6 +446,13 @@ export class RealWorkflow {
         const sections: string[] = [];
         let failed = false;
         for (const [i, { command, label }] of commands.entries()) {
+          if (failed) {
+            sections.push(
+              `SKIPPED ${label}: ${command} (an earlier command failed)`,
+            );
+            continue;
+          }
+          const source = await deps.workspaces.candidate(run);
           const result = await deps.processes.run({
             id: `${run.id}-${active.attemptId}-selfcheck-${api.taskId}-${i}`,
             runId: run.id,
@@ -462,6 +469,23 @@ export class RealWorkflow {
           });
           const ok = result.exitCode === 0;
           failed ||= !ok;
+          if (ok && label === 'check')
+            await deps
+              .workflow()
+              .patchRun(run.id, active.attemptId, (current) => {
+                current.selfChecks = [
+                  ...(current.selfChecks ?? []).filter(
+                    (c) => c.command !== command,
+                  ),
+                  {
+                    command,
+                    source,
+                    configurationRevision: current.configurationRevision,
+                    duration: result.finishedAt! - result.startedAt,
+                    artifact: result.id,
+                  },
+                ];
+              });
           const tail = await fileTail(result.artifact, budget).catch(
             () => undefined,
           );
@@ -483,7 +507,7 @@ export class RealWorkflow {
     const checkOutput = defineTool({
       name: 'check_output',
       description:
-        'Read the full log of a check, setup, regression or tool command of this run. Without arguments it lists the commands with their artifact ids. Select one by artifact id, or by check index in the current check results. mode tail (default) shows the last lines; range shows startLine..endLine (at most 500 lines); grep shows lines matching pattern (regular expression, or literal text with literal) with context lines. Output is bounded; the result says how to continue.',
+        'Read the full log of a check, setup, regression or tool command of this run. Without arguments it lists the commands with their artifact ids. Select one by artifact id, or by check index in the current check results. mode tail (default) shows the last lines; range shows startLine..endLine (at most 500 lines); grep shows lines matching pattern (regular expression, or literal text with literal) with context lines (0-5); lines (at most 2000), maxMatches (default 50, at most 200) and context are capped when larger. Output is bounded; the result says how to continue.',
       parameters: Type.Object({
         artifact: Type.Optional(Type.String({ minLength: 1 })),
         check: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -494,13 +518,13 @@ export class RealWorkflow {
             Type.Literal('grep'),
           ]),
         ),
-        lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 2000 })),
+        lines: Type.Optional(Type.Integer({ minimum: 1 })),
         startLine: Type.Optional(Type.Integer({ minimum: 1 })),
         endLine: Type.Optional(Type.Integer({ minimum: 1 })),
         pattern: Type.Optional(Type.String({ minLength: 1 })),
         literal: Type.Optional(Type.Boolean()),
-        context: Type.Optional(Type.Integer({ minimum: 0, maximum: 5 })),
-        maxMatches: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+        context: Type.Optional(Type.Integer({ minimum: 0 })),
+        maxMatches: Type.Optional(Type.Integer({ minimum: 1 })),
       }),
       replay: 'safe',
       execute: async (args, api) => {
@@ -574,11 +598,11 @@ export class RealWorkflow {
         }
         if (mode === 'grep') {
           if (!args.pattern) throw new Error('mode grep needs a pattern.');
-          const maxMatches = args.maxMatches ?? 50;
+          const maxMatches = Math.min(args.maxMatches ?? 50, 200);
           const read = await readLog(record.artifact, {
             mode: 'grep',
             pattern: searchExpression(args.pattern, args.literal),
-            context: args.context ?? 0,
+            context: Math.min(args.context ?? 0, 5),
             maxMatches,
           });
           const page = numbered(read.lines);
@@ -593,7 +617,7 @@ export class RealWorkflow {
         }
         const read = await readLog(record.artifact, {
           mode: 'tail',
-          lines: args.lines ?? 200,
+          lines: Math.min(args.lines ?? 200, 2000),
         });
         const page = numberedTail(read.lines);
         return {
@@ -1531,8 +1555,33 @@ export class RealWorkflow {
               (change) => this.patch(run, attempt, change),
             )
           : undefined;
+      const reusable = (command: string) =>
+        attempt.stage === 'checks'
+          ? run.selfChecks?.find(
+              (c) =>
+                c.command === command &&
+                c.source === before &&
+                c.configurationRevision === run.configurationRevision,
+            )
+          : undefined;
+      const skipped: string[] = [];
       if (!regression || regression.passed)
         for (let i = 0; i < run.configuration.requiredChecks.length; i++) {
+          if (results.some((r) => r.exitCode !== 0)) {
+            skipped.push(run.configuration.requiredChecks[i]);
+            continue;
+          }
+          const earlier = reusable(run.configuration.requiredChecks[i]);
+          if (earlier) {
+            results.push({
+              command: earlier.command,
+              exitCode: 0,
+              duration: earlier.duration,
+              artifact: earlier.artifact,
+              reused: true,
+            });
+            continue;
+          }
           const result = await processes.run({
             id: `${run.id}-${attempt.id}-${attempt.taskId}-check-${i}`,
             runId: run.id,
@@ -1563,7 +1612,11 @@ export class RealWorkflow {
             ? [
                 ...results.map(
                   (result) =>
-                    `${result.exitCode === 0 ? 'Passed' : 'Failed'}: ${result.command} (exit ${result.exitCode}, ${result.duration} ms)${tails.has(result.artifact) ? `\n${tails.get(result.artifact)}` : result.exitCode === 0 ? '' : `\nOutput not shown; read it with check_output artifact ${result.artifact}.`}`,
+                    `${result.exitCode === 0 ? (result.reused ? 'Passed (reused from the developer self-check on the identical tree)' : 'Passed') : 'Failed'}: ${result.command} (exit ${result.exitCode}, ${result.duration} ms)${tails.has(result.artifact) ? `\n${tails.get(result.artifact)}` : result.exitCode === 0 ? '' : `\nOutput not shown; read it with check_output artifact ${result.artifact}.`}`,
+                ),
+                ...skipped.map(
+                  (command) =>
+                    `Skipped: ${command} (an earlier required check failed)`,
                 ),
                 ...(regression ? [regression.message] : []),
                 ...(regression && !regression.passed

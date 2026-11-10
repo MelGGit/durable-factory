@@ -234,6 +234,12 @@ export class Navigator {
       return `No matches for ${JSON.stringify(args.pattern)}${args.path ? ` in ${args.path}` : ''}.`;
     let lines = found.map((m) => `${m.file}:${m.line}:${m.text}`);
     const context = Math.min(args.context ?? 0, 5);
+    const capped = [
+      ...((args.context ?? 0) > 5 ? ['context capped at 5'] : []),
+      ...((args.maxResults ?? 0) > SEARCH_CAP
+        ? [`maxResults capped at ${SEARCH_CAP}`]
+        : []),
+    ];
     if (context) {
       // Re-run with context lines; the exact matches above tell them apart.
       const known = new Set(found.map((m) => `${m.file}:${m.line}`));
@@ -281,7 +287,7 @@ export class Navigator {
       more > 0
         ? `; ${scanned > SEARCH_SCAN ? 'many' : more} more match(es), narrow with path or a more specific pattern`
         : ''
-    }${page.cut ? `; output cut at ${OUTPUT_BYTES} bytes, lower maxResults or context` : ''}]`;
+    }${capped.map((note) => `; ${note}`).join('')}${page.cut ? `; output cut at ${OUTPUT_BYTES} bytes, lower maxResults or context` : ''}]`;
   }
   /** Repository files matching a glob, from the worktree (developer) or the validated tree (reviewer). */
   async find(run: WorkflowRun, glob = '**', limit = FIND_LIMIT) {
@@ -371,8 +377,9 @@ export class Navigator {
     path: string,
     revision: Revision,
     offset = 0,
-    limit = OUTPUT_BYTES,
+    requested = OUTPUT_BYTES,
   ) {
+    const limit = Math.min(requested, OUTPUT_BYTES);
     if (this.reviewer(run) || revision === 'base') {
       const { page, total } = await this.gitFile(
         run,

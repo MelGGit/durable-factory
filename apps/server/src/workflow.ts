@@ -398,7 +398,13 @@ export class WorkflowService {
         run.cleanup
           ? `Cleanup ${run.cleanup.state}`
           : (statuses[run.status] ?? `${labels[run.stage]} started`),
-        run.cleanup?.message ?? '',
+        run.cleanup?.message ??
+          (run.pausedBy && ['pausing', 'paused'].includes(run.status)
+            ? 'The service was stopped or restarted.'
+            : run.status === 'queued' &&
+                run.decisions.at(-1)?.operationId.startsWith('auto-resume:')
+              ? 'Resumed automatically after the service restarted.'
+              : ''),
       );
     }
     state.revision++;
@@ -1604,6 +1610,7 @@ export class WorkflowService {
     id: string,
     target: 'paused' | 'needs_input' | 'cancelled',
     reason?: string,
+    pausedBy?: 'shutdown',
   ) {
     const requested = await this.transaction(async (state) => {
       const run = state.runs[id];
@@ -1618,11 +1625,18 @@ export class WorkflowService {
         return false;
       run.stopTarget = target;
       run.status = target === 'cancelled' ? 'cancelling' : 'pausing';
+      if (pausedBy && target === 'paused') run.pausedBy = pausedBy;
       if (reason) this.question(run, 'execution', reason);
       this.changed(state, run);
       return true;
     });
     if (requested) await this.stopWork(id);
+  }
+  private requeue(state: State, run: WorkflowRun) {
+    run.status = 'queued';
+    run.queueOrder = state.nextOrder++;
+    delete run.stopTarget;
+    delete run.pausedBy;
   }
   async deliverSteering(id: string, attemptId: string) {
     await this.transaction(async (state, tx) => {
@@ -1912,6 +1926,7 @@ export class WorkflowService {
         )
           conflict('Resolve the existing stop or termination blocker first.');
         run.stopTarget = body.action === 'cancel' ? 'cancelled' : 'paused';
+        delete run.pausedBy;
         run.status = body.action === 'cancel' ? 'cancelling' : 'pausing';
         stop = true;
       } else if (body.action === 'reconcile') {
@@ -1960,9 +1975,7 @@ export class WorkflowService {
         }
         if (run.interventions.some((i) => i.state === 'pending'))
           conflict('Resolve pending interventions before resuming.');
-        run.status = 'queued';
-        run.queueOrder = state.nextOrder++;
-        delete run.stopTarget;
+        this.requeue(state, run);
       }
       run.decisions.push({
         operationId: body.operationId,
@@ -2127,6 +2140,19 @@ export class WorkflowService {
         } else if (['pausing', 'cancelling'].includes(run.status)) {
           // Reconcile below before any execution is allowed.
           run.status = 'termination_blocker';
+        } else if (
+          run.status === 'paused' &&
+          run.pausedBy === 'shutdown' &&
+          !run.interventions.some((i) => i.state === 'pending')
+        ) {
+          // The service paused this run on its way down; nobody asked for it.
+          this.requeue(state, run);
+          run.decisions.push({
+            operationId: `auto-resume:${run.id}:${run.revision}`,
+            action: 'resume',
+            at: this.clock.now(),
+            detail: 'Resumed automatically after the service restarted.',
+          });
         }
         this.changed(state, run);
       }
@@ -2412,6 +2438,6 @@ export class WorkflowService {
     for (const run of (await this.snapshot()).runs.filter(
       (r) => r.status === 'running',
     ))
-      await this.requestStop(run.id, 'paused');
+      await this.requestStop(run.id, 'paused', undefined, 'shutdown');
   }
 }

@@ -75,6 +75,8 @@ export interface RunEvidence {
     exitCode: number;
     duration: number;
     artifact: string;
+    /** Passed earlier on the identical candidate tree and was not run again. */
+    reused?: boolean;
   }[];
   exitCode?: number;
   duration: number;
@@ -225,6 +227,16 @@ export interface WorkflowRun {
     prHead?: string;
   };
   stopTarget?: 'paused' | 'needs_input' | 'cancelled';
+  /** Required checks the developer's own run_required_checks passed, keyed by candidate tree. */
+  selfChecks?: {
+    command: string;
+    source: string;
+    configurationRevision: number;
+    duration: number;
+    artifact: string;
+  }[];
+  /** Set when the service itself paused the run, so a restart resumes it. */
+  pausedBy?: 'shutdown';
 }
 export interface WorkflowSnapshot {
   enabled: boolean;

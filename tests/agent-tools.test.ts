@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { until } from './fixtures/chat.js';
 import { realFixture } from './fixtures/real.js';
 import { ChatClient } from '../packages/shared/src/index.js';
@@ -227,6 +230,69 @@ test('run_required_checks shows output to the developer and records no evidence'
   }
 });
 
+const tally = (file: string) =>
+  `node -e "require('node:fs').appendFileSync('${file}','x')"`;
+
+test('required checks stop at the first failure in the self-check and the gate', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'df-tally-'));
+  const second = join(dir, 'second');
+  const f = await realFixture({
+    checkCommands: ['exit 3', tally(second)],
+    developerCalls: [{ name: 'run_required_checks', args: {} }],
+  });
+  try {
+    const started = await f.client.startIssue(7, 'fail-fast');
+    const run = await until(
+      () => f.client.run(started.id),
+      (r) => [...r.evidence, ...(r.evidenceHistory ?? [])].length > 0,
+      30000,
+    );
+    const [result] = f.seen.filter((r) => r.toolName === 'run_required_checks');
+    assert.match(result.text, /FAILED check: exit 3/);
+    assert.match(result.text, /SKIPPED check: .*earlier command failed/);
+    const checks = [...run.evidence, ...(run.evidenceHistory ?? [])].find(
+      (e) => e.kind === 'checks',
+    )!;
+    assert.equal(checks.results!.length, 1);
+    assert.match(checks.output, /Skipped: .*earlier required check failed/);
+    await assert.rejects(readFile(second), /ENOENT/);
+  } finally {
+    await f.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the gate reuses a self-check that passed on the identical tree and reruns after an edit', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'df-tally-'));
+  const same = join(dir, 'same'),
+    edited = join(dir, 'edited');
+  for (const file of [same, edited]) {
+    const f = await realFixture({
+      checkCommands: [tally(file)],
+      selfCheckBeforeSubmit: true,
+      editAfterSelfCheck: file === edited,
+    });
+    try {
+      const run = await finish(f, `reuse-${file.split('/').pop()}`);
+      const checks = [...run.evidence, ...(run.evidenceHistory ?? [])].find(
+        (e) => e.kind === 'checks',
+      )!;
+      const runs = (await readFile(file, 'utf8')).length;
+      if (file === same) {
+        assert.equal(runs, 1);
+        assert.equal(checks.results![0].reused, true);
+        assert.match(checks.output, /reused from the developer self-check/);
+      } else {
+        assert.equal(runs, 2);
+        assert.equal(checks.results![0].reused, undefined);
+      }
+    } finally {
+      await f.close();
+    }
+  }
+  await rm(dir, { recursive: true, force: true });
+});
+
 test('deletes and renames are changed files and both rename paths are reported', async () => {
   const f = await realFixture({
     baselineFiles: { 'legacy.txt': 'old\n', 'obsolete.txt': 'gone\n' },
@@ -275,6 +341,10 @@ test('both roles search, find, read and diff; the reviewer sees the candidate tr
       { name: 'worktree_find', args: { glob: '*.txt' } },
       { name: 'worktree_search', args: { pattern: 'baseline' } },
       {
+        name: 'worktree_search',
+        args: { pattern: 'baseline', context: 6, maxResults: 1000 },
+      },
+      {
         name: 'worktree_edit',
         args: {
           path: 'value.txt',
@@ -303,6 +373,11 @@ test('both roles search, find, read and diff; the reviewer sees the candidate tr
       of('developer', 'worktree_search').text,
       /value\.txt:1:baseline/,
     );
+    const oversized = f.seen.filter(
+      (r) => r.role === 'developer' && r.toolName === 'worktree_search',
+    )[1]!;
+    assert.match(oversized.text, /value\.txt:1:baseline/);
+    assert.match(oversized.text, /context capped at 5/);
     assert.match(of('developer', 'worktree_edit').text, /1 replacement/);
     assert.match(of('developer', 'worktree_read').text, /baseline/);
     assert.match(

@@ -34,6 +34,8 @@ export async function realFixture(
     mode?: 'real' | 'simulation' | 'disabled';
     developerCommand?: string;
     checkCommand?: string;
+    /** Several required checks, run in order; replaces checkCommand. */
+    checkCommands?: string[];
     reviewDelay?: number;
     reviewQuestion?: boolean;
     labelReady?: boolean;
@@ -75,6 +77,10 @@ export async function realFixture(
       name: string;
       args: Record<string, unknown> | ((results: SeenResult[]) => object);
     }[];
+    /** Run run_required_checks after the default edits, just before the report. */
+    selfCheckBeforeSubmit?: boolean;
+    /** With selfCheckBeforeSubmit: edit a file after the self-check. */
+    editAfterSelfCheck?: boolean;
     /** Same for the reviewer. */
     reviewerCalls?: {
       name: string;
@@ -248,6 +254,19 @@ export async function realFixture(
           return call('worktree_write', {
             path: 'regression.test.cjs',
             content: options.proofTest,
+          });
+        if (
+          options.selfCheckBeforeSubmit &&
+          !results.some((r) => r.toolName === 'run_required_checks')
+        )
+          return call('run_required_checks', {});
+        if (
+          options.editAfterSelfCheck &&
+          results.filter((r) => r.toolName === 'worktree_write').length < 3
+        )
+          return call('worktree_write', {
+            path: 'value.txt',
+            content: 'edited after the self-check\n',
           });
         const reminders = input.messages
           .slice(last + 1)
@@ -440,7 +459,7 @@ export async function realFixture(
       name: 'Factory',
       email: 'factory@example.com',
     };
-    saved.settings.requiredChecks = [
+    saved.settings.requiredChecks = options.checkCommands ?? [
       options.checkCommand ??
         (options.checkFailure
           ? 'exit 2'

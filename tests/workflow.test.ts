@@ -587,6 +587,40 @@ test('normal mode rejects starts and incompatible recovery retains the slot unti
   }
 });
 
+test('a restart resumes a run the service paused but leaves a user pause alone', async () => {
+  const { adapter } = controlledAdapter();
+  const s = await workflowFixture(adapter);
+  try {
+    const issue = await s.issue();
+    let run = await s.client.startRun(issue, 'start');
+    run = await until(
+      () => s.client.run(run.id),
+      (r) => r.stage === 'developer',
+    );
+    await s.restart(false);
+    // Disabled mode cannot resume it: the pause is explained and kept.
+    run = await s.client.run(run.id);
+    assert.equal(run.status, 'paused');
+    assert.equal(run.pausedBy, 'shutdown');
+    assert.match(
+      run.activity!.find((e) => e.title === 'Implementation paused')!.detail,
+      /stopped or restarted/,
+    );
+    await s.restart(true);
+    run = await s.client.run(run.id);
+    assert.notEqual(run.status, 'paused');
+    assert.equal(run.pausedBy, undefined);
+    assert.match(run.decisions.at(-1)!.operationId, /^auto-resume:/);
+    run = await command(s, run, 'pause');
+    assert.equal(run.status, 'paused');
+    assert.equal(run.pausedBy, undefined);
+    await s.restart(true);
+    assert.equal((await s.client.run(run.id)).status, 'paused');
+  } finally {
+    await s.close();
+  }
+});
+
 test('adopting specification and setup at exhaustion preserves budget and validates the adopted revision', async () => {
   const adapter = simulationAdapter();
   const execute = adapter.execute;
