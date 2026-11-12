@@ -134,6 +134,26 @@ Developer input closes when publication begins. New-contract runs require a repo
 
 New real runs use the stronger handoff contract. Older stored runs retain their captured behavior and show unavailable structured evidence explicitly. Detailed state transitions and recovery rules are in [the workflow contract](docs/WORKFLOW.md); message delivery and streaming are in [the chat contract](docs/CHAT.md).
 
+## Terminal client
+
+`bun run factory <command>` drives runs and planning from a terminal through the same HTTP API as the browser (`DURABLE_FACTORY_URL`, `DURABLE_FACTORY_API_TOKEN`, `DURABLE_FACTORY_PROJECT`). Run `factory help` for the commands and exit codes.
+
+- **Non-interactive, for scripts and coding agents:** every command takes `--json`, `watch` prints one JSON line per change, and `wait` blocks until a run needs you. [`skills/factory/SKILL.md`](skills/factory/SKILL.md) teaches Claude Code, Codex or an Orca agent to use them.
+- **Planning:** `factory plan new "Add search"`, `factory plan send <id> "…"` (waits for the planner and shows the ticket draft and readiness review), `factory plan approve <id>` to create the issue, then `factory start --conversation <id>`. `factory plan list` shows the ids.
+- **Interactive planning chat:** `factory plan chat <id>` is a chat in the style of Claude Code: a welcome box, `>` for you and `●` for the planner and its tools, a ruled input area, and a `/` menu (Up/Down to move, Tab or Enter to pick) with `/ticket`, `/approve`, `/start`, `/help` and `/quit`. Up does not recall earlier messages, because Up belongs to the menu.
+- **Runs:** `factory start`, `runs`, `show`, `watch`, `wait`, `pause`, `resume`, `cancel`, `answer` and `send`.
+
+### Terminal environments
+
+The CLI works the same in any terminal. An environment adds shortcuts when the terminal can do them, and the CLI detects it from variables the terminal sets, the way Claude Code finds an IDE:
+
+| Environment | Detected by                                   | Adds                                                                                                                                                                                                      |
+| ----------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Orca        | `TERM_PROGRAM=Orca` or `ORCA_TERMINAL_HANDLE` | `factory open <run>` opens an Orca terminal in the run's worktree; `watch` writes each run's stage, question and PR into the worktree's Orca comment and unread dot; `plan chat` names its Orca terminal. |
+| none        | anything else                                 | Nothing. `factory open <run>` prints `cd <worktree>` and the command to run instead.                                                                                                                      |
+
+Force one with `--env orca|none` or `FACTORY_ENV` (for example `--env orca` from a plain terminal, like Claude Code's `/ide`). `watch --no-env` keeps `watch` from writing into the environment. Orca lists the run worktrees under `<data>/worktrees/<runId>` on its own once the repository is added, and stops listing a worktree when cleanup removes it. Do not edit a worktree while its run is `running` or `pausing`; `factory open <run> --pause` pauses first. Extra files in a worktree can block cleanup after merge. A new environment is one object implementing some of `openTerminal`, `setStatus` and `nameTerminal` in `apps/cli/src/environment.ts`.
+
 ## Delete chats
 
 Use **Delete** beside a planning or implementation chat, then confirm permanent deletion. Planning deletion keeps linked implementations. Implementation deletion keeps linked planning chats and removes the run, its agent conversations and artifacts, and the entire local worktree—including unpublished, untracked, and ignored files. GitHub issues, pull requests, and remote branches are unchanged.
@@ -200,6 +220,8 @@ Browser tests require a built frontend and installed Chromium. Set `PLAYWRIGHT_C
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `apps/server/src/`     | Local API, Pi conversations, planning, GitHub integration, workflow, process supervision, workspaces, and cleanup. |
 | `apps/web/src/`        | React planning chat, settings, run inspector, and browser-local draft storage.                                     |
+| `apps/cli/src/`        | `factory` terminal client, its planning chat, and the optional terminal-environment adapters (Orca).               |
+| `skills/`              | Agent skill that teaches Claude Code, Codex or Orca agents to drive the CLI.                                       |
 | `packages/shared/src/` | Typed API contracts, clients, stream reducers, approved issue format, and evidence validation.                     |
 | `scripts/`             | Development/diagnostic entrypoints and disposable recovery-test workers.                                           |
 | `tests/`               | Offline integration, client, workflow, and recovery tests; browser acceptance tests are in `tests/browser/`.       |

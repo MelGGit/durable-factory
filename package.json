@@ -19,6 +19,7 @@
     "start": "NODE_ENV=production node apps/server/dist/main.js",
     "check": "tsc --noEmit",
     "test": "node --import tsx --test --test-force-exit --test-concurrency=4 tests/*.test.ts",
+    "factory": "node --import tsx apps/cli/src/main.ts",
     "diagnose": "node --import tsx scripts/diagnose.ts",
     "test:browser": "node --import tsx --test --test-force-exit tests/browser/*.test.ts",
     "format:check": "prettier --check apps packages scripts tests package.json tsconfig.json .prettierrc.json",

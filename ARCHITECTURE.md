@@ -58,7 +58,7 @@ Define a versioned application contract, initially `/api/v1`, with shared TypeSc
 
 Send heartbeat comments every 15 seconds and treat 45 seconds without any stream traffic as a lost connection. Reconnect with capped exponential backoff and jitter, then restore from a fresh snapshot. Bound each connection's outgoing buffer and tool-output window; disconnect slow clients rather than allowing unlimited memory growth. Preserve complete logs as referenced artifacts and let the client fetch additional output explicitly. Closing or replacing a stream never cancels work.
 
-The initial interface is a normal browser chat, without an embedded terminal or a separate TUI process. A future terminal client could consume the same shared client contract.
+The initial interface is a normal browser chat, without an embedded terminal or a separate TUI process. A terminal client, `apps/cli`, consumes the same shared client contract: JSON-first commands over the HTTP API, usable by a person, a script or a coding agent. It adds no server protocol. Terminal-specific extras (opening a terminal in a worktree, showing run state on it) live behind an optional `Environment` interface detected from the terminal's variables, so Orca is an adapter, not a requirement.
 
 ### Reference implementation: durable-pi
 
