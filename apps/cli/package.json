@@ -1,0 +1,5 @@
+{
+  "name": "@durable-factory/cli",
+  "private": true,
+  "type": "module"
+}
