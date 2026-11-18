@@ -248,7 +248,7 @@ test(
       await clean(f);
       await f.service.close();
       const db = new DatabaseSync(join(f.dataDir, 'factory.sqlite'));
-      db.exec('UPDATE durable_schema SET version=2');
+      db.exec('UPDATE durable_schema SET version=3');
       db.close();
       assert.throws(
         () => purgeRunStorage(f.dataDir, snapshot),
@@ -307,9 +307,8 @@ test(
         { stdio: 'ignore' },
       );
       try {
-        const { processTable } = await import(
-          '../apps/server/src/processes.js'
-        );
+        const { processTable } =
+          await import('../apps/server/src/processes.js');
         const identity = (await processTable()).find(
           (p) => p.pid === child.pid,
         )!;

@@ -17,8 +17,9 @@ import {
   type ToolRegistration,
   type TaskId,
 } from '@earendil-works/pi-durable';
-import { Type, type ModelThinkingLevel } from '@earendil-works/pi-ai';
-import type { JsonRepresentation } from '@earendil-works/chord';
+import { type ModelThinkingLevel } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import {
   ApiError,
   MAX_ACCEPTANCE_CRITERIA,

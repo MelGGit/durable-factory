@@ -182,9 +182,9 @@ export function createGitHub(
             ? 'FORBIDDEN'
             : 'PROVIDER_UNAVAILABLE',
         response.status === 429 ||
-        (response.status === 403 &&
-          (response.headers.get('retry-after') ||
-            response.headers.get('x-ratelimit-remaining') === '0'))
+          (response.status === 403 &&
+            (response.headers.get('retry-after') ||
+              response.headers.get('x-ratelimit-remaining') === '0'))
           ? Math.max(
               60000,
               Number(response.headers.get('retry-after') ?? 0) * 1000,

@@ -83,8 +83,7 @@ export function groupToolActivity<T>(
   callFor: (item: T) => ActivityCall | undefined,
 ) {
   const groups: (
-    | { kind: 'tools'; calls: ActivityCall[] }
-    | { kind: 'content'; item: T }
+    { kind: 'tools'; calls: ActivityCall[] } | { kind: 'content'; item: T }
   )[] = [];
   for (const item of items) {
     const call = callFor(item);

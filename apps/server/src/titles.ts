@@ -4,7 +4,7 @@ import {
   type Tx,
   type ConversationId,
 } from '@earendil-works/pi-durable';
-import type { JsonRepresentation } from '@earendil-works/chord';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import type { Models, ThinkingLevel } from '@earendil-works/pi-ai';
 import type { RoleSettings } from '../../../packages/shared/src/index.js';
 import { context } from './storage.js';

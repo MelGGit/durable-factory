@@ -98,8 +98,7 @@ export async function runDiagnostic(
     terminal.once('close', interrupt);
     process.once('SIGINT', interrupt);
     let question:
-      | { id: string; abort: AbortController; done: Promise<void> }
-      | undefined;
+      { id: string; abort: AbortController; done: Promise<void> } | undefined;
     let shownUrl: string | undefined;
     try {
       await sessions.start(selected);

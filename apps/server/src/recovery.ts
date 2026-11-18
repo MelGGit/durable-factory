@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import {
   fauxProvider,
   fauxAssistantMessage,
@@ -70,7 +70,8 @@ export async function recoveryWorker(
         // Wait for retained output to commit, so recovery can inspect partial output.
         await delay(150);
         notify({ phase: scenario });
-        await new Promise(() => {});
+        // Hold the event loop open until the parent kills this process.
+        await new Promise(() => setInterval(() => {}, 60_000));
       }
       return {
         output: [
@@ -94,8 +95,12 @@ export async function recoveryWorker(
       models,
       registry,
       settings: {
-        retry: { maxRetries: 0 },
-        progress: { partialIntervalMs: 10, outputIntervalMs: 10 },
+        retry: { maxRetries: 1 },
+        progress: {
+          partialIntervalMs: 10,
+          outputIntervalMs: 10,
+          persistWithinMs: 0,
+        },
       },
     },
     context,
@@ -107,18 +112,18 @@ export async function recoveryWorker(
       },
     });
     const before = await harness.inspect(context);
-    let watch: Awaited<ReturnType<typeof root.watch>> | undefined;
+    let observation: { detach(): void } | undefined;
     if (scenario === 'model' && mode === 'crash') {
-      watch = await root.watch(context);
+      // Watches show a partial before it is stored; only a stored commit survives the kill.
       let signalled = false;
-      watch.start(async (value) => {
-        if (
-          !signalled &&
-          JSON.stringify(value.docs['pi.live']).includes('Recovered')
-        ) {
-          signalled = true;
-          notify({ phase: 'model', partialCommitted: true });
-        }
+      observation = harness.observeCommits({
+        advance: (publication) => {
+          if (!signalled && JSON.stringify(publication).includes('Recovered')) {
+            signalled = true;
+            notify({ phase: 'model', partialCommitted: true });
+          }
+        },
+        end: () => {},
       });
     }
     const submission = await root.submit(
@@ -166,7 +171,7 @@ export async function recoveryWorker(
       context,
     );
     const queuedResult = await queued.wait(context);
-    await watch?.stop();
+    observation?.detach();
     notify({
       phase: 'done',
       result,

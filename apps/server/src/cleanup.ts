@@ -98,13 +98,13 @@ export async function cleanupSnapshot(
 }
 export type CleanupSnapshot = Awaited<ReturnType<typeof cleanupSnapshot>>;
 
-/** Pi Durable 1.3.0 / SQLite schema 1 only. Caller must hold ownership and close the harness. */
+/** Pi Durable 1.5.2 / SQLite schema 2 only. Caller must hold ownership and close the harness. */
 export function purgeRunStorage(
   dataDir: string,
   snapshot: CleanupSnapshot,
   prepareOnly = false,
 ) {
-  if (require('@earendil-works/pi-durable/package.json').version !== '1.3.0')
+  if (require('@earendil-works/pi-durable/package.json').version !== '1.5.2')
     throw new Error('Unsupported Pi storage version for cleanup.');
   const db = new DatabaseSync(join(dataDir, 'factory.sqlite'));
   try {
@@ -114,7 +114,7 @@ export function purgeRunStorage(
         db
           .prepare('SELECT version FROM durable_schema WHERE singleton=1')
           .get() as { version: number }
-      )?.version !== 1
+      )?.version !== 2
     )
       throw new Error('Unsupported Pi SQLite schema for cleanup.');
     if (snapshot.documents['factory.workflow'].schemaVersion !== 1)

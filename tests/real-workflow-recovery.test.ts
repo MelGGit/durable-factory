@@ -89,9 +89,8 @@ for (const scenario of [
         );
         assert.equal((await fixture.client.workflow()).slot, undefined);
         if (scenario === 'report') {
-          const { AgentOperations } = await import(
-            '../apps/server/src/real-workflow.js'
-          );
+          const { AgentOperations } =
+            await import('../apps/server/src/real-workflow.js');
           const { context } = await import('../apps/server/src/storage.js');
           const operations = await fixture.service.workflow['harness'].snapshot(
             AgentOperations,
@@ -127,9 +126,8 @@ for (const scenario of [
             false,
           );
           assert.equal(fixture.creates, 0);
-          const { ProcessSupervisor } = await import(
-            '../apps/server/src/processes.js'
-          );
+          const { ProcessSupervisor } =
+            await import('../apps/server/src/processes.js');
           const processes = new ProcessSupervisor(
             fixture.service.workflow['harness'],
             fixture.dataDir,

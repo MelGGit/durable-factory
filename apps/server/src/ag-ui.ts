@@ -151,7 +151,7 @@ export async function runAgUi(
       const needsInput = (snapshot: ConversationSnapshot) =>
         Boolean(
           snapshot.workflow &&
-            ['needs_input', 'paused'].includes(snapshot.workflow.status),
+          ['needs_input', 'paused'].includes(snapshot.workflow.status),
         );
       // The receipt can advance after the watch captured this frame. A terminal
       // receipt must be paired with a subsequent read, which includes its answer.

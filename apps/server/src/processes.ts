@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import { defineDoc, type Harness } from '@earendil-works/pi-durable';
-import type { JsonRepresentation } from '@earendil-works/chord';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import { context } from './storage.js';
 
 export interface ProcessIdentity {

@@ -328,9 +328,8 @@ test('oversized direct-issue checklists pause before setup with an actionable li
 });
 
 test('linked admission tolerates transport line-ending normalization without rewriting the approved ticket', async () => {
-  const { ChatClient, normalizeLineEndings } = await import(
-    '../packages/shared/src/index.js'
-  );
+  const { ChatClient, normalizeLineEndings } =
+    await import('../packages/shared/src/index.js');
   const f = await realFixture();
   try {
     const chat = new ChatClient(f.service.url);

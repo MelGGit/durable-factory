@@ -209,9 +209,8 @@ test(
       await writeFile(join(dataDir, 'credentials/requesty.json'), 'null', {
         mode: 0o600,
       });
-      const { FactoryClient } = await import(
-        '../../packages/shared/src/index.js'
-      );
+      const { FactoryClient } =
+        await import('../../packages/shared/src/index.js');
       await new FactoryClient(service.url).retryCredentialStorage();
       const page = await browser.newPage();
       const errors: string[] = [];

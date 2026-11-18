@@ -1039,6 +1039,9 @@ export async function startService(options: ServiceOptions = {}) {
           retry: options.retry ?? {
             maxRetries: options.chat ? 0 : PROVIDER_RETRIES,
           },
+          // Pi 1.5 defers streamed output to storage by up to a second; recovery
+          // inspects retained output after a crash, so store it right away.
+          progress: { persistWithinMs: 0 },
         },
       });
       configuration = openedConfiguration;
