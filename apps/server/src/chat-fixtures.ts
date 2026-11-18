@@ -6,7 +6,7 @@ import {
   fauxToolCall,
 } from '@earendil-works/pi-ai/providers/faux';
 import { defineTool } from '@earendil-works/pi-durable';
-import { Type } from '@earendil-works/pi-ai';
+import { Type } from 'typebox';
 import { ChatClient } from '../../../packages/shared/src/index.js';
 export function fixture(tokensPerSecond = Infinity) {
   const faux = fauxProvider({

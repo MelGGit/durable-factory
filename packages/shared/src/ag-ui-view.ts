@@ -160,15 +160,13 @@ function liveMessages(
             represented.has(tool.id) &&
             (tool.status === 'completed' || tool.status === 'failed'),
         )
-        .map(
-          (tool): Message => ({
-            id: `${threadId}:result:${tool.id}`,
-            role: 'tool',
-            toolCallId: toolCallId(threadId, tool.id),
-            content: tool.output ?? '',
-            ...(tool.status === 'failed' ? { error: 'Tool failed' } : {}),
-          }),
-        ),
+        .map((tool): Message => ({
+          id: `${threadId}:result:${tool.id}`,
+          role: 'tool',
+          toolCallId: toolCallId(threadId, tool.id),
+          content: tool.output ?? '',
+          ...(tool.status === 'failed' ? { error: 'Tool failed' } : {}),
+        })),
       ...liveMessages(
         threadId,
         '',
@@ -195,15 +193,13 @@ function liveMessages(
     },
     ...pending
       .filter((tool) => tool.status === 'completed' || tool.status === 'failed')
-      .map(
-        (tool): Message => ({
-          id: `${threadId}:result:${tool.id}`,
-          role: 'tool',
-          toolCallId: toolCallId(threadId, tool.id),
-          content: tool.output ?? '',
-          ...(tool.status === 'failed' ? { error: 'Tool failed' } : {}),
-        }),
-      ),
+      .map((tool): Message => ({
+        id: `${threadId}:result:${tool.id}`,
+        role: 'tool',
+        toolCallId: toolCallId(threadId, tool.id),
+        content: tool.output ?? '',
+        ...(tool.status === 'failed' ? { error: 'Tool failed' } : {}),
+      })),
   ];
 }
 
@@ -826,8 +822,7 @@ export function viewFromEvents(events: readonly BaseEvent[]) {
     (event) => event.type === 'MESSAGES_SNAPSHOT',
   ) as { messages: Message[] } | undefined;
   const state = events.find((event) => event.type === 'STATE_SNAPSHOT') as
-    | { snapshot: unknown }
-    | undefined;
+    { snapshot: unknown } | undefined;
   if (!messages || !state) throw unsupported();
   return { messages: messages.messages, state: state.snapshot };
 }

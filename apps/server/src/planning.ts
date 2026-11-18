@@ -10,8 +10,8 @@ import {
   type Tx,
   type ToolRegistration,
 } from '@earendil-works/pi-durable';
-import { Type } from '@earendil-works/pi-ai';
-import type { JsonRepresentation } from '@earendil-works/chord';
+import { Type } from 'typebox';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import {
   ApiError,
   MAX_ACCEPTANCE_CRITERIA,

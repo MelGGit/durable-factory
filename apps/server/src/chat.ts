@@ -21,7 +21,7 @@ import {
   InboxDoc,
   type LiveState,
 } from '@earendil-works/pi-durable';
-import type { JsonRepresentation } from '@earendil-works/chord';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import type {
   AssistantMessage,
   Models,
@@ -188,8 +188,7 @@ export function transcript(entry: EntryRecord): TranscriptEntry {
   const workflowInput =
     entry.kind === 'factory.agent-input'
       ? (entry.data as unknown as
-          | Pick<TranscriptEntry, 'provenance' | 'presentation'>
-          | undefined)
+          Pick<TranscriptEntry, 'provenance' | 'presentation'> | undefined)
       : undefined;
   const tools: ToolView[] = [];
   const parts: TranscriptPart[] = [];
@@ -1312,7 +1311,9 @@ export class ChatService {
         delivery = delivery.then(() => send(view, 'update')).catch(fail);
         return delivery;
       };
-      watch.start((view) => enqueue(view));
+      watch.start(async (call) => {
+        if (call.kind === 'value') await enqueue(call.value);
+      });
       requestsWatch?.start(() => enqueue(watch.value));
       catalogWatch?.start(() => enqueue(watch.value));
       workflowWatch?.start(() => enqueue(watch.value));

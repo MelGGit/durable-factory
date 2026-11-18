@@ -18,13 +18,13 @@ const creationKey = `${chatStorageKey}.creation`;
 function isPending(value: unknown): value is PendingSend {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      'conversationId' in value &&
-      typeof value.conversationId === 'string' &&
-      'requestId' in value &&
-      typeof value.requestId === 'string' &&
-      'content' in value &&
-      typeof value.content === 'string',
+    typeof value === 'object' &&
+    'conversationId' in value &&
+    typeof value.conversationId === 'string' &&
+    'requestId' in value &&
+    typeof value.requestId === 'string' &&
+    'content' in value &&
+    typeof value.content === 'string',
   );
 }
 function migrateLegacy() {

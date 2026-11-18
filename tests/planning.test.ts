@@ -555,9 +555,8 @@ test('stage 3 conversations gain planning registration and tools without replaci
   const dataDir = join(directory, 'data');
   await mkdir(dataDir);
   const deps = fixture();
-  const { createRegistry } = await import(
-    '../apps/server/src/chat-fixtures.js'
-  );
+  const { createRegistry } =
+    await import('../apps/server/src/chat-fixtures.js');
   const store = await openConfiguration(dataDir, {
     models: deps.models,
     registry: createRegistry(),

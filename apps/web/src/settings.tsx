@@ -94,7 +94,7 @@ export function Settings({
   const [titleBusy, setTitleBusy] = useState(false);
   const titleDirty = Boolean(
     titleSaved &&
-      JSON.stringify(titleSaved.selection) !== JSON.stringify(titleDraft),
+    JSON.stringify(titleSaved.selection) !== JSON.stringify(titleDraft),
   );
   const runnersDirty =
     runners !== undefined && String(runners) !== runnersDraft;

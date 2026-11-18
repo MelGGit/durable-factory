@@ -1,4 +1,4 @@
-import type { JsonRepresentation } from '@earendil-works/chord';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import { defineDoc, type Tx } from '@earendil-works/pi-durable';
 import { ApiError } from '../../../packages/shared/src/core.js';
 import type { DeletionOperation } from '../../../packages/shared/src/deletion.js';

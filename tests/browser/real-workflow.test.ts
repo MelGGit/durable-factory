@@ -164,9 +164,8 @@ test(
   'browser clarifies incomplete issues, explicitly adopts proof requirements and preserves compact run details',
   { timeout: 60000 },
   async () => {
-    const { formatTicketBody } = await import(
-      '../../packages/shared/src/index.js'
-    );
+    const { formatTicketBody } =
+      await import('../../packages/shared/src/index.js');
     const { ticket } = await import('../fixtures/planning.js');
     const f = await realFixture({
       issueBody: 'Please improve checkout.',

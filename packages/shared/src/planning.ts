@@ -59,12 +59,7 @@ export interface IssueOperation {
   repository: RepositoryRegistration;
   ticket: Ticket;
   state:
-    | 'prepared'
-    | 'sending'
-    | 'uncertain'
-    | 'rejected'
-    | 'created'
-    | 'blocked';
+    'prepared' | 'sending' | 'uncertain' | 'rejected' | 'created' | 'blocked';
   message?: string;
   issue?: IssueLink;
 }

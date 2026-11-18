@@ -19,7 +19,7 @@ import {
   type SubmissionId,
   type TaskRuntime,
 } from '@earendil-works/pi-durable';
-import type { JsonRepresentation } from '@earendil-works/chord';
+import type { JsonRepresentation } from '@earendil-works/chord/json';
 import {
   API_VERSION,
   DEFAULT_PROJECT_ID,
@@ -273,8 +273,8 @@ export class WorkflowService {
   private compatible(run: WorkflowRun) {
     return Boolean(
       this.adapter &&
-        (this.adapter.mode === run.mode ||
-          (this.adapter.mode === 'real' && run.mode === 'simulation')),
+      (this.adapter.mode === run.mode ||
+        (this.adapter.mode === 'real' && run.mode === 'simulation')),
     );
   }
   private async transaction<T>(change: (state: State, tx: Tx) => Promise<T>) {
@@ -747,8 +747,7 @@ export class WorkflowService {
           r.repository.github === capturedSettings.repository.github,
       )
       .sort((a, b) => b.queueOrder - a.queueOrder)[0] as
-      | WorkflowRun
-      | undefined;
+      WorkflowRun | undefined;
     if (existing && (!body.newRun || !terminal(existing))) {
       if (body.newRun)
         conflict(
@@ -1594,12 +1593,12 @@ export class WorkflowService {
     try {
       confirmed = Boolean(
         this.adapter &&
-          this.compatible(run) &&
-          (await this.bounded(
-            this.adapter.cancel(run, attempt),
-            run.configuration.timeouts.cancellation * 1000,
-            false,
-          )),
+        this.compatible(run) &&
+        (await this.bounded(
+          this.adapter.cancel(run, attempt),
+          run.configuration.timeouts.cancellation * 1000,
+          false,
+        )),
       );
     } catch {
       /* retain blocker */
@@ -1732,8 +1731,7 @@ export class WorkflowService {
         );
     }
     let revalidation:
-      | { source: string; base: string; quiescent: boolean }
-      | undefined;
+      { source: string; base: string; quiescent: boolean } | undefined;
     if (body.action === 'revalidate') {
       const run = await this.get(id);
       if (
@@ -1771,8 +1769,7 @@ export class WorkflowService {
       body.answer ?? null,
     ]);
     let specification:
-      | (Ticket & { issueSnapshot?: WorkflowRun['issueSnapshot'] })
-      | undefined;
+      (Ticket & { issueSnapshot?: WorkflowRun['issueSnapshot'] }) | undefined;
     if (body.action === 'adopt_specification' && this.adapter) {
       const current = await this.get(id);
       specification = await this.bounded(

@@ -3,11 +3,6 @@ export interface DeletionOperation {
   conversationIds: string[];
   runId?: string;
   state:
-    | 'pending'
-    | 'stopping'
-    | 'waiting'
-    | 'deleting'
-    | 'blocked'
-    | 'completed';
+    'pending' | 'stopping' | 'waiting' | 'deleting' | 'blocked' | 'completed';
   message: string;
 }

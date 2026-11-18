@@ -821,15 +821,15 @@ export function ChatApp() {
   );
   const emptyPlanning = Boolean(
     snapshot?.conversation.role === 'planning' &&
-      !selectedRun &&
-      !entries.length &&
-      !cursor &&
-      !snapshot.partial &&
-      !snapshot.liveParts?.length &&
-      !snapshot.tools.length &&
-      snapshot.execution === 'idle' &&
-      !snapshot.submissions.length &&
-      !pending.length,
+    !selectedRun &&
+    !entries.length &&
+    !cursor &&
+    !snapshot.partial &&
+    !snapshot.liveParts?.length &&
+    !snapshot.tools.length &&
+    snapshot.execution === 'idle' &&
+    !snapshot.submissions.length &&
+    !pending.length,
   );
   const inChat = route.kind === 'chat';
   const atHome = inChat && !selected;

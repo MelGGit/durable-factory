@@ -21,13 +21,20 @@ const chat = {
         if (scenario === 'unsafe')
           await appendFile(join(dataDir, 'effects.txt'), 'effect\n');
         api.output('Committed output before crash.\n');
-        if (mode === 'crash') await new Promise<void>(() => {});
+        if (mode === 'crash')
+          await new Promise<void>(() => setInterval(() => {}, 60_000));
         return original.execute(args, api, context);
       },
     },
   ],
 };
-const service = await startService({ dataDir, port: 0, chat });
+const service = await startService({
+  dataDir,
+  port: 0,
+  chat,
+  // Pi 1.5 charges a request cut off by a crash as a failed attempt.
+  retry: { maxRetries: 1 },
+});
 const client = new ChatClient(service.url);
 let stop: (() => void) | undefined;
 try {
@@ -66,7 +73,8 @@ try {
       },
       () => {},
     );
-    await new Promise(() => {});
+    // Hold the event loop open, as the process is killed externally.
+    await new Promise(() => setInterval(() => {}, 60_000));
   } else {
     await until(
       () => client.submission(conversation.id, 'stable-recovery-input'),
