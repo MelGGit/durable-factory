@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import {
   ChatClient,
@@ -65,6 +67,25 @@ const terminal =
     ? openTerminal(color)
     : undefined;
 
+/** Reads one line from the person, without echoing it for a secret. */
+function ask(message: string, secret = false) {
+  process.stderr.write(`${message} `);
+  const hidden = new Writable({ write: (_chunk, _encoding, done) => done() });
+  const reader = createInterface({
+    input: process.stdin,
+    output: secret && process.stdin.isTTY ? hidden : undefined,
+    terminal: Boolean(secret && process.stdin.isTTY),
+  });
+  return new Promise<string>((resolve, reject) => {
+    reader.once('line', (line) => {
+      reader.close();
+      if (secret && process.stdin.isTTY) process.stderr.write('\n');
+      resolve(line);
+    });
+    reader.once('close', () => reject(new Error('No answer was given.')));
+  });
+}
+
 process.exitCode = await run(process.argv.slice(2), {
   workflow: new WorkflowClient(url, fetcher, project),
   chat: new ChatClient(url, fetcher, project),
@@ -76,6 +97,7 @@ process.exitCode = await run(process.argv.slice(2), {
   close: terminal?.finish,
   write: terminal?.write,
   color,
+  ask,
   io: {
     out: (text) => console.log(text),
     err: (text) => console.error(text),

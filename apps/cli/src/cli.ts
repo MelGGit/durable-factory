@@ -8,6 +8,18 @@ import {
   type WorkflowRun,
   type WorkflowSnapshot,
 } from '../../../packages/shared/src/index.js';
+import {
+  credential,
+  deletions,
+  findProject,
+  issues,
+  login,
+  projects,
+  providers,
+  runners,
+  settings,
+  titles,
+} from './admin.js';
 import { ChatView } from './chat-view.js';
 import type { Environment } from './environment.js';
 import {
@@ -53,16 +65,30 @@ export interface Deps {
   /** Called when `plan chat` ends, to leave the terminal tidy. */
   close?(): void;
   color?: boolean;
+  /** Asks one line, for sign-in prompts and tokens. `secret` hides the typing. */
+  ask?(message: string, secret?: boolean): Promise<string>;
+  /** Milliseconds between sign-in status checks (default 1000). */
+  pollMs?: number;
 }
 
 export class UsageError extends Error {}
 
-interface Parsed {
+const defined = (value: string | undefined): value is string =>
+  value !== undefined;
+
+export interface Parsed {
   words: string[];
   flags: Map<string, string | true>;
 }
 
-const VALUE_FLAGS = new Set(['for', 'timeout', 'conversation', 'env']);
+const VALUE_FLAGS = new Set([
+  'for',
+  'timeout',
+  'conversation',
+  'env',
+  'project',
+  'page',
+]);
 
 export function parse(argv: string[]): Parsed {
   const words: string[] = [];
@@ -104,6 +130,23 @@ Planning (the chat that turns an idea into a GitHub issue):
   factory plan show <id>             Reply, ticket draft, readiness review, issue link
   factory plan approve <id>          Approve creating the issue (same as replying "yes")
   factory plan chat <id>             Talk to the planner interactively
+
+Projects, issues and settings (what the web app's sidebar and Settings page do):
+  factory project list|add <name>|rename <project> <name>|remove <project> --yes
+  factory issues [--page n]          Open and closed GitHub issues of the project
+  factory settings [show]            Repository, commit identity, commands, models, credentials
+  factory settings set <path=value>...   e.g. repository.github=owner/name roles.review.model=gpt-5
+                                     A list setting takes repeats: setupCommands=a setupCommands=b
+  factory settings validate          Check GitHub access for the repository
+  factory providers                  Providers, their state and models
+  factory login <openai|anthropic>   Sign in with a subscription account
+  factory credential set <requesty|github> [token]   (asks if no token is given)
+  factory credential rm <requesty|github|openai|anthropic>
+  factory credential retry-storage
+  factory runners [n]                Show or set how many runs go at once
+  factory titles [show|set <provider> <model> [reasoning]|clear]   Title generator model
+  factory deletions                  Deletions in progress
+  --project <id|name> picks the project for any command (default DURABLE_FACTORY_PROJECT).
 
 Every command takes --json. Settings come from DURABLE_FACTORY_URL (default
 http://127.0.0.1:4317), DURABLE_FACTORY_API_TOKEN and DURABLE_FACTORY_PROJECT.
@@ -196,12 +239,20 @@ async function openOrExplain(
 
 export async function run(argv: string[], deps: Deps): Promise<number> {
   const { io } = deps;
+  const scope = [deps.workflow.projectId, deps.chat.projectId];
   try {
     const { words, flags } = parse(argv);
     const json = flags.has('json');
     const [command, target, ...rest] = words;
     const print = (value: unknown, text: string) =>
       io.out(json ? JSON.stringify(value) : text);
+    const chosen = flags.get('project');
+    if (chosen !== undefined) {
+      if (typeof chosen !== 'string')
+        throw new UsageError('--project needs a value.');
+      const { id } = await findProject(deps.workflow, chosen);
+      deps.workflow.projectId = deps.chat.projectId = id;
+    }
     switch (command) {
       case undefined:
       case 'help':
@@ -395,6 +446,30 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
       }
       case 'plan':
         return await plan(deps, [target, ...rest], flags, json);
+      case 'project':
+      case 'projects':
+        return await projects(
+          deps,
+          [target, ...rest].filter(defined),
+          flags,
+          print,
+        );
+      case 'issues':
+        return await issues(deps, flags, print);
+      case 'settings':
+        return await settings(deps, [target, ...rest].filter(defined), print);
+      case 'providers':
+        return await providers(deps, print);
+      case 'login':
+        return await login(deps, target, flags, json, print);
+      case 'credential':
+        return await credential(deps, [target, ...rest], print);
+      case 'runners':
+        return await runners(deps, target, print);
+      case 'titles':
+        return await titles(deps, [target, ...rest].filter(defined), print);
+      case 'deletions':
+        return await deletions(deps, print);
       default:
         throw new UsageError(`Unknown command "${command}".\n\n${USAGE}`);
     }
@@ -415,6 +490,9 @@ export async function run(argv: string[], deps: Deps): Promise<number> {
         : String((error as Error)?.message ?? error),
     );
     return EXIT.failed;
+  } finally {
+    // `--project` lasts for one command, not for whoever calls run() next.
+    [deps.workflow.projectId, deps.chat.projectId] = scope;
   }
 }
 

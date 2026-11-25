@@ -41,6 +41,21 @@ A run starts from an approved plan: a chat with the planner produces a ticket, w
 
 Read the ticket and the `review` findings with the person before `approve`; approving creates a real GitHub issue.
 
+## Projects, issues and settings
+
+| Command                                                | Does                                                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `project list` / `add <name>` / `rename <p> <name>`    | Manage projects; `<p>` is an id, a unique id prefix or the name.                            |
+| `project remove <p> --yes`                             | Delete a project. It must hold no runs or conversations. Ask the person first.              |
+| `issues [--page n]`                                    | GitHub issues of the project.                                                               |
+| `settings` / `settings set <path=value>...`            | Show or change settings, e.g. `repository.github=o/r`, `roles.development.model=…`.         |
+| `settings validate`                                    | Check GitHub access.                                                                        |
+| `providers`                                            | Provider state and available models and reasoning levels.                                   |
+| `runners [n]`, `titles [set <prov> <model>\|clear]`    | Concurrency and the title generator model.                                                  |
+| `login <openai\|anthropic>`, `credential set\|rm <id>` | Sign-in and tokens. These need the person; never put a token in a command you run for them. |
+
+`--project <p>` selects the project for any command. Settings, project and credential changes are refused unless the CLI runs on the machine hosting the service.
+
 ## Environment
 
 Inside Orca the CLI opens terminals and shows run state in Orca; in any other terminal it does neither, and `open` prints the commands to run. It is detected from the terminal; force it with `--env orca|none` or `FACTORY_ENV`. `watch --no-env` stops `watch` from writing state into the environment.
